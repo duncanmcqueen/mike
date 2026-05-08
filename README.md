@@ -5,8 +5,8 @@ Open-source release containing the Mike frontend and backend.
 ## Contents
 
 - `frontend/` - Next.js application
-- `backend/` - Express API, Supabase access, document processing, and migrations
-- `backend/migrations/000_one_shot_schema.sql` - one-shot Supabase schema for fresh databases
+- `backend/` - Express API, Supabase access, document processing, and database schema
+- `backend/schema.sql` - Supabase schema for fresh databases
 
 ## Setup
 
@@ -24,10 +24,7 @@ cp backend/.env.example backend/.env
 cp frontend/.env.local.example frontend/.env.local
 ```
 
-Before adding real secrets or uploading documents, read
-[`docs/safe-local-testing.md`](docs/safe-local-testing.md).
-
-Run `backend/migrations/000_one_shot_schema.sql` in the Supabase SQL editor for a fresh database.
+Run `backend/schema.sql` in the Supabase SQL editor for a fresh database.
 
 Start the backend:
 
