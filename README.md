@@ -1,6 +1,6 @@
 # Mike
 
-Open-source release containing the Mike frontend and backend.
+Mike is a legal document assistant with a Next.js frontend, an Express backend, Supabase Auth/Postgres, and Cloudflare R2-compatible object storage.
 
 ## Contents
 
@@ -19,46 +19,80 @@ Open-source release containing the Mike frontend and backend.
 - At least one supported model provider API key: Anthropic, Google Gemini, or OpenAI
 - LibreOffice installed locally if you need DOC/DOCX to PDF conversion
 
-## Setup
+## Database Setup
 
-### 1. Clone the repo
+For a new Supabase database, open the Supabase SQL editor and run:
 
-```bash
-git clone https://github.com/willchen96/mike.git
-cd mike
+```sql
+-- copy and run the contents of:
+-- backend/schema.sql
 ```
 
-### 2. Install dependencies
+The schema file is based on `supabase-migration.sql` and folds in the later files in `backend/migrations/`.
+
+For an existing database, do not run the full schema file over production data. Apply the incremental files in `backend/migrations/` instead.
+
+## Environment
+
+Create local env files:
+
+```bash
+touch backend/.env
+touch frontend/.env.local
+```
+
+Create `backend/.env`:
+
+```bash
+PORT=3001
+FRONTEND_URL=http://localhost:3000
+DOWNLOAD_SIGNING_SECRET=replace-with-a-random-32-byte-hex-string
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SECRET_KEY=your-supabase-service-role-key
+
+R2_ENDPOINT_URL=https://your-account-id.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=your-r2-access-key
+R2_SECRET_ACCESS_KEY=your-r2-secret-key
+R2_BUCKET_NAME=mike
+
+GEMINI_API_KEY=your-gemini-key
+ANTHROPIC_API_KEY=your-anthropic-key
+OPENAI_API_KEY=your-openai-key
+RESEND_API_KEY=your-resend-key
+USER_API_KEYS_ENCRYPTION_SECRET=your-long-random-secret
+```
+
+Create `frontend/.env.local`:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your-supabase-anon-key
+SUPABASE_SECRET_KEY=your-supabase-service-role-key
+NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
+```
+
+Supabase values come from the project dashboard. Use the project URL for `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`, the service role key for `SUPABASE_SECRET_KEY`, and the anon/public key for `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`. If your Supabase project shows multiple key formats, use the legacy JWT-style anon and service role keys expected by the Supabase client libraries.
+
+Provider keys are only needed for the models and email features you plan to use. Model provider keys can be configured in `backend/.env` for the whole instance, or per user in **Account > Models & API Keys**. If a provider key is present in `backend/.env`, that provider is available by default and the matching browser API key field is read-only.
+
+## Install
+
+Install each app package:
 
 ```bash
 npm install --prefix backend
 npm install --prefix frontend
 ```
 
-### 3. Create env files
+## Run Locally
 
-```bash
-cp backend/.env.example backend/.env
-cp frontend/.env.local.example frontend/.env.local
-```
-
-Then fill in the values. See [Environment Variables](#environment-variables) below.
-
-### 4. Run the database schema
-
-For a new Supabase database, open the Supabase SQL editor and run the contents of `backend/schema.sql`.
-
-For an existing database, do not run the full schema file over production data. Apply the incremental files in `backend/migrations/` instead.
-
-### 5. Start the backend
+Start the backend:
 
 ```bash
 npm run dev --prefix backend
 ```
 
-Backend runs on `http://localhost:3001`.
-
-### 6. Start the frontend
+Start the main app:
 
 ```bash
 npm run dev --prefix frontend
@@ -66,42 +100,11 @@ npm run dev --prefix frontend
 
 Open `http://localhost:3000`.
 
-### 7. Sign up and add a model API key
+## First Run
 
-Sign up in the app. If you did not set provider keys in `backend/.env`, open **Account > Models & API Keys** and add an Anthropic, Gemini, or OpenAI API key.
-
-## Environment Variables
-
-Supabase values come from the project dashboard. Use the project URL for `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`, the service role key for `SUPABASE_SECRET_KEY`, and the anon/public key for `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`. If your Supabase project shows multiple key formats, use the legacy JWT-style anon and service role keys expected by the Supabase client libraries.
-
-### Backend (`backend/.env`)
-
-| Variable | Notes |
-| --- | --- |
-| `PORT` | Defaults to `3001` |
-| `FRONTEND_URL` | `http://localhost:3000` for local development |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SECRET_KEY` | Supabase service role key |
-| `R2_ENDPOINT_URL` | Cloudflare R2, MinIO, or another S3-compatible endpoint |
-| `R2_ACCESS_KEY_ID` | Object storage access key |
-| `R2_SECRET_ACCESS_KEY` | Object storage secret key |
-| `R2_BUCKET_NAME` | Object storage bucket name |
-| `GEMINI_API_KEY` | Optional Google Gemini key |
-| `ANTHROPIC_API_KEY` | Optional Anthropic key |
-| `OPENAI_API_KEY` | Optional OpenAI key |
-| `RESEND_API_KEY` | Optional, for email features |
-| `USER_API_KEYS_ENCRYPTION_SECRET` | Secret used to encrypt per-user API keys |
-
-### Frontend (`frontend/.env.local`)
-
-| Variable | Notes |
-| --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Supabase anon/public key |
-| `SUPABASE_SECRET_KEY` | Supabase service role key |
-| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:3001` for local development |
-
-Provider keys are only needed for the models and email features you plan to use. Model provider keys can be configured in `backend/.env` for the whole instance, or per user in **Account > Models & API Keys**. If a provider key is present in `backend/.env`, that provider is available by default and the matching browser API key field is read-only.
+1. Sign up in the app.
+2. If you did not set provider keys in `backend/.env`, open **Account > Models & API Keys** and add an Anthropic, Gemini, or OpenAI API key.
+3. Create or open a project and start chatting with documents.
 
 ## Troubleshooting
 
@@ -118,7 +121,3 @@ npm run build --prefix backend
 npm run build --prefix frontend
 npm run lint --prefix frontend
 ```
-
-## License
-
-AGPL-3.0-only. See `LICENSE`.
