@@ -2,6 +2,8 @@
 
 Mike is a legal document assistant with a Next.js frontend, an Express backend, Supabase Auth/Postgres, and Cloudflare R2-compatible object storage.
 
+Website: [mikeoss.com](https://mikeoss.com)
+
 ## Contents
 
 - `frontend/` - Next.js application
