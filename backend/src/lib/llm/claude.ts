@@ -20,9 +20,19 @@ type NativeMessage = {
 
 const MAX_TOKENS = 16384;
 
+function apiKey(override?: string | null): string {
+    const key = override?.trim() || process.env.ANTHROPIC_API_KEY?.trim() || "";
+    if (!key) {
+        throw new Error(
+            "Anthropic API key is not configured. Set ANTHROPIC_API_KEY or add a user Anthropic key.",
+        );
+    }
+    return key;
+}
+
 function client(override?: string | null): Anthropic {
-    const apiKey = override?.trim() || process.env.ANTHROPIC_API_KEY || "";
-    return new Anthropic({ apiKey });
+    const apiKeyValue = apiKey(override);
+    return new Anthropic({ apiKey: apiKeyValue });
 }
 
 function toNativeMessages(
