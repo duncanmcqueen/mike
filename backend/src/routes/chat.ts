@@ -141,6 +141,10 @@ async function getAccessibleChat(
 chatRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
+    const requestedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
+    const limit = Number.isFinite(requestedLimit)
+        ? Math.min(Math.max(requestedLimit, 1), 100)
+        : null;
 
     const { data: ownProjects, error: projErr } = await db
         .from("projects")
@@ -156,11 +160,15 @@ chatRouter.get("/", requireAuth, async (req, res) => {
             ? `user_id.eq.${userId},project_id.in.(${ownProjectIds.join(",")})`
             : `user_id.eq.${userId}`;
 
-    const { data, error } = await db
+    let query = db
         .from("chats")
         .select("*")
         .or(filter)
         .order("created_at", { ascending: false });
+
+    if (limit) query = query.limit(limit);
+
+    const { data, error } = await query;
     if (error) return void res.status(500).json({ detail: error.message });
     res.json(data ?? []);
 });

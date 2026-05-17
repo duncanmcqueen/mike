@@ -17,16 +17,21 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
 
+let cachedClient: S3Client | undefined;
+
 function getClient(): S3Client {
-  return new S3Client({
-    region: "auto",
-    endpoint: process.env.R2_ENDPOINT_URL!,
-    forcePathStyle: true,
-    credentials: {
-      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-    },
-  });
+  if (!cachedClient) {
+    cachedClient = new S3Client({
+      region: "auto",
+      endpoint: process.env.R2_ENDPOINT_URL!,
+      forcePathStyle: true,
+      credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+      },
+    });
+  }
+  return cachedClient;
 }
 
 const BUCKET = process.env.R2_BUCKET_NAME ?? "mike";
@@ -37,6 +42,14 @@ export const storageEnabled = Boolean(
   process.env.R2_SECRET_ACCESS_KEY,
 );
 
+function requireStorageConfig(): void {
+  if (!storageEnabled) {
+    throw new Error(
+      "R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY must be set",
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Upload
 // ---------------------------------------------------------------------------
@@ -46,6 +59,7 @@ export async function uploadFile(
   content: ArrayBuffer,
   contentType: string,
 ): Promise<void> {
+  requireStorageConfig();
   const client = getClient();
   await client.send(
     new PutObjectCommand({
