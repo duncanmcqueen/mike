@@ -37,9 +37,7 @@ function treeControlWidth(depth: number) {
     return TREE_CONTROL_WIDTH_PX * (Math.max(0, depth) + 1);
 }
 
-export function treeControlCellStyle(
-    depth: number,
-): CSSProperties | undefined {
+export function treeControlCellStyle(depth: number): CSSProperties | undefined {
     if (depth <= 0) return undefined;
     const width = treeControlWidth(depth);
     return {
@@ -157,7 +155,8 @@ export function DocVersionHistory({
         <>
             {ordered.map((v) => {
                 const numberLabel =
-                    typeof v.version_number === "number" && v.version_number >= 1
+                    typeof v.version_number === "number" &&
+                    v.version_number >= 1
                         ? `${v.version_number}`
                         : v.source === "upload"
                           ? "Original"
@@ -182,7 +181,7 @@ export function DocVersionHistory({
                             if (isEditing) return;
                             onOpenVersion?.(v.id, displayLabel);
                         }}
-                        className="group flex items-center h-9 pr-8 border-b border-gray-50 bg-gray-50/60 text-xs text-gray-600 cursor-pointer hover:bg-gray-100/80 transition-colors"
+                        className="group flex items-center h-9 pr-3 md:pr-10 border-b border-gray-50 bg-gray-50/60 text-xs text-gray-600 cursor-pointer hover:bg-gray-100/80 transition-colors"
                     >
                         <div
                             className={`sticky left-0 z-[60] ${CHECK_W} bg-gray-50/60 group-hover:bg-gray-100/80 self-stretch`}
@@ -193,7 +192,9 @@ export function DocVersionHistory({
                             style={treeNameCellStyle(depth)}
                         >
                             <div className="flex items-center gap-2">
-                                <span className="shrink-0 text-gray-400">↳</span>
+                                <span className="shrink-0 text-gray-400">
+                                    ↳
+                                </span>
                                 {isEditing ? (
                                     <input
                                         autoFocus
@@ -223,7 +224,9 @@ export function DocVersionHistory({
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             setEditingVersionId(v.id);
-                                            setEditingValue(v.display_name ?? "");
+                                            setEditingValue(
+                                                v.display_name ?? "",
+                                            );
                                         }}
                                         title="Rename version"
                                         className="shrink-0 rounded p-0.5 text-gray-400 opacity-0 group-hover:opacity-100 hover:text-gray-700 hover:bg-gray-200 transition"
@@ -234,7 +237,9 @@ export function DocVersionHistory({
                                 <span className="text-gray-400 truncate">
                                     {dateLabel}
                                 </span>
-                                <span className="text-gray-300 shrink-0">·</span>
+                                <span className="text-gray-300 shrink-0">
+                                    ·
+                                </span>
                                 <span className="text-gray-400 truncate">
                                     {v.source}
                                 </span>
@@ -265,23 +270,29 @@ export function DocVersionHistory({
 export function ProjectPageSkeleton() {
     return (
         <div className="flex-1 overflow-y-auto bg-white">
-            <div className="flex items-start justify-between px-8 py-4">
+            <div className="mb-1 flex items-start justify-between px-4 py-3 md:px-10">
                 <div className="flex items-center gap-1.5 text-2xl font-medium font-serif">
                     <span className="text-gray-400">Projects</span>
                     <span className="text-gray-300">›</span>
                     <div className="h-6 w-40 rounded bg-gray-100 animate-pulse" />
                 </div>
-                <div className="flex items-center gap-2">
-                    <div className="h-8 w-16 rounded bg-gray-100 animate-pulse" />
+                <div className="flex items-center gap-4">
+                    <div className="h-8 w-8 rounded bg-gray-100 animate-pulse" />
+                    <div className="h-8 w-8 rounded bg-gray-100 animate-pulse" />
+                    <div className="h-8 w-11 rounded bg-gray-100 animate-pulse" />
                     <div className="h-8 w-28 rounded bg-gray-100 animate-pulse" />
                 </div>
             </div>
-            <div className="flex items-center h-10 px-8 border-b border-gray-200 gap-5">
+            <div className="flex items-center h-10 px-4 md:px-10 border-b border-gray-200 gap-5">
                 <div className="h-3 w-20 rounded bg-gray-100 animate-pulse" />
                 <div className="h-3 w-10 rounded bg-gray-100 animate-pulse" />
                 <div className="h-3 w-24 rounded bg-gray-100 animate-pulse" />
+                <div className="ml-auto flex items-center gap-5">
+                    <div className="h-3 w-24 rounded bg-gray-100 animate-pulse" />
+                    <div className="h-3 w-24 rounded bg-gray-100 animate-pulse" />
+                </div>
             </div>
-            <div className="flex items-center h-8 pr-8 border-b border-gray-200">
+            <div className="flex items-center h-8 pr-3 md:pr-10 border-b border-gray-200">
                 <div className="w-8 shrink-0" />
                 <div className="flex-1 min-w-0 pl-3 pr-4">
                     <div className="h-2.5 w-8 rounded bg-gray-100 animate-pulse" />
@@ -297,7 +308,7 @@ export function ProjectPageSkeleton() {
             {[1, 2, 3, 4, 5].map((i) => (
                 <div
                     key={i}
-                    className="flex items-center h-10 pr-8 border-b border-gray-50"
+                    className="flex items-center h-10 pr-3 md:pr-10 border-b border-gray-50"
                 >
                     <div className="w-8 shrink-0" />
                     <div className="flex-1 min-w-0 pl-3 pr-4">
@@ -346,7 +357,7 @@ export function ProjectPageHeader({
     onNewReview: () => void;
 }) {
     return (
-        <div className="flex items-start justify-between px-8 py-4">
+        <div className="mb-1 flex items-start justify-between px-4 py-3 md:px-10">
             <div>
                 <div className="flex items-center gap-1.5 text-2xl font-medium font-serif">
                     <button
@@ -393,7 +404,7 @@ export function ProjectPageHeader({
                     )}
                 </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-4">
                 <HeaderSearchBtn
                     value={search}
                     onChange={onSearchChange}
@@ -410,7 +421,7 @@ export function ProjectPageHeader({
                 <div className="relative group">
                     <button
                         onClick={() => !creatingChat && onNewChat()}
-                        className={`flex h-8 items-center justify-center gap-1.5 px-3 text-sm transition-colors ${
+                        className={`flex h-8 items-center justify-center gap-1.5 text-sm transition-colors ${
                             !creatingChat
                                 ? "text-gray-500 hover:text-gray-900 cursor-pointer"
                                 : "text-gray-300 cursor-default"
@@ -429,7 +440,7 @@ export function ProjectPageHeader({
                         onClick={() =>
                             docsCount > 0 && !creatingReview && onNewReview()
                         }
-                        className={`flex h-8 items-center justify-center gap-1.5 px-3 text-sm transition-colors ${
+                        className={`flex h-8 items-center justify-center gap-1.5 text-sm transition-colors ${
                             docsCount > 0
                                 ? "text-gray-500 hover:text-gray-900 cursor-pointer"
                                 : "text-gray-300 cursor-default"

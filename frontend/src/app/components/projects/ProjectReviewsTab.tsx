@@ -129,11 +129,7 @@ export function ProjectReviewsTab({
                                 />
                             </div>
                             <div
-                                className={`sticky left-8 z-[60] ${NAME_COL_W} p-2 ${
-                                    selectedReviewIds.includes(review.id)
-                                        ? "bg-gray-50"
-                                        : "bg-white"
-                                } group-hover:bg-gray-50`}
+                                className={`sticky left-8 z-[60] ${NAME_COL_W} bg-white p-2 group-hover:bg-gray-50`}
                             >
                                 {renamingReviewId === review.id ? (
                                     <input

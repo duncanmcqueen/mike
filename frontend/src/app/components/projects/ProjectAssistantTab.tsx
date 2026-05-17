@@ -118,11 +118,7 @@ export function ProjectAssistantTab({
                                 />
                             </div>
                             <div
-                                className={`sticky left-8 z-[60] ${NAME_COL_W} p-2 ${
-                                    selectedChatIds.includes(chat.id)
-                                        ? "bg-gray-50"
-                                        : "bg-white"
-                                } group-hover:bg-gray-50`}
+                                className={`sticky left-8 z-[60] ${NAME_COL_W} bg-white p-2 group-hover:bg-gray-50`}
                             >
                                 {renamingChatId === chat.id ? (
                                     <input

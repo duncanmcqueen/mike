@@ -33,6 +33,7 @@ import {
     renameProjectDocument,
     listDocumentVersions,
     uploadDocumentVersion,
+    uploadProjectDocument,
     renameDocumentVersion,
     getProjectPeople,
     type MikeDocumentVersion,
@@ -50,7 +51,10 @@ import {
     RowActionMenuItems,
     RowActions,
 } from "@/app/components/shared/RowActions";
-import { AddDocumentsModal } from "@/app/components/shared/AddDocumentsModal";
+import {
+    AddDocumentsModal,
+    invalidateDirectoryCache,
+} from "@/app/components/shared/AddDocumentsModal";
 import { PeopleModal } from "@/app/components/shared/PeopleModal";
 import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
 import { useAuth } from "@/contexts/AuthContext";
@@ -266,6 +270,10 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
     const newFolderInputRef = useRef<HTMLDivElement | null>(null);
     const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
     const [dragOverRoot, setDragOverRoot] = useState(false);
+    const [dragOverFileRoot, setDragOverFileRoot] = useState(false);
+    const [uploadingDroppedFilenames, setUploadingDroppedFilenames] = useState<
+        string[]
+    >([]);
 
     // Actions dropdown
     const [actionsOpen, setActionsOpen] = useState(false);
@@ -332,6 +340,7 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
         function handleDragEnd() {
             setDragOverFolderId(null);
             setDragOverRoot(false);
+            setDragOverFileRoot(false);
         }
         document.addEventListener("dragend", handleDragEnd);
         return () => document.removeEventListener("dragend", handleDragEnd);
@@ -707,6 +716,26 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
         );
     }
 
+    function hasFilePayload(dt: DataTransfer): boolean {
+        return Array.from(dt.types).includes("Files");
+    }
+
+    async function handleDropProjectFiles(files: File[]) {
+        if (files.length === 0) return;
+        setUploadingDroppedFilenames(files.map((file) => file.name));
+        try {
+            const uploaded = await Promise.all(
+                files.map((file) => uploadProjectDocument(projectId, file)),
+            );
+            invalidateDirectoryCache();
+            handleDocsSelected(uploaded);
+        } catch (err) {
+            console.error("Project document drop upload failed", err);
+        } finally {
+            setUploadingDroppedFilenames([]);
+        }
+    }
+
     async function handleDropOnFolder(targetFolderId: string | null, dt: DataTransfer) {
         if (!hasMovePayload(dt)) return;
         const docId = dt.getData("application/mike-doc");
@@ -778,6 +807,47 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
         );
     }
 
+    function renderUploadingDocumentRows(depth: number) {
+        return uploadingDroppedFilenames.map((filename) => (
+            <div
+                key={`uploading-doc-${filename}`}
+                className="group flex items-center h-10 pr-8 border-b border-gray-50"
+            >
+                <div
+                    className={`sticky left-0 z-[60] ${CHECK_W} bg-white p-2 flex items-center justify-center self-stretch`}
+                    style={treeControlCellStyle(depth)}
+                >
+                    <input
+                        type="checkbox"
+                        disabled
+                        className="h-2.5 w-2.5 rounded border-gray-200 cursor-default accent-black disabled:opacity-100"
+                    />
+                </div>
+                <div
+                    className={`sticky left-8 z-[60] ${DOC_NAME_COL_W} bg-white p-2`}
+                    style={treeNameCellStyle(depth)}
+                >
+                    <div className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin text-gray-400 shrink-0" />
+                        <span className="text-sm text-gray-400 truncate">
+                            {filename}
+                        </span>
+                    </div>
+                </div>
+                <div className="ml-auto w-20 shrink-0 text-xs text-gray-300 uppercase truncate">
+                    {filename.includes(".") ? filename.split(".").pop() : "file"}
+                </div>
+                <div className="w-24 shrink-0 text-sm text-gray-300">
+                    Uploading
+                </div>
+                <div className="w-20 shrink-0 text-sm text-gray-300">—</div>
+                <div className="w-32 shrink-0 text-sm text-gray-300">—</div>
+                <div className="w-32 shrink-0 text-sm text-gray-300">—</div>
+                <div className="w-8 shrink-0" />
+            </div>
+        ));
+    }
+
     function renderLevel(parentId: string | null, depth: number) {
         const childFolders = folders
             .filter((f) => f.parent_folder_id === parentId)
@@ -786,6 +856,7 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
 
         return (
             <>
+                {parentId === null && renderUploadingDocumentRows(depth)}
                 {/* Files first */}
                 {childDocs.map((doc) => {
                     const isProcessing = doc.status === "pending" || doc.status === "processing";
@@ -848,7 +919,7 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
                                         className="h-2.5 w-2.5 rounded border-gray-200 cursor-pointer accent-black"
                                     />
                                 </div>
-                                <div className={`sticky left-8 z-[60] ${DOC_NAME_COL_W} p-2 ${rowBg} group-hover:bg-gray-50`} style={treeNameCellStyle(depth)}>
+                                <div className={`sticky left-8 z-[60] ${DOC_NAME_COL_W} bg-white p-2 group-hover:bg-gray-50`} style={treeNameCellStyle(depth)}>
                                 <div className="flex items-center gap-2">
                                     {isProcessing ? (
                                         <Loader2 className="h-4 w-4 animate-spin text-gray-400 shrink-0" />
@@ -1150,20 +1221,20 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
     ) : null;
 
     const toolbarActions = (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-5">
             {actionsDropdown}
             {tab === "documents" && (
                 <>
                     <button
                         onClick={() => { setCreatingFolderIn(null); setNewFolderName(""); }}
-                        className="flex items-center gap-1 text-xs px-3 font-medium text-gray-500 hover:text-gray-700 transition-colors"
+                        className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700 transition-colors"
                     >
                         <FolderPlus className="h-3.5 w-3.5" />
                         Add Subfolder
                     </button>
                     <button
                         onClick={() => setAddDocsOpen(true)}
-                        className="flex items-center gap-1 text-xs px-3 font-medium text-gray-500 hover:text-gray-700 transition-colors"
+                        className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700 transition-colors"
                     >
                         <Upload className="h-3.5 w-3.5" />
                         Add Documents
@@ -1239,13 +1310,42 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
                         </div>
 
                         {/* Blue ring wraps everything below the header when root-dropping */}
-                        <div className="flex-1 flex flex-col min-h-0 relative">
+                        <div
+                            className="flex-1 flex flex-col min-h-0 relative"
+                            onDragOver={(e) => {
+                                if (!hasFilePayload(e.dataTransfer)) return;
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = "copy";
+                                setDragOverFileRoot(true);
+                            }}
+                            onDragLeave={(e) => {
+                                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                                    setDragOverFileRoot(false);
+                                }
+                            }}
+                            onDrop={(e) => {
+                                if (!hasFilePayload(e.dataTransfer)) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setDragOverFileRoot(false);
+                                setDragOverRoot(false);
+                                setDragOverFolderId(null);
+                                void handleDropProjectFiles(
+                                    Array.from(e.dataTransfer.files),
+                                );
+                            }}
+                        >
                             {dragOverRoot && dragOverFolderId === null && (
                                 <div className="absolute inset-0 border-2 border-blue-400 pointer-events-none z-[80]" />
                             )}
+                            {dragOverFileRoot && (
+                                <div className="absolute inset-0 z-[90] border-2 border-blue-400 bg-blue-50/40 pointer-events-none" />
+                            )}
 
                         {/* Empty state */}
-                        {docs.length === 0 && folders.length === 0 ? (
+                        {docs.length === 0 &&
+                        folders.length === 0 &&
+                        uploadingDroppedFilenames.length === 0 ? (
                             <div
                                 onClick={() => setAddDocsOpen(true)}
                                 className="flex-1 flex cursor-pointer flex-col items-center justify-center py-24 text-center"
@@ -1282,15 +1382,17 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
                             >
                                 {/* Search: flat list; no search: folder tree */}
                                 {q ? (
-                                    filteredDocs.map((doc) => {
-                                        const isProcessing = doc.status === "pending" || doc.status === "processing";
-                                        const isError = doc.status === "error";
-                                        const isVersionsOpen = expandedVersionDocIds.has(doc.id);
-                                        const hasVersions =
-                                            typeof doc.latest_version_number === "number" &&
-                                            doc.latest_version_number >= 1;
-                                        return (
-                                            <div key={doc.id}>
+                                    <>
+                                        {renderUploadingDocumentRows(0)}
+                                        {filteredDocs.map((doc) => {
+                                            const isProcessing = doc.status === "pending" || doc.status === "processing";
+                                            const isError = doc.status === "error";
+                                            const isVersionsOpen = expandedVersionDocIds.has(doc.id);
+                                            const hasVersions =
+                                                typeof doc.latest_version_number === "number" &&
+                                                doc.latest_version_number >= 1;
+                                            return (
+                                                <div key={doc.id}>
                                                 <div
                                                     onClick={() => {
                                     setViewingDocVersion(null);
@@ -1318,7 +1420,7 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
                                                             className="h-2.5 w-2.5 rounded border-gray-200 cursor-pointer accent-black"
                                                         />
                                                     </div>
-                                                    <div className={`sticky left-8 z-[60] ${DOC_NAME_COL_W} p-2 ${selectedDocIds.includes(doc.id) ? "bg-gray-50" : "bg-white"} group-hover:bg-gray-50`}>
+                                                    <div className={`sticky left-8 z-[60] ${DOC_NAME_COL_W} bg-white p-2 group-hover:bg-gray-50`}>
                                                     <div className="flex items-center gap-2">
                                                         {isProcessing ? <Loader2 className="h-4 w-4 animate-spin text-gray-400 shrink-0" /> : isError ? <AlertCircle className="h-4 w-4 text-red-500 shrink-0" /> : <DocIcon fileType={doc.file_type} />}
                                                         {renamingDocumentId === doc.id ? (
@@ -1423,9 +1525,10 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
                                                         }
                                                     />
                                                 )}
-                                            </div>
-                                        );
-                                    })
+                                                </div>
+                                            );
+                                        })}
+                                    </>
                                 ) : (
                                     renderLevel(null, 0)
                                 )}
