@@ -25,6 +25,7 @@ interface UserProfile {
     creditsResetDate: string;
     creditsRemaining: number;
     tier: string;
+    titleModel: string;
     tabularModel: string;
     apiKeys: ApiKeyState;
 }
@@ -35,7 +36,7 @@ interface UserProfileContextType {
     updateDisplayName: (name: string) => Promise<boolean>;
     updateOrganisation: (organisation: string) => Promise<boolean>;
     updateModelPreference: (
-        field: "tabularModel",
+        field: "titleModel" | "tabularModel",
         value: string,
     ) => Promise<boolean>;
     updateApiKey: (
@@ -50,13 +51,21 @@ const UserProfileContext = createContext<UserProfileContextType | undefined>(
     undefined,
 );
 
-const API_KEY_PROVIDERS: ApiKeyProvider[] = ["claude", "gemini", "openai"];
+const API_KEY_PROVIDERS: ApiKeyProvider[] = [
+    "claude",
+    "gemini",
+    "openai",
+    "openrouter",
+    "courtlistener",
+];
 
 function emptyApiKeys(): ApiKeyState {
     return {
         claude: { configured: false, source: null },
         gemini: { configured: false, source: null },
         openai: { configured: false, source: null },
+        openrouter: { configured: false, source: null },
+        courtlistener: { configured: false, source: null },
     };
 }
 
@@ -100,6 +109,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 creditsResetDate: futureResetDate.toISOString(),
                 creditsRemaining: 999999, // temporarily unlimited
                 tier: "Free",
+                titleModel: "gemini-3.1-flash-lite-preview",
                 tabularModel: "gemini-3-flash-preview",
                 apiKeys: emptyApiKeys(),
             });
@@ -154,12 +164,14 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     );
 
     const updateModelPreference = useCallback(
-        async (field: "tabularModel", value: string): Promise<boolean> => {
+        async (
+            field: "titleModel" | "tabularModel",
+            value: string,
+        ): Promise<boolean> => {
             if (!user) return false;
-            if (field !== "tabularModel") return false;
             try {
                 const updated = await updateUserProfile({
-                    tabularModel: value,
+                    [field]: value,
                 });
                 setProfile((prev) =>
                     prev ? { ...prev, ...toProfile(updated) } : null,

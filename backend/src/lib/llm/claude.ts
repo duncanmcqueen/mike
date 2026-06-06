@@ -7,6 +7,7 @@ import type {
     NormalizedToolResult,
 } from "./types";
 import { toClaudeTools } from "./tools";
+import { logRawLlmStream } from "./rawStreamLog";
 
 type ContentBlock =
     | { type: "text"; text: string }
@@ -41,6 +42,65 @@ function toNativeMessages(
     return messages.map((m) => ({ role: m.role, content: m.content }));
 }
 
+function claudeErrorMessage(error: unknown): string {
+    const parsedObject = claudeStreamFailureMessage(error);
+    if (parsedObject) return parsedObject;
+    if (error instanceof Error && error.message) {
+        const parsed = parseClaudeErrorPayload(error.message);
+        if (parsed) return parsed;
+        return error.message.startsWith("Claude error:")
+            ? error.message
+            : `Claude error: ${error.message}`;
+    }
+    const parsed = parseClaudeErrorPayload(String(error));
+    if (parsed) return parsed;
+    return `Claude error: ${String(error)}`;
+}
+
+function parseClaudeErrorPayload(value: string): string | null {
+    const trimmed = value.trim();
+    const jsonStart = trimmed.indexOf("{");
+    if (jsonStart < 0) return null;
+    const jsonEnd = trimmed.lastIndexOf("}");
+    if (jsonEnd <= jsonStart) return null;
+    const payload = trimmed.slice(jsonStart, jsonEnd + 1);
+    try {
+        const parsed = JSON.parse(payload) as unknown;
+        return claudeStreamFailureMessage(parsed);
+    } catch {
+        return null;
+    }
+}
+
+function claudeStreamFailureMessage(event: unknown): string | null {
+    if (!event || typeof event !== "object") return null;
+    const record = event as Record<string, unknown>;
+    const error = record.error;
+    if (record.type !== "error" || !error || typeof error !== "object") {
+        return null;
+    }
+    const err = error as Record<string, unknown>;
+    const type =
+        typeof err.type === "string" && err.type.trim()
+            ? err.type.trim()
+            : null;
+    const message =
+        typeof err.message === "string" && err.message.trim()
+            ? err.message.trim()
+            : "Claude stream failed.";
+    return type ? `Claude error (${type}): ${message}` : `Claude error: ${message}`;
+}
+
+function abortError(): Error {
+    const err = new Error("Stream aborted.");
+    err.name = "AbortError";
+    return err;
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+    if (signal?.aborted) throw abortError();
+}
+
 export async function streamClaude(
     params: StreamChatParams,
 ): Promise<StreamChatResult> {
@@ -61,6 +121,7 @@ export async function streamClaude(
     let fullText = "";
 
     for (let iter = 0; iter < maxIter; iter++) {
+        throwIfAborted(params.abortSignal);
         const stream = anthropic.messages.stream({
             model,
             system: systemPrompt,
@@ -82,6 +143,35 @@ export async function streamClaude(
         });
 
         let sawThinking = false;
+        let streamFailureMessage: string | null = null;
+        const abortStream = () => stream.abort();
+        params.abortSignal?.addEventListener("abort", abortStream, {
+            once: true,
+        });
+
+        stream.on("streamEvent", (event) => {
+            logRawLlmStream({
+                provider: "claude",
+                model,
+                iteration: iter,
+                label: "streamEvent",
+                payload: event,
+            });
+            const failureMessage = claudeStreamFailureMessage(event);
+            if (failureMessage) {
+                streamFailureMessage = failureMessage;
+                stream.abort();
+            }
+        });
+        stream.on("error", (error) => {
+            logRawLlmStream({
+                provider: "claude",
+                model,
+                iteration: iter,
+                label: "error",
+                payload: error,
+            });
+        });
 
         stream.on("text", (delta) => {
             callbacks.onContentDelta?.(delta);
@@ -93,8 +183,18 @@ export async function streamClaude(
             });
         }
 
-        const final = await stream.finalMessage();
+        let final: Awaited<ReturnType<typeof stream.finalMessage>>;
+        try {
+            final = await stream.finalMessage();
+        } catch (error) {
+            if (params.abortSignal?.aborted) throw abortError();
+            if (streamFailureMessage) throw new Error(streamFailureMessage);
+            throw new Error(claudeErrorMessage(error));
+        } finally {
+            params.abortSignal?.removeEventListener("abort", abortStream);
+        }
         if (sawThinking) callbacks.onReasoningBlockEnd?.();
+        throwIfAborted(params.abortSignal);
         const stopReason = final.stop_reason;
         const assistantBlocks = final.content as ContentBlock[];
 
@@ -126,6 +226,7 @@ export async function streamClaude(
         }
 
         const results = await runTools(toolCalls);
+        throwIfAborted(params.abortSignal);
 
         // Record the assistant turn (preserving the original content blocks,
         // which Claude requires on the follow-up) and the user turn that
@@ -152,12 +253,17 @@ export async function completeClaudeText(params: {
     apiKeys?: { claude?: string | null };
 }): Promise<string> {
     const anthropic = client(params.apiKeys?.claude);
-    const resp = await anthropic.messages.create({
-        model: params.model,
-        max_tokens: params.maxTokens ?? 512,
-        system: params.systemPrompt,
-        messages: [{ role: "user", content: params.user }],
-    });
+    let resp: Awaited<ReturnType<typeof anthropic.messages.create>>;
+    try {
+        resp = await anthropic.messages.create({
+            model: params.model,
+            max_tokens: params.maxTokens ?? 512,
+            system: params.systemPrompt,
+            messages: [{ role: "user", content: params.user }],
+        });
+    } catch (error) {
+        throw new Error(claudeErrorMessage(error));
+    }
     const text = resp.content
         .filter((b): b is Anthropic.TextBlock => b.type === "text")
         .map((b) => b.text)
