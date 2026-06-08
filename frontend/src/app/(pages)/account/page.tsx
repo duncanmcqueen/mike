@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { LogOut, Check } from "lucide-react";
+import { LogOut, Check, Save } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserProfile } from "@/contexts/UserProfileContext";
 import { deleteAccount } from "@/app/lib/mikeApi";
@@ -78,163 +78,188 @@ export default function AccountPage() {
     if (!user) return null;
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-8">
             {/* Profile Settings */}
-            <div className="pb-6">
-                <div className="flex items-center gap-2 mb-4">
-                    <h2 className="text-2xl font-medium font-serif">Profile</h2>
-                </div>
-                <div className="space-y-4">
-                    <div>
-                        <label className="text-sm text-gray-600 block mb-2">
-                            Display Name
-                        </label>
-                        <div className="flex gap-2">
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                    Profile
+                </h2>
+                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
+                    <div className="space-y-4">
+                        <div>
+                            <label className="text-sm text-gray-600 block mb-2">
+                                Display Name
+                            </label>
+                            <div className="flex gap-2">
+                                <Input
+                                    type="text"
+                                    value={displayName}
+                                    onChange={(e) =>
+                                        setDisplayName(e.target.value)
+                                    }
+                                    placeholder="Enter your name"
+                                    className="flex-1 bg-gray-50 shadow-none"
+                                />
+                                <Button
+                                    onClick={handleSaveDisplayName}
+                                    variant="outline"
+                                    disabled={
+                                        isSavingName ||
+                                        !displayName.trim() ||
+                                        saved
+                                    }
+                                    className="h-9 min-w-[74px] gap-1.5 bg-white px-2.5 text-xs text-gray-700 shadow-none hover:bg-gray-50"
+                                >
+                                    {isSavingName ? (
+                                        "Saving..."
+                                    ) : saved ? (
+                                        <>
+                                            <Check className="h-3.5 w-3.5" />
+                                            Saved
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Save className="h-3.5 w-3.5" />
+                                            Save
+                                        </>
+                                    )}
+                                </Button>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-sm text-gray-600 block mb-2">
+                                Organisation
+                            </label>
+                            <div className="flex gap-2">
+                                <Input
+                                    type="text"
+                                    value={organisation}
+                                    onChange={(e) =>
+                                        setOrganisation(e.target.value)
+                                    }
+                                    placeholder="Enter your organisation"
+                                    className="flex-1 bg-gray-50 shadow-none"
+                                />
+                                <Button
+                                    onClick={handleSaveOrganisation}
+                                    variant="outline"
+                                    disabled={
+                                        isSavingOrg ||
+                                        organisation.trim() ===
+                                            (profile?.organisation ?? "") ||
+                                        orgSaved
+                                    }
+                                    className="h-9 min-w-[74px] gap-1.5 bg-white px-2.5 text-xs text-gray-700 shadow-none hover:bg-gray-50"
+                                >
+                                    {isSavingOrg ? (
+                                        "Saving..."
+                                    ) : orgSaved ? (
+                                        <>
+                                            <Check className="h-3.5 w-3.5" />
+                                            Saved
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Save className="h-3.5 w-3.5" />
+                                            Save
+                                        </>
+                                    )}
+                                </Button>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-sm text-gray-600 block mb-2">
+                                Email
+                            </label>
                             <Input
-                                type="text"
-                                value={displayName}
-                                onChange={(e) => setDisplayName(e.target.value)}
-                                placeholder="Enter your name"
-                                className="flex-1"
+                                type="email"
+                                value={user?.email ?? ""}
+                                disabled
+                                className="bg-gray-50 shadow-none disabled:text-gray-700 disabled:opacity-100"
                             />
-                            <Button
-                                onClick={handleSaveDisplayName}
-                                disabled={
-                                    isSavingName || !displayName.trim() || saved
-                                }
-                                className="min-w-[80px] transition-all bg-black hover:bg-gray-900 text-white"
-                            >
-                                {isSavingName ? (
-                                    "Saving..."
-                                ) : saved ? (
-                                    <>
-                                        <Check className="h-4 w-3" />
-                                        Saved
-                                    </>
-                                ) : (
-                                    "Save"
-                                )}
-                            </Button>
                         </div>
                     </div>
-                    <div>
-                        <label className="text-sm text-gray-600 block mb-2">
-                            Organisation
-                        </label>
-                        <div className="flex gap-2">
-                            <Input
-                                type="text"
-                                value={organisation}
-                                onChange={(e) =>
-                                    setOrganisation(e.target.value)
-                                }
-                                placeholder="Enter your organisation"
-                                className="flex-1"
-                            />
-                            <Button
-                                onClick={handleSaveOrganisation}
-                                disabled={
-                                    isSavingOrg ||
-                                    organisation.trim() ===
-                                        (profile?.organisation ?? "") ||
-                                    orgSaved
-                                }
-                                className="min-w-[80px] transition-all bg-black hover:bg-gray-900 text-white"
-                            >
-                                {isSavingOrg ? (
-                                    "Saving..."
-                                ) : orgSaved ? (
-                                    <>
-                                        <Check className="h-4 w-3" />
-                                        Saved
-                                    </>
-                                ) : (
-                                    "Save"
-                                )}
-                            </Button>
-                        </div>
-                    </div>
-                    <div>
-                        <label className="text-sm text-gray-600 block mb-2">
-                            Email
-                        </label>
-                        <p className="text-base">{user?.email}</p>
-                    </div>
                 </div>
-            </div>
+            </section>
 
             {/* Plan */}
-            <div className="py-6">
-                <div className="flex items-center gap-2 mb-4">
-                    <h2 className="text-2xl font-medium font-serif">
-                        Usage Plan
-                    </h2>
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                    Usage Plan
+                </h2>
+                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
+                    <div>
+                        <p className="text-base font-medium text-gray-500 capitalize">
+                            {profile?.tier || "Free"}
+                        </p>
+                    </div>
                 </div>
-                <div>
-                    <p className="text-base font-medium text-gray-500 capitalize">
-                        {profile?.tier || "Free"}
-                    </p>
-                </div>
-            </div>
+            </section>
 
             {/* Actions */}
-            <div className="py-6">
-                <h2 className="text-2xl font-medium font-serif mb-4">
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Actions
                 </h2>
-                <Button
-                    variant="outline"
-                    onClick={handleLogout}
-                    className="w-full sm:w-auto"
-                >
-                    <LogOut className="h-4 w-4 mr-2" />
-                    Sign Out
-                </Button>
-            </div>
-
-            {/* Danger Zone */}
-            <div className="py-6">
-                <h2 className="text-2xl font-medium font-serif mb-1 text-red-600">
-                    Danger Zone
-                </h2>
-                <p className="text-sm text-gray-500 mb-4">
-                    Permanently delete your account and all associated data.
-                    This action cannot be undone.
-                </p>
-                {deleteConfirm ? (
-                    <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-3 max-w-sm">
-                        <p className="text-sm font-medium text-red-700">
-                            Are you sure? This will permanently delete your
-                            account.
-                        </p>
-                        <div className="flex gap-2">
-                            <Button
-                                variant="outline"
-                                onClick={() => setDeleteConfirm(false)}
-                                disabled={isDeleting}
-                                className="text-sm"
-                            >
-                                Cancel
-                            </Button>
-                            <Button
-                                onClick={handleDeleteAccount}
-                                disabled={isDeleting}
-                                className="text-sm bg-red-600 hover:bg-red-700 text-white"
-                            >
-                                {isDeleting ? "Deleting…" : "Delete Account"}
-                            </Button>
-                        </div>
-                    </div>
-                ) : (
+                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
                     <Button
                         variant="outline"
-                        onClick={() => setDeleteConfirm(true)}
-                        className="w-full sm:w-auto border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                        onClick={handleLogout}
+                        className="w-full shadow-none sm:w-auto"
                     >
-                        Delete Account
+                        <LogOut className="h-4 w-4 mr-2" />
+                        Sign Out
                     </Button>
-                )}
-            </div>
+                </div>
+            </section>
+
+            {/* Danger Zone */}
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-red-600">
+                    Danger Zone
+                </h2>
+                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
+                    <p className="text-sm text-gray-500 mb-4">
+                        Permanently delete your account and all associated data.
+                        This action cannot be undone.
+                    </p>
+                    {deleteConfirm ? (
+                        <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-3 max-w-sm">
+                            <p className="text-sm font-medium text-red-700">
+                                Are you sure? This will permanently delete your
+                                account.
+                            </p>
+                            <div className="flex gap-2">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setDeleteConfirm(false)}
+                                    disabled={isDeleting}
+                                    className="text-sm shadow-none"
+                                >
+                                    Cancel
+                                </Button>
+                                <Button
+                                    onClick={handleDeleteAccount}
+                                    disabled={isDeleting}
+                                    className="bg-red-600 text-sm text-white shadow-none hover:bg-red-700"
+                                >
+                                    {isDeleting
+                                        ? "Deleting…"
+                                        : "Delete Account"}
+                                </Button>
+                            </div>
+                        </div>
+                    ) : (
+                        <Button
+                            variant="outline"
+                            onClick={() => setDeleteConfirm(true)}
+                            className="w-full border-red-200 text-red-600 shadow-none hover:bg-red-50 hover:text-red-700 sm:w-auto"
+                        >
+                            Delete Account
+                        </Button>
+                    )}
+                </div>
+            </section>
         </div>
     );
 }

@@ -6,6 +6,7 @@ import type {
     StreamChatParams,
     StreamChatResult,
 } from "./types";
+import { logRawLlmStream } from "./rawStreamLog";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const MAX_OUTPUT_TOKENS = 16384;
@@ -31,7 +32,13 @@ type ResponseFunctionCallItem = {
 type ResponseStreamEvent = {
     type?: string;
     delta?: string;
-    response?: { id?: string; output_text?: string };
+    response?: {
+        id?: string;
+        output_text?: string;
+        status?: string;
+        error?: { code?: string; message?: string } | null;
+    };
+    error?: { code?: string; message?: string } | null;
     item?: ResponseFunctionCallItem;
 };
 
@@ -104,6 +111,35 @@ function parseFunctionCall(item: ResponseFunctionCallItem): NormalizedToolCall {
     };
 }
 
+function openAIStreamFailureMessage(event: ResponseStreamEvent): string | null {
+    const error = event.response?.error ?? event.error ?? null;
+    const failed =
+        event.type === "response.failed" ||
+        event.response?.status === "failed" ||
+        !!error;
+    if (!failed) return null;
+
+    const message =
+        typeof error?.message === "string" && error.message.trim()
+            ? error.message.trim()
+            : "OpenAI response failed.";
+    const code =
+        typeof error?.code === "string" && error.code.trim()
+            ? error.code.trim()
+            : null;
+    return code ? `OpenAI error (${code}): ${message}` : message;
+}
+
+function abortError(): Error {
+    const err = new Error("Stream aborted.");
+    err.name = "AbortError";
+    return err;
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+    if (signal?.aborted) throw abortError();
+}
+
 async function createResponse(params: {
     model: string;
     input: ResponseInputItem[];
@@ -114,6 +150,7 @@ async function createResponse(params: {
     previousResponseId?: string;
     reasoningSummary?: boolean;
     apiKey: string;
+    signal?: AbortSignal;
 }): Promise<Response> {
     const response = await fetch(OPENAI_RESPONSES_URL, {
         method: "POST",
@@ -133,6 +170,7 @@ async function createResponse(params: {
                 ? { summary: "auto" }
                 : undefined,
         }),
+        signal: params.signal,
     });
 
     if (!response.ok) {
@@ -168,6 +206,7 @@ export async function streamOpenAI(
     const hasTools = responseTools.length > 0;
 
     for (let iter = 0; iter < maxIter; iter++) {
+        throwIfAborted(params.abortSignal);
         const response = await createResponse({
             model,
             instructions: iter === 0 ? systemPrompt : undefined,
@@ -177,6 +216,7 @@ export async function streamOpenAI(
             previousResponseId,
             reasoningSummary: !!enableThinking,
             apiKey: key,
+            signal: params.abortSignal,
         });
         if (!response.body) throw new Error("OpenAI response had no body");
 
@@ -189,14 +229,36 @@ export async function streamOpenAI(
         let sawReasoning = false;
 
         while (true) {
+            throwIfAborted(params.abortSignal);
             const { done, value } = await reader.read();
             if (done) break;
 
-            buffer += decoder.decode(value, { stream: true });
+            const decoded = decoder.decode(value, { stream: true });
+            logRawLlmStream({
+                provider: "openai",
+                model,
+                iteration: iter,
+                label: "sse_chunk",
+                payload: decoded,
+            });
+            buffer += decoded;
             const extracted = extractSseJson(buffer);
             buffer = extracted.rest;
 
             for (const event of extracted.events as ResponseStreamEvent[]) {
+                logRawLlmStream({
+                    provider: "openai",
+                    model,
+                    iteration: iter,
+                    label: "sse_event",
+                    payload: event,
+                });
+
+                const failureMessage = openAIStreamFailureMessage(event);
+                if (failureMessage) {
+                    throw new Error(failureMessage);
+                }
+
                 if (event.response?.id) {
                     previousResponseId = event.response.id;
                 }
@@ -244,6 +306,7 @@ export async function streamOpenAI(
         }
 
         if (sawReasoning) callbacks.onReasoningBlockEnd?.();
+        throwIfAborted(params.abortSignal);
 
         if (!toolCalls.length || !runTools) {
             if (pendingText) {
@@ -254,6 +317,7 @@ export async function streamOpenAI(
         }
 
         const results = await runTools(toolCalls);
+        throwIfAborted(params.abortSignal);
         input = results.map((result) => ({
             type: "function_call_output",
             call_id: result.tool_use_id,
