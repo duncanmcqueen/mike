@@ -63,6 +63,8 @@ create table if not exists public.user_api_keys (
 create index if not exists idx_user_api_keys_user
   on public.user_api_keys(user_id);
 
+alter table public.user_api_keys enable row level security;
+
 -- ---------------------------------------------------------------------------
 -- Projects and documents
 -- ---------------------------------------------------------------------------
@@ -141,6 +143,21 @@ create index if not exists document_versions_document_id_idx
 
 create index if not exists document_versions_doc_vnum_idx
   on public.document_versions(document_id, version_number);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'document_versions_doc_version_unique'
+      and conrelid = 'public.document_versions'::regclass
+  ) then
+    alter table public.document_versions
+      add constraint document_versions_doc_version_unique
+      unique (document_id, version_number);
+  end if;
+end;
+$$;
 
 alter table public.documents
   add column if not exists current_version_id uuid
@@ -361,6 +378,8 @@ create index if not exists courtlistener_citation_lookup_idx
 create index if not exists courtlistener_citation_cluster_idx
   on public.courtlistener_citation_index(cluster_id);
 
+alter table public.courtlistener_citation_index enable row level security;
+
 create table if not exists public.courtlistener_opinion_cluster_index (
   id bigint primary key,
   case_name text,
@@ -374,6 +393,8 @@ create table if not exists public.courtlistener_opinion_cluster_index (
   filepath_json_harvard text,
   docket_id bigint
 );
+
+alter table public.courtlistener_opinion_cluster_index enable row level security;
 
 -- ---------------------------------------------------------------------------
 -- Direct client grant hardening
