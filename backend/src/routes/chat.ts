@@ -17,6 +17,7 @@ import {
 import { completeText } from "../lib/llm";
 import { getUserApiKeys, getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
+import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 
 export const chatRouter = Router();
 
@@ -427,7 +428,7 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
 
         res.json({ title });
     } catch (err) {
-        console.error("[generate-title]", err);
+        console.error("[generate-title]", safeErrorLog(err));
         res.status(500).json({ detail: "Failed to generate title" });
     }
 });
@@ -639,9 +640,8 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             }
             return;
         }
-        console.error("[chat/stream] error:", err);
-        const message =
-            err instanceof Error && err.message ? err.message : "Stream error";
+        console.error("[chat/stream] error:", safeErrorLog(err));
+        const message = safeErrorMessage(err, "Stream error");
         const errorEvents = err instanceof AssistantStreamError
             ? stripTransientAssistantEvents(err.events)
             : [{ type: "error" as const, message }];

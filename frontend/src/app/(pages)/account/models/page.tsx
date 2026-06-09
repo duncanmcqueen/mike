@@ -22,6 +22,10 @@ import {
     modelGroupToProvider,
     providerLabel,
 } from "@/app/lib/modelAvailability";
+import {
+    accountGlassInputClassName,
+    accountGlassSectionClassName,
+} from "../accountStyles";
 
 type ModelPreferenceField = "titleModel" | "tabularModel";
 
@@ -75,7 +79,7 @@ export default function ModelPreferencesPage() {
                     Model Preferences
                 </h2>
             </div>
-            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white divide-y divide-gray-200">
+            <div className={accountGlassSectionClassName}>
                 <div className="px-4 py-5">
                     <label className="text-sm font-medium text-gray-700 block mb-2">
                         Title generation model
@@ -96,6 +100,7 @@ export default function ModelPreferencesPage() {
                         onChange={(id) => handleModelChange("titleModel", id)}
                     />
                 </div>
+                <div className="mx-4 h-px bg-gray-200" />
                 <div className="px-4 py-5">
                     <label className="text-sm font-medium text-gray-700 block mb-2">
                         Tabular review model
@@ -152,7 +157,7 @@ function ModelPreferenceDropdown({
                 <button
                     type="button"
                     disabled={isSaving}
-                    className="w-full h-9 rounded-md border border-gray-300 bg-gray-50 px-3 text-sm flex items-center justify-between gap-2 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-black/10"
+                    className={`flex h-9 w-full items-center justify-between gap-2 px-3 text-sm hover:bg-white/78 ${accountGlassInputClassName}`}
                 >
                     <span className="flex items-center gap-2 min-w-0">
                         {!selectedAvailable && (

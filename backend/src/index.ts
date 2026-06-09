@@ -72,6 +72,18 @@ const uploadLimiter = makeLimiter({
   message: "Too many upload requests. Please try again later.",
 });
 
+const exportLimiter = makeLimiter({
+  windowMs: hours(envInt("RATE_LIMIT_EXPORT_WINDOW_HOURS", 1)),
+  max: envInt("RATE_LIMIT_EXPORT_MAX", 10),
+  message: "Too many export requests. Please try again later.",
+});
+
+const dataDeleteLimiter = makeLimiter({
+  windowMs: hours(envInt("RATE_LIMIT_DATA_DELETE_WINDOW_HOURS", 1)),
+  max: envInt("RATE_LIMIT_DATA_DELETE_MAX", 20),
+  message: "Too many data deletion requests. Please try again later.",
+});
+
 function jsonLimitForPath(path: string): string {
   return "50mb";
 }
@@ -117,6 +129,13 @@ app.post("/chat/:chatId/generate-title", chatCreateLimiter);
 app.post("/single-documents", uploadLimiter);
 app.post("/single-documents/:documentId/versions", uploadLimiter);
 app.post("/projects/:projectId/documents", uploadLimiter);
+app.get("/user/export", exportLimiter);
+app.get("/user/chats/export", exportLimiter);
+app.get("/user/tabular-reviews/export", exportLimiter);
+app.delete("/user/account", dataDeleteLimiter);
+app.delete("/user/chats", dataDeleteLimiter);
+app.delete("/user/projects", dataDeleteLimiter);
+app.delete("/user/tabular-reviews", dataDeleteLimiter);
 
 app.use((req, res, next) =>
   express.json({ limit: jsonLimitForPath(req.path) })(req, res, next),

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
   DEFAULT_TABULAR_MODEL,
@@ -15,6 +15,18 @@ import {
   normalizeApiKeyProvider,
   saveUserApiKey,
 } from "../lib/userApiKeys";
+import {
+  deleteAllUserChats,
+  deleteAllUserTabularReviews,
+  deleteUserAccountData,
+  deleteUserProjects,
+} from "../lib/userDataCleanup";
+import {
+  buildUserAccountExport,
+  buildUserChatsExport,
+  buildUserTabularReviewsExport,
+  userExportFilename,
+} from "../lib/userDataExport";
 
 export const userRouter = Router();
 
@@ -28,6 +40,7 @@ type UserProfileRow = {
   tier: string;
   title_model: string | null;
   tabular_model: string;
+  mfa_on_login: boolean | null;
 };
 
 function errorMessage(error: unknown): string {
@@ -48,20 +61,19 @@ function errorMessage(error: unknown): string {
 }
 
 const PROFILE_SELECT =
-  "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model";
+  "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login";
 const LEGACY_PROFILE_SELECT =
   "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model";
+const LEGACY_PROFILE_MODEL_SELECT =
+  "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model";
 
-function isMissingProfileModelColumn(error: unknown): boolean {
+function isMissingProfileColumn(error: unknown, column: string): boolean {
   const record =
     error && typeof error === "object"
       ? (error as { code?: unknown; message?: unknown })
       : {};
   const message = typeof record.message === "string" ? record.message : "";
-  return (
-    record.code === "42703" ||
-    message.includes("title_model")
-  );
+  return record.code === "42703" && message.includes(column);
 }
 
 async function selectProfile(
@@ -74,7 +86,30 @@ async function selectProfile(
     .select(PROFILE_SELECT)
     .eq("user_id", userId);
   const result = mode === "single" ? await query.single() : await query.maybeSingle();
-  if (!result.error || !isMissingProfileModelColumn(result.error)) {
+  if (!result.error) {
+    return result;
+  }
+
+  const missingMfaOnLogin = isMissingProfileColumn(result.error, "mfa_on_login");
+  if (missingMfaOnLogin) {
+    const modelQuery = db
+      .from("user_profiles")
+      .select(LEGACY_PROFILE_MODEL_SELECT)
+      .eq("user_id", userId);
+    const modelLegacy =
+      mode === "single" ? await modelQuery.single() : await modelQuery.maybeSingle();
+    if (!modelLegacy.error || !isMissingProfileColumn(modelLegacy.error, "title_model")) {
+      if (modelLegacy.data && typeof modelLegacy.data === "object") {
+        const row = modelLegacy.data as Record<string, unknown>;
+        Object.assign(row, {
+          mfa_on_login: false,
+        });
+      }
+      return modelLegacy;
+    }
+  }
+
+  if (!missingMfaOnLogin && !isMissingProfileColumn(result.error, "title_model")) {
     return result;
   }
 
@@ -88,6 +123,7 @@ async function selectProfile(
     const row = legacy.data as Record<string, unknown>;
     Object.assign(row, {
       title_model: null,
+      mfa_on_login: false,
     });
   }
   return legacy;
@@ -114,6 +150,7 @@ function serializeProfile(
     tier: row.tier || "Free",
     titleModel: resolveModel(row.title_model, titleFallback),
     tabularModel: resolveModel(row.tabular_model, DEFAULT_TABULAR_MODEL),
+    mfaOnLogin: row.mfa_on_login === true,
     ...(apiKeyStatus ? { apiKeyStatus } : {}),
   };
 }
@@ -191,6 +228,44 @@ function validateProfilePayload(body: unknown):
   }
 
   return { ok: true, update };
+}
+
+function readBooleanBodyField(
+  body: unknown,
+  field: string,
+): { ok: true; value: boolean } | { ok: false; detail: string } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, detail: "Expected a JSON object" };
+  }
+
+  const raw = body as Record<string, unknown>;
+  const invalidField = Object.keys(raw).find((key) => key !== field);
+  if (invalidField) {
+    return { ok: false, detail: `Unsupported field: ${invalidField}` };
+  }
+  if (typeof raw[field] !== "boolean") {
+    return { ok: false, detail: `${field} must be a boolean` };
+  }
+
+  return { ok: true, value: raw[field] };
+}
+
+async function userHasVerifiedTotpFactor(
+  db: ReturnType<typeof createServerSupabase>,
+  userId: string,
+) {
+  const { data, error } = await db.auth.admin.getUserById(userId);
+  if (error) return { ok: false as const, error };
+
+  const factors = data.user?.factors ?? [];
+  return {
+    ok: true as const,
+    hasVerifiedTotp: factors.some(
+      (factor) =>
+        factor.factor_type === "totp" &&
+        factor.status === "verified",
+    ),
+  };
 }
 
 async function ensureProfileRow(
@@ -299,6 +374,54 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
   res.json({ ...data, apiKeyStatus });
 });
 
+// PATCH /user/security/mfa-login
+userRouter.patch(
+  "/security/mfa-login",
+  requireAuth,
+  requireMfaIfEnrolled,
+  async (req, res) => {
+    const userId = res.locals.userId as string;
+    const parsed = readBooleanBodyField(req.body, "enabled");
+    if (!parsed.ok)
+      return void res.status(400).json({ detail: parsed.detail });
+
+    const db = createServerSupabase();
+    if (parsed.value) {
+      const factorCheck = await userHasVerifiedTotpFactor(db, userId);
+      if (!factorCheck.ok) {
+        return void res.status(500).json({
+          detail: factorCheck.error.message,
+        });
+      }
+      if (!factorCheck.hasVerifiedTotp) {
+        return void res.status(400).json({
+          detail:
+            "Set up an authenticator app before requiring verification on login.",
+        });
+      }
+    }
+
+    const ensureError = await ensureProfileRow(db, userId);
+    if (ensureError)
+      return void res.status(500).json({ detail: ensureError.message });
+
+    const { error: updateError } = await db
+      .from("user_profiles")
+      .update({
+        mfa_on_login: parsed.value,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId);
+    if (updateError)
+      return void res.status(500).json({ detail: updateError.message });
+
+    const apiKeyStatus = await getUserApiKeyStatus(userId, db);
+    const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
+    if (error) return void res.status(500).json({ detail: error.message });
+    res.json({ ...data, apiKeyStatus });
+  },
+);
+
 // GET /user/api-keys
 userRouter.get("/api-keys", requireAuth, async (_req, res) => {
   const userId = res.locals.userId as string;
@@ -308,7 +431,7 @@ userRouter.get("/api-keys", requireAuth, async (_req, res) => {
 });
 
 // PUT /user/api-keys/:provider
-userRouter.put("/api-keys/:provider", requireAuth, async (req, res) => {
+userRouter.put("/api-keys/:provider", requireAuth, requireMfaIfEnrolled, async (req, res) => {
   const userId = res.locals.userId as string;
   const provider = normalizeApiKeyProvider(req.params.provider);
   if (!provider)
@@ -338,10 +461,126 @@ userRouter.put("/api-keys/:provider", requireAuth, async (req, res) => {
 });
 
 // DELETE /user/account
-userRouter.delete("/account", requireAuth, async (_req, res) => {
+userRouter.delete("/account", requireAuth, requireMfaIfEnrolled, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const db = createServerSupabase();
+  try {
+    await deleteUserAccountData(db, userId, userEmail);
+    const { error } = await db.auth.admin.deleteUser(userId);
+    if (error) return void res.status(500).json({ detail: error.message });
+    res.status(204).send();
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/account] delete failed", { userId, error: detail });
+    res.status(500).json({ detail });
+  }
+});
+
+// DELETE /user/chats
+userRouter.delete("/chats", requireAuth, requireMfaIfEnrolled, async (_req, res) => {
   const userId = res.locals.userId as string;
   const db = createServerSupabase();
-  const { error } = await db.auth.admin.deleteUser(userId);
-  if (error) return void res.status(500).json({ detail: error.message });
-  res.status(204).send();
+  try {
+    await deleteAllUserChats(db, userId);
+    res.status(204).send();
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/chats] delete failed", { userId, error: detail });
+    res.status(500).json({ detail });
+  }
+});
+
+// DELETE /user/projects
+userRouter.delete("/projects", requireAuth, requireMfaIfEnrolled, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const db = createServerSupabase();
+  try {
+    await deleteUserProjects(db, userId);
+    res.status(204).send();
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/projects] delete failed", { userId, error: detail });
+    res.status(500).json({ detail });
+  }
+});
+
+// DELETE /user/tabular-reviews
+userRouter.delete("/tabular-reviews", requireAuth, requireMfaIfEnrolled, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const db = createServerSupabase();
+  try {
+    await deleteAllUserTabularReviews(db, userId);
+    res.status(204).send();
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/tabular-reviews] delete failed", {
+      userId,
+      error: detail,
+    });
+    res.status(500).json({ detail });
+  }
+});
+
+// GET /user/export
+userRouter.get("/export", requireAuth, requireMfaIfEnrolled, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const db = createServerSupabase();
+  try {
+    const data = await buildUserAccountExport(db, userId, userEmail);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${userExportFilename("account", userId)}"`,
+    );
+    res.json(data);
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/export] failed", { userId, error: detail });
+    res.status(500).json({ detail });
+  }
+});
+
+// GET /user/chats/export
+userRouter.get("/chats/export", requireAuth, requireMfaIfEnrolled, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const db = createServerSupabase();
+  try {
+    const data = await buildUserChatsExport(db, userId, userEmail);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${userExportFilename("chats", userId)}"`,
+    );
+    res.json(data);
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/chats/export] failed", { userId, error: detail });
+    res.status(500).json({ detail });
+  }
+});
+
+// GET /user/tabular-reviews/export
+userRouter.get("/tabular-reviews/export", requireAuth, requireMfaIfEnrolled, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const db = createServerSupabase();
+  try {
+    const data = await buildUserTabularReviewsExport(db, userId, userEmail);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${userExportFilename("tabular-reviews", userId)}"`,
+    );
+    res.json(data);
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.error("[user/tabular-reviews/export] failed", {
+      userId,
+      error: detail,
+    });
+    res.status(500).json({ detail });
+  }
 });

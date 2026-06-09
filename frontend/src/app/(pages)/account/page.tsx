@@ -2,16 +2,33 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { LogOut, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { LogOut, Check, Save } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserProfile } from "@/contexts/UserProfileContext";
-import { deleteAccount } from "@/app/lib/mikeApi";
+import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
+import {
+    MfaVerificationPopup,
+    needsMfaVerification,
+} from "@/app/components/shared/MfaVerificationPopup";
+import { WarningPopup } from "@/app/components/shared/WarningPopup";
+import { deleteAccount, isMfaRequiredError } from "@/app/lib/mikeApi";
+import {
+    accountGlassDangerOutlineButtonClassName,
+    accountGlassInputClassName,
+    accountGlassPrimaryButtonClassName,
+    accountGlassSectionClassName,
+} from "./accountStyles";
+
+const isDev = process.env.NODE_ENV !== "production";
+const devLog = (...args: Parameters<typeof console.log>) => {
+    if (isDev) console.log(...args);
+};
 
 export default function AccountPage() {
     const router = useRouter();
-    const { user, signOut } = useAuth();
+    const { user, signOut, updateEmail } = useAuth();
     const { profile, updateDisplayName, updateOrganisation } = useUserProfile();
     const [displayName, setDisplayName] = useState("");
     const [isSavingName, setIsSavingName] = useState(false);
@@ -19,8 +36,15 @@ export default function AccountPage() {
     const [organisation, setOrganisation] = useState("");
     const [isSavingOrg, setIsSavingOrg] = useState(false);
     const [orgSaved, setOrgSaved] = useState(false);
+    const [email, setEmail] = useState("");
+    const [isSavingEmail, setIsSavingEmail] = useState(false);
+    const [emailSaved, setEmailSaved] = useState(false);
+    const [emailStatus, setEmailStatus] = useState<string | null>(null);
+    const [emailWarning, setEmailWarning] = useState<string | null>(null);
+    const [emailMfaOpen, setEmailMfaOpen] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [accountDeleteMfaOpen, setAccountDeleteMfaOpen] = useState(false);
 
     useEffect(() => {
         if (profile?.displayName) {
@@ -31,21 +55,86 @@ export default function AccountPage() {
         }
     }, [profile]);
 
+    useEffect(() => {
+        if (user?.email) {
+            setEmail(user.pendingEmail || user.email);
+        }
+    }, [user?.email, user?.pendingEmail]);
+
     const handleLogout = async () => {
         await signOut();
         router.push("/");
     };
 
     const handleDeleteAccount = async () => {
+        devLog("[account/mfa] delete account requested");
         setIsDeleting(true);
         try {
+            if (await needsMfaVerification()) {
+                setDeleteConfirm(false);
+                setAccountDeleteMfaOpen(true);
+                setIsDeleting(false);
+                return;
+            }
             await deleteAccount();
             await signOut();
             router.push("/");
-        } catch {
+        } catch (error) {
             setIsDeleting(false);
+            devLog("[account/mfa] delete account failed", {
+                isMfaRequired: isMfaRequiredError(error),
+                error,
+            });
+            if (isMfaRequiredError(error)) {
+                setDeleteConfirm(false);
+                setAccountDeleteMfaOpen(true);
+                return;
+            }
             setDeleteConfirm(false);
             alert("Failed to delete account. Please try again.");
+        }
+    };
+
+    const handleSaveEmail = async () => {
+        const nextEmail = email.trim();
+        if (!nextEmail || nextEmail === user?.email) return;
+
+        devLog("[account/mfa] save email requested");
+        setIsSavingEmail(true);
+        setEmailStatus(null);
+        setEmailWarning(null);
+        try {
+            if (await needsMfaVerification()) {
+                setEmailMfaOpen(true);
+                return;
+            }
+
+            const updatedUser = await updateEmail(nextEmail);
+            const pendingEmail = updatedUser.pendingEmail;
+            setEmail(pendingEmail || updatedUser.email);
+            setEmailSaved(true);
+            setEmailStatus(
+                pendingEmail
+                    ? `Confirmation sent to ${pendingEmail}. Your current email remains ${updatedUser.email} until the change is confirmed.`
+                    : "Email updated.",
+            );
+            setTimeout(() => setEmailSaved(false), 2000);
+        } catch (error: unknown) {
+            devLog("[account/mfa] save email failed", { error });
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to update email. Please try again.";
+
+            if (isAlreadyRegisteredEmailError(message)) {
+                setEmail(user?.pendingEmail || user?.email || "");
+                setEmailWarning(message);
+                return;
+            }
+
+            setEmailStatus(message);
+        } finally {
+            setIsSavingEmail(false);
         }
     };
 
@@ -84,13 +173,13 @@ export default function AccountPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Profile
                 </h2>
-                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
-                    <div className="space-y-4">
-                        <div>
+                <div className={`${accountGlassSectionClassName} p-4`}>
+                    <div className="divide-y divide-gray-200">
+                        <div className="pb-4">
                             <label className="text-sm text-gray-600 block mb-2">
                                 Display Name
                             </label>
-                            <div className="flex gap-2">
+                            <div className="space-y-2">
                                 <Input
                                     type="text"
                                     value={displayName}
@@ -98,39 +187,35 @@ export default function AccountPage() {
                                         setDisplayName(e.target.value)
                                     }
                                     placeholder="Enter your name"
-                                    className="flex-1 bg-gray-50 shadow-none"
+                                    className={accountGlassInputClassName}
                                 />
-                                <Button
-                                    onClick={handleSaveDisplayName}
-                                    variant="outline"
-                                    disabled={
-                                        isSavingName ||
-                                        !displayName.trim() ||
-                                        saved
-                                    }
-                                    className="h-9 min-w-[74px] gap-1.5 bg-white px-2.5 text-xs text-gray-700 shadow-none hover:bg-gray-50"
-                                >
-                                    {isSavingName ? (
-                                        "Saving..."
-                                    ) : saved ? (
-                                        <>
-                                            <Check className="h-3.5 w-3.5" />
-                                            Saved
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Save className="h-3.5 w-3.5" />
-                                            Save
-                                        </>
-                                    )}
-                                </Button>
+                                <div className="flex justify-end">
+                                    <button
+                                        type="button"
+                                        onClick={handleSaveDisplayName}
+                                        disabled={
+                                            isSavingName ||
+                                            !displayName.trim() ||
+                                            saved
+                                        }
+                                        className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
+                                    >
+                                        {isSavingName ? (
+                                            "Saving..."
+                                        ) : saved ? (
+                                            "Saved"
+                                        ) : (
+                                            "Save"
+                                        )}
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                        <div>
+                        <div className="pt-4">
                             <label className="text-sm text-gray-600 block mb-2">
                                 Organisation
                             </label>
-                            <div className="flex gap-2">
+                            <div className="space-y-2">
                                 <Input
                                     type="text"
                                     value={organisation}
@@ -138,45 +223,89 @@ export default function AccountPage() {
                                         setOrganisation(e.target.value)
                                     }
                                     placeholder="Enter your organisation"
-                                    className="flex-1 bg-gray-50 shadow-none"
+                                    className={accountGlassInputClassName}
                                 />
-                                <Button
-                                    onClick={handleSaveOrganisation}
-                                    variant="outline"
-                                    disabled={
-                                        isSavingOrg ||
-                                        organisation.trim() ===
-                                            (profile?.organisation ?? "") ||
-                                        orgSaved
-                                    }
-                                    className="h-9 min-w-[74px] gap-1.5 bg-white px-2.5 text-xs text-gray-700 shadow-none hover:bg-gray-50"
-                                >
-                                    {isSavingOrg ? (
-                                        "Saving..."
-                                    ) : orgSaved ? (
-                                        <>
-                                            <Check className="h-3.5 w-3.5" />
-                                            Saved
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Save className="h-3.5 w-3.5" />
-                                            Save
-                                        </>
-                                    )}
-                                </Button>
+                                <div className="flex justify-end">
+                                    <button
+                                        type="button"
+                                        onClick={handleSaveOrganisation}
+                                        disabled={
+                                            isSavingOrg ||
+                                            organisation.trim() ===
+                                                (profile?.organisation ?? "") ||
+                                            orgSaved
+                                        }
+                                        className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
+                                    >
+                                        {isSavingOrg ? (
+                                            "Saving..."
+                                        ) : orgSaved ? (
+                                            "Saved"
+                                        ) : (
+                                            "Save"
+                                        )}
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                        <div>
-                            <label className="text-sm text-gray-600 block mb-2">
-                                Email
-                            </label>
-                            <Input
-                                type="email"
-                                value={user?.email ?? ""}
-                                disabled
-                                className="bg-gray-50 shadow-none disabled:text-gray-700 disabled:opacity-100"
-                            />
+                    </div>
+                </div>
+            </section>
+
+            {/* Email */}
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                    Email
+                </h2>
+                <div className={`${accountGlassSectionClassName} p-4`}>
+                    <div className="space-y-2">
+                        <Input
+                            type="email"
+                            value={email}
+                            onChange={(event) => {
+                                setEmail(event.target.value);
+                                setEmailStatus(null);
+                                setEmailWarning(null);
+                                setEmailSaved(false);
+                            }}
+                            placeholder="Enter your email"
+                            className={accountGlassInputClassName}
+                        />
+                        {emailStatus ? (
+                            <p className="text-xs text-gray-500">
+                                {emailStatus}
+                            </p>
+                        ) : user.pendingEmail ? (
+                            <p className="text-xs text-gray-500">
+                                Pending confirmation: {user.pendingEmail}
+                            </p>
+                        ) : null}
+                        {emailStatus && (
+                            <p className="text-xs text-gray-400">
+                                Current email: {user.email}
+                            </p>
+                        )}
+                        <div className="flex justify-end">
+                            <button
+                                type="button"
+                                onClick={handleSaveEmail}
+                                disabled={
+                                    isSavingEmail ||
+                                    !email.trim() ||
+                                    email.trim() === user.email ||
+                                    email.trim() === user.pendingEmail ||
+                                    emailSaved
+                                }
+                                className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
+                            >
+                                {isSavingEmail ? (
+                                    "Saving..."
+                                ) : emailSaved ? (
+                                    "Saved"
+                                ) : (
+                                    "Save"
+                                )}
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -187,7 +316,7 @@ export default function AccountPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Usage Plan
                 </h2>
-                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
+                <div className={`${accountGlassSectionClassName} p-4`}>
                     <div>
                         <p className="text-base font-medium text-gray-500 capitalize">
                             {profile?.tier || "Free"}
@@ -201,16 +330,14 @@ export default function AccountPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Actions
                 </h2>
-                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
-                    <Button
-                        variant="outline"
-                        onClick={handleLogout}
-                        className="w-full shadow-none sm:w-auto"
-                    >
-                        <LogOut className="h-4 w-4 mr-2" />
-                        Sign Out
-                    </Button>
-                </div>
+                <Button
+                    variant="outline"
+                    onClick={handleLogout}
+                    className="w-full gap-1.5 rounded-lg border border-transparent bg-gray-950 px-3 text-white shadow-none transition-colors hover:bg-gray-900 hover:text-white active:bg-black sm:w-auto"
+                >
+                    <LogOut className="h-4 w-4 shrink-0" />
+                    Sign Out
+                </Button>
             </section>
 
             {/* Danger Zone */}
@@ -218,48 +345,76 @@ export default function AccountPage() {
                 <h2 className="text-2xl font-medium font-serif text-red-600">
                     Danger Zone
                 </h2>
-                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
-                    <p className="text-sm text-gray-500 mb-4">
-                        Permanently delete your account and all associated data.
-                        This action cannot be undone.
-                    </p>
-                    {deleteConfirm ? (
-                        <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-3 max-w-sm">
-                            <p className="text-sm font-medium text-red-700">
-                                Are you sure? This will permanently delete your
-                                account.
-                            </p>
-                            <div className="flex gap-2">
-                                <Button
-                                    variant="outline"
-                                    onClick={() => setDeleteConfirm(false)}
-                                    disabled={isDeleting}
-                                    className="text-sm shadow-none"
-                                >
-                                    Cancel
-                                </Button>
-                                <Button
-                                    onClick={handleDeleteAccount}
-                                    disabled={isDeleting}
-                                    className="bg-red-600 text-sm text-white shadow-none hover:bg-red-700"
-                                >
-                                    {isDeleting
-                                        ? "Deleting…"
-                                        : "Delete Account"}
-                                </Button>
-                            </div>
-                        </div>
-                    ) : (
-                        <Button
-                            variant="outline"
-                            onClick={() => setDeleteConfirm(true)}
-                            className="w-full border-red-200 text-red-600 shadow-none hover:bg-red-50 hover:text-red-700 sm:w-auto"
-                        >
-                            Delete Account
-                        </Button>
-                    )}
+                <div
+                    className={`${accountGlassSectionClassName} flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between`}
+                >
+                    <div className="space-y-1">
+                        <p className="text-sm font-medium text-gray-900">
+                            Delete account
+                        </p>
+                        <p className="text-sm text-gray-500">
+                            Permanently delete your account and all associated
+                            data. This action cannot be undone.
+                        </p>
+                    </div>
+                    <Button
+                        variant="outline"
+                        onClick={() => setDeleteConfirm(true)}
+                        disabled={isDeleting}
+                        className={`w-full shrink-0 gap-1.5 sm:w-auto ${accountGlassDangerOutlineButtonClassName}`}
+                    >
+                        <Trash2 className="h-4 w-4 shrink-0" />
+                        Delete account
+                    </Button>
                 </div>
             </section>
+            <ConfirmPopup
+                open={deleteConfirm}
+                title="Delete account?"
+                message="This will permanently delete your account and all associated data. This action cannot be undone."
+                confirmLabel="Delete"
+                confirmStatus={isDeleting ? "loading" : "idle"}
+                cancelLabel="Cancel"
+                onCancel={() => {
+                    if (isDeleting) return;
+                    setDeleteConfirm(false);
+                }}
+                onConfirm={() => void handleDeleteAccount()}
+            />
+            <WarningPopup
+                open={!!emailWarning}
+                title="Email already registered"
+                message={emailWarning}
+                onClose={() => setEmailWarning(null)}
+            />
+            <MfaVerificationPopup
+                open={accountDeleteMfaOpen}
+                onCancel={() => setAccountDeleteMfaOpen(false)}
+                onVerified={() => {
+                    devLog("[account/mfa] account delete verification callback");
+                    setAccountDeleteMfaOpen(false);
+                    void handleDeleteAccount();
+                }}
+                title="Two-factor verification required"
+                message="Account deletion is sensitive. Enter a code from your authenticator app to continue."
+            />
+            <MfaVerificationPopup
+                open={emailMfaOpen}
+                onCancel={() => setEmailMfaOpen(false)}
+                onVerified={() => {
+                    devLog("[account/mfa] email verification callback");
+                    setEmailMfaOpen(false);
+                    void handleSaveEmail();
+                }}
+                title="Two-factor verification required"
+                message="Email changes are sensitive. Enter a code from your authenticator app to continue."
+            />
         </div>
     );
+}
+
+function isAlreadyRegisteredEmailError(message: string) {
+    return message
+        .toLowerCase()
+        .includes("a user with this email address has already been registered");
 }
