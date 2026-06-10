@@ -14,7 +14,9 @@ import {
     type ApiKeyProvider,
     type UserProfile as ApiUserProfile,
     getUserProfile,
+    isMfaRequiredError,
     saveApiKey,
+    updateUserMfaOnLogin,
     updateUserProfile,
 } from "@/app/lib/mikeApi";
 
@@ -27,6 +29,7 @@ interface UserProfile {
     tier: string;
     titleModel: string;
     tabularModel: string;
+    mfaOnLogin: boolean;
     apiKeys: ApiKeyState;
 }
 
@@ -39,6 +42,7 @@ interface UserProfileContextType {
         field: "titleModel" | "tabularModel",
         value: string,
     ) => Promise<boolean>;
+    updateMfaOnLogin: (enabled: boolean) => Promise<boolean>;
     updateApiKey: (
         provider: ApiKeyProvider,
         value: string | null,
@@ -83,6 +87,7 @@ function toProfile(data: ApiUserProfile): UserProfile {
 
     return {
         ...profile,
+        mfaOnLogin: profile.mfaOnLogin === true,
         apiKeys,
     };
 }
@@ -91,6 +96,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     const { user, isAuthenticated } = useAuth();
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [loading, setLoading] = useState(true);
+    const userId = user?.id ?? null;
 
     const loadProfile = useCallback(async () => {
         try {
@@ -111,6 +117,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 tier: "Free",
                 titleModel: "gemini-3.1-flash-lite-preview",
                 tabularModel: "gemini-3-flash-preview",
+                mfaOnLogin: false,
                 apiKeys: emptyApiKeys(),
             });
         } finally {
@@ -119,14 +126,14 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
-        if (isAuthenticated && user) {
+        if (isAuthenticated && userId) {
             setLoading(true);
             loadProfile();
         } else {
             setProfile(null);
             setLoading(false);
         }
-    }, [isAuthenticated, user, loadProfile]);
+    }, [isAuthenticated, userId, loadProfile]);
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
@@ -156,7 +163,8 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                     prev ? { ...prev, ...toProfile(updated) } : null,
                 );
                 return true;
-            } catch {
+            } catch (error) {
+                if (isMfaRequiredError(error)) throw error;
                 return false;
             }
         },
@@ -178,6 +186,23 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 );
                 return true;
             } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const updateMfaOnLogin = useCallback(
+        async (enabled: boolean): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const updated = await updateUserMfaOnLogin(enabled);
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch (error) {
+                if (isMfaRequiredError(error)) throw error;
                 return false;
             }
         },
@@ -208,7 +233,8 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                         : null,
                 );
                 return true;
-            } catch {
+            } catch (error) {
+                if (isMfaRequiredError(error)) throw error;
                 return false;
             }
         },
@@ -216,10 +242,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     );
 
     const reloadProfile = useCallback(async () => {
-        if (user) {
+        if (userId) {
             await loadProfile();
         }
-    }, [user, loadProfile]);
+    }, [userId, loadProfile]);
 
     const incrementMessageCredits = useCallback(async (): Promise<boolean> => {
         if (!user || !profile) {
@@ -242,6 +268,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateDisplayName,
                 updateOrganisation,
                 updateModelPreference,
+                updateMfaOnLogin,
                 updateApiKey,
                 reloadProfile,
                 incrementMessageCredits,

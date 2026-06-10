@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { accountTabButtonClassName } from "./accountStyles";
 
 interface TabDef {
     id: string;
@@ -13,6 +14,12 @@ interface TabDef {
 
 const TABS: TabDef[] = [
     { id: "general", label: "General", href: "/account" },
+    {
+        id: "privacy-data",
+        label: "Privacy & Data",
+        href: "/account/privacy-data",
+    },
+    { id: "security", label: "Security", href: "/account/security" },
     { id: "models", label: "Model Preferences", href: "/account/models" },
     { id: "api-keys", label: "API Keys", href: "/account/api-keys" },
 ];
@@ -78,11 +85,9 @@ export default function AccountLayout({
                                                     onClick={() =>
                                                         router.push(tab.href)
                                                     }
-                                                    className={`flex h-9 w-full items-center rounded-lg px-3 text-left text-sm font-medium whitespace-nowrap transition-colors ${
-                                                        active
-                                                            ? "bg-gray-100 text-gray-900"
-                                                            : "text-gray-500 hover:bg-gray-50 hover:text-gray-900"
-                                                    }`}
+                                                    className={accountTabButtonClassName(
+                                                        active,
+                                                    )}
                                                 >
                                                     {tab.label}
                                                 </button>
