@@ -20,20 +20,30 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
     const isVerifyPage = pathname === "/verify-mfa";
 
     useEffect(() => {
-        if (!user || loading || !profile?.mfaOnLogin) {
+        if (!user) {
+            setGateState("idle");
+            return;
+        }
+        if (loading) {
+            return;
+        }
+        if (!profile?.mfaOnLogin) {
             setGateState("idle");
             return;
         }
 
+        if (hasRecentMfaVerification()) {
+            setGateState("verified");
+            return;
+        }
+
         let cancelled = false;
-        setGateState("checking");
+        setGateState((previous) =>
+            previous === "verified" ? "verified" : "checking",
+        );
 
         async function checkLoginMfa() {
             try {
-                if (hasRecentMfaVerification()) {
-                    if (!cancelled) setGateState("verified");
-                    return;
-                }
                 const required = await needsMfaVerification();
                 if (cancelled) return;
                 setGateState(required ? "required" : "verified");
@@ -47,7 +57,7 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
         return () => {
             cancelled = true;
         };
-    }, [loading, profile?.mfaOnLogin, user]);
+    }, [loading, profile?.mfaOnLogin, user?.id]);
 
     useEffect(() => {
         if (!user || loading || !profile?.mfaOnLogin) return;
@@ -75,7 +85,13 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
         user,
     ]);
 
-    if (user && loading) return <FullScreenGateLoader />;
+    if (user && loading) {
+        return gateState === "verified" ? (
+            <>{children}</>
+        ) : (
+            <FullScreenGateLoader />
+        );
+    }
 
     if (user && profile?.mfaOnLogin) {
         if (gateState === "required" && isVerifyPage) {

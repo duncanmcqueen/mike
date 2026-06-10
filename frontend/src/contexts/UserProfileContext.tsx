@@ -96,6 +96,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     const { user, isAuthenticated } = useAuth();
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [loading, setLoading] = useState(true);
+    const userId = user?.id ?? null;
 
     const loadProfile = useCallback(async () => {
         try {
@@ -125,14 +126,14 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
-        if (isAuthenticated && user) {
+        if (isAuthenticated && userId) {
             setLoading(true);
             loadProfile();
         } else {
             setProfile(null);
             setLoading(false);
         }
-    }, [isAuthenticated, user, loadProfile]);
+    }, [isAuthenticated, userId, loadProfile]);
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
@@ -241,10 +242,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     );
 
     const reloadProfile = useCallback(async () => {
-        if (user) {
+        if (userId) {
             await loadProfile();
         }
-    }, [user, loadProfile]);
+    }, [userId, loadProfile]);
 
     const incrementMessageCredits = useCallback(async (): Promise<boolean> => {
         if (!user || !profile) {
