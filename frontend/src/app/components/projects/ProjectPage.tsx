@@ -63,6 +63,7 @@ import {
 import { PeopleModal } from "@/app/components/shared/PeopleModal";
 import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
 import { useAuth } from "@/contexts/AuthContext";
+import { useUserProfile } from "@/contexts/UserProfileContext";
 import { AddNewTRModal } from "@/app/components/tabular/AddNewTRModal";
 import { WarningPopup } from "@/app/components/shared/WarningPopup";
 import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
@@ -83,6 +84,7 @@ import {
     type ProjectTab,
 } from "./ProjectPageParts";
 import { DocumentSidePanel } from "./DocumentSidePanel";
+import { ProjectDetailsModal } from "./ProjectDetailsModal";
 import { ProjectAssistantTab } from "./ProjectAssistantTab";
 import { ProjectReviewsTab } from "./ProjectReviewsTab";
 
@@ -274,9 +276,11 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
             : initialTab;
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const [peopleModalOpen, setPeopleModalOpen] = useState(false);
+    const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
     const { user } = useAuth();
-    const stickyCellBg = "bg-[#fcfcfd]";
+    const { profile } = useUserProfile();
+    const stickyCellBg = "bg-[#fafbfc]";
     const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
     const [viewingDocVersion, setViewingDocVersion] = useState<{
         id: string;
@@ -1133,33 +1137,30 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
         }
     }
 
-    async function handleTitleCommit(newName: string) {
-        if (!newName || newName === project?.name) return;
-        // Server-side this would 404 silently for non-owners; surface a
-        // clear permission warning instead.
+    async function handleProjectDetailsSave(values: {
+        name: string;
+        cmNumber: string;
+    }) {
         if (project && project.is_owner === false) {
-            setOwnerOnlyAction("rename this project");
+            setOwnerOnlyAction("edit project details");
             return;
         }
-        setProject((prev) => (prev ? { ...prev, name: newName } : prev));
-        await updateProject(projectId, { name: newName });
-    }
-
-    async function handleCmNumberCommit(newCmNumber: string) {
-        if (project && project.is_owner === false) {
-            setOwnerOnlyAction("rename this project's CM number");
-            return;
-        }
-        const trimmed = newCmNumber.trim();
-        if (trimmed === (project?.cm_number ?? "")) return;
-        setProject((prev) =>
-            prev ? { ...prev, cm_number: trimmed || null } : prev,
-        );
+        const name = values.name.trim();
+        const cmNumber = values.cmNumber.trim();
+        if (!name) return;
         const updated = await updateProject(projectId, {
-            cm_number: trimmed,
+            name,
+            cm_number: cmNumber,
         });
         setProject((prev) =>
-            prev ? { ...prev, cm_number: updated.cm_number } : prev,
+            prev
+                ? {
+                      ...prev,
+                      name: updated.name,
+                      cm_number: updated.cm_number,
+                      updated_at: updated.updated_at,
+                  }
+                : prev,
         );
     }
 
@@ -2519,9 +2520,8 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
                 docsCount={docs.length}
                 isOwner={project?.is_owner !== false}
                 onBackToProjects={() => router.push("/projects")}
-                onRenameProject={handleTitleCommit}
-                onRenameCmNumber={handleCmNumberCommit}
                 onOwnerOnly={setOwnerOnlyAction}
+                onOpenDetails={() => setProjectDetailsOpen(true)}
                 onDeleteProject={requestProjectDelete}
                 onSearchChange={setSearch}
                 onOpenPeople={() => setPeopleModalOpen(true)}
@@ -3424,6 +3424,21 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
                 onClose={() => setOwnerOnlyAction(null)}
+            />
+
+            <ProjectDetailsModal
+                open={projectDetailsOpen}
+                project={project}
+                canEdit={project?.is_owner !== false}
+                currentUserDisplayName={profile?.displayName ?? null}
+                currentUserEmail={user?.email ?? null}
+                fetchPeople={getProjectPeople}
+                onClose={() => setProjectDetailsOpen(false)}
+                onSave={handleProjectDetailsSave}
+                onShareProject={() => {
+                    setProjectDetailsOpen(false);
+                    setPeopleModalOpen(true);
+                }}
             />
 
             <ConfirmPopup
