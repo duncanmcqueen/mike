@@ -1,11 +1,11 @@
 "use client";
 
-import { type CSSProperties, type KeyboardEvent, useState } from "react";
+import { type CSSProperties, useRef, useState } from "react";
 import {
     CornerDownRight,
     File,
     FileText,
-    Hash,
+    Info,
     Loader2,
     MessageSquare,
     Pencil,
@@ -108,8 +108,10 @@ export function DocVersionHistory({
         null,
     );
     const [editingValue, setEditingValue] = useState("");
+    const committingVersionId = useRef<string | null>(null);
 
     const commit = async (versionId: string) => {
+        if (committingVersionId.current === versionId) return;
         const trimmed = editingValue.trim();
         const previousFilename = versions
             .find((version) => version.id === versionId)
@@ -123,6 +125,7 @@ export function DocVersionHistory({
             return;
         }
 
+        committingVersionId.current = versionId;
         setEditingVersionId(null);
         const next = trimmed.length > 0 ? trimmed : null;
         await onRenameVersion?.(versionId, next);
@@ -260,6 +263,7 @@ export function DocVersionHistory({
                                                 e.preventDefault();
                                                 void commit(v.id);
                                             } else if (e.key === "Escape") {
+                                                committingVersionId.current = null;
                                                 setEditingVersionId(null);
                                             }
                                         }}
@@ -322,6 +326,7 @@ export function DocVersionHistory({
                                     onRename={
                                         onRenameVersion
                                             ? () => {
+                                                  committingVersionId.current = null;
                                                   setEditingVersionId(v.id);
                                                   setEditingValue(
                                                       v.filename ?? "",
@@ -355,9 +360,8 @@ export function ProjectPageHeader({
     docsCount,
     isOwner,
     onBackToProjects,
-    onRenameProject,
-    onRenameCmNumber,
     onOwnerOnly,
+    onOpenDetails,
     onDeleteProject,
     onSearchChange,
     onOpenPeople,
@@ -371,100 +375,32 @@ export function ProjectPageHeader({
     docsCount: number;
     isOwner: boolean;
     onBackToProjects: () => void;
-    onRenameProject: (name: string) => void;
-    onRenameCmNumber: (cmNumber: string) => void;
     onOwnerOnly: (action: string) => void;
+    onOpenDetails: () => void;
     onDeleteProject: () => void;
     onSearchChange: (search: string) => void;
     onOpenPeople: () => void;
     onNewChat: () => void;
     onNewReview: () => void;
 }) {
-    const [editingField, setEditingField] = useState<"name" | "cm" | null>(
-        null,
-    );
-    const [draft, setDraft] = useState("");
-
-    const startEdit = (field: "name" | "cm") => {
+    const requestRename = () => {
         if (!project) return;
         if (!isOwner) {
-            onOwnerOnly(
-                field === "name"
-                    ? "rename this project"
-                    : "rename this project's CM number",
-            );
+            onOwnerOnly("rename this project");
             return;
         }
-        setDraft(field === "name" ? project.name : project.cm_number ?? "");
-        setEditingField(field);
+        onOpenDetails();
     };
 
-    const commitEdit = () => {
-        if (!editingField) return;
-        const value = draft.trim();
-        if (editingField === "name") onRenameProject(value);
-        else onRenameCmNumber(value);
-        setEditingField(null);
-    };
-
-    const handleEditKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === "Enter") {
-            e.preventDefault();
-            commitEdit();
-        } else if (e.key === "Escape") {
-            e.preventDefault();
-            setEditingField(null);
-        }
-    };
-
-    const editInputClassName =
-        "min-w-0 cursor-text border-0 border-b border-gray-200 bg-transparent font-serif text-2xl font-medium outline-none transition-colors focus:border-gray-300";
-
-    const titleLabel = !project ? undefined : editingField === "name" ? (
-        <input
-            autoFocus
-            value={draft}
-            size={Math.max(draft.length + 1, 3)}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={handleEditKeyDown}
-            onBlur={commitEdit}
-            className={`${editInputClassName} text-gray-900`}
-            aria-label="Rename project"
-        />
-    ) : (
+    const titleLabel = !project ? undefined : (
         <span
-            onClick={() => startEdit("name")}
+            onClick={requestRename}
             className="inline-block cursor-text"
             title="Rename"
         >
             {project.name}
         </span>
     );
-
-    const cmSuffix = !project ? null : editingField === "cm" ? (
-        <span className="ml-1 inline-flex items-center text-gray-400">
-            (#
-            <input
-                autoFocus
-                value={draft}
-                size={Math.max(draft.length + 1, 3)}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={handleEditKeyDown}
-                onBlur={commitEdit}
-                className={`${editInputClassName} text-gray-400`}
-                aria-label="Rename CM number"
-            />
-            )
-        </span>
-    ) : project.cm_number ? (
-        <span
-            onClick={() => startEdit("cm")}
-            className="ml-1 inline-block cursor-text text-gray-400"
-            title="Rename CM"
-        >
-            (#{project.cm_number})
-        </span>
-    ) : null;
 
     return (
         <PageHeader
@@ -478,7 +414,6 @@ export function ProjectPageHeader({
                     ...(project
                         ? {
                               label: titleLabel,
-                              suffix: cmSuffix,
                               cursor: "text",
                           }
                         : {
@@ -511,12 +446,12 @@ export function ProjectPageHeader({
                                     {
                                         label: "Rename",
                                         icon: Pencil,
-                                        onSelect: () => startEdit("name"),
+                                        onSelect: requestRename,
                                     },
                                     {
-                                        label: "Rename CM",
-                                        icon: Hash,
-                                        onSelect: () => startEdit("cm"),
+                                        label: "Project Details",
+                                        icon: Info,
+                                        onSelect: onOpenDetails,
                                     },
                                     {
                                         label: "Delete",
@@ -535,6 +470,7 @@ export function ProjectPageHeader({
                         {
                             onClick: onNewChat,
                             disabled: creatingChat,
+                            compact: true,
                             icon: creatingChat ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
@@ -549,6 +485,7 @@ export function ProjectPageHeader({
                         {
                             onClick: onNewReview,
                             disabled: docsCount === 0 || creatingReview,
+                            compact: true,
                             icon: creatingReview ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (

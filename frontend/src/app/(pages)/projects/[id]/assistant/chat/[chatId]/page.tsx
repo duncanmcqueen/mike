@@ -782,18 +782,15 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                     project
                         ? {
                               label: project.name,
-                              suffix: project.cm_number ? (
-                                  <span className="ml-1 text-gray-400">
-                                      (#{project.cm_number})
-                                  </span>
-                              ) : null,
-                              onClick: () => router.push(`/projects/${projectId}`),
+                              onClick: () =>
+                                  router.push(`/projects/${projectId}?tab=assistant`),
                               title: "Back to project",
                           }
                         : {
                               loading: true,
                               skeletonClassName: "w-32",
-                              onClick: () => router.push(`/projects/${projectId}`),
+                              onClick: () =>
+                                  router.push(`/projects/${projectId}?tab=assistant`),
                               title: "Back to project",
                           },
                     chatLoaded

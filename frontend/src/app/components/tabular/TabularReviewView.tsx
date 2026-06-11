@@ -37,7 +37,7 @@ import type {
     Workflow,
 } from "../shared/types";
 import { AddColumnModal } from "./AddColumnModal";
-import { ApplyWorkflowPresetModal } from "./ApplyWorkflowPresetModal";
+import { TRWorkflowModal } from "./TRWorkflowModal";
 import { AddDocumentsModal } from "../shared/AddDocumentsModal";
 import { AddProjectDocsModal } from "../shared/AddProjectDocsModal";
 import { PeopleModal } from "../shared/PeopleModal";
@@ -79,9 +79,8 @@ export function TRView({ reviewId, projectId }: Props) {
     const [addColOpen, setAddColOpen] = useState(false);
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const [peopleModalOpen, setPeopleModalOpen] = useState(false);
-    const [workflowPresetModalOpen, setWorkflowPresetModalOpen] =
-        useState(false);
-    const [applyingWorkflowPreset, setApplyingWorkflowPreset] = useState(false);
+    const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
+    const [applyingWorkflow, setApplyingWorkflow] = useState(false);
     const [deleteReviewConfirmOpen, setDeleteReviewConfirmOpen] =
         useState(false);
     const [deleteReviewStatus, setDeleteReviewStatus] = useState<
@@ -591,15 +590,15 @@ export function TRView({ reviewId, projectId }: Props) {
         }
     }
 
-    function requestWorkflowPreset() {
+    function requestWorkflow() {
         if (review?.is_owner === false) {
-            setOwnerOnlyAction("apply a preset workflow");
+            setOwnerOnlyAction("apply a workflow");
             return;
         }
-        setWorkflowPresetModalOpen(true);
+        setWorkflowModalOpen(true);
     }
 
-    async function handleApplyWorkflowPreset(workflow: Workflow) {
+    async function handleApplyWorkflow(workflow: Workflow) {
         if (!workflow.columns_config?.length) return;
         const nextColumns = workflow.columns_config.map((column, index) => ({
             ...column,
@@ -607,7 +606,7 @@ export function TRView({ reviewId, projectId }: Props) {
         }));
         const previousColumns = columns;
         const previousCells = cells;
-        setApplyingWorkflowPreset(true);
+        setApplyingWorkflow(true);
         setColumns(nextColumns);
         setCells([]);
         try {
@@ -622,13 +621,13 @@ export function TRView({ reviewId, projectId }: Props) {
                     console.error("Failed to clear old tabular cells", err);
                 }
             }
-            setWorkflowPresetModalOpen(false);
+            setWorkflowModalOpen(false);
         } catch (err) {
             setColumns(previousColumns);
             setCells(previousCells);
-            console.error("Failed to apply workflow preset", err);
+            console.error("Failed to apply workflow", err);
         } finally {
-            setApplyingWorkflowPreset(false);
+            setApplyingWorkflow(false);
         }
     }
 
@@ -657,18 +656,17 @@ export function TRView({ reviewId, projectId }: Props) {
                                             loading: true,
                                             skeletonClassName: "w-32",
                                             onClick: () =>
-                                                router.push(`/projects/${projectId}`),
+                                                router.push(
+                                                    `/projects/${projectId}?tab=reviews`,
+                                                ),
                                             title: "Back to project",
                                         }
                                       : {
                                             label: project?.name ?? "",
-                                            suffix: project?.cm_number ? (
-                                                <span className="ml-1 text-gray-400">
-                                                    (#{project.cm_number})
-                                                </span>
-                                            ) : null,
                                             onClick: () =>
-                                                router.push(`/projects/${projectId}`),
+                                                router.push(
+                                                    `/projects/${projectId}?tab=reviews`,
+                                                ),
                                             title: "Back to project",
                                         },
                               ]
@@ -716,10 +714,9 @@ export function TRView({ reviewId, projectId }: Props) {
                                                 onSelect: requestReviewRename,
                                             },
                                             {
-                                                label: "Apply preset workflow",
+                                                label: "Apply workflow",
                                                 icon: WandSparkles,
-                                                onSelect:
-                                                    requestWorkflowPreset,
+                                                onSelect: requestWorkflow,
                                             },
                                             {
                                                 label: "Delete",
@@ -1057,14 +1054,28 @@ export function TRView({ reviewId, projectId }: Props) {
                 }
             />
 
-            <ApplyWorkflowPresetModal
-                open={workflowPresetModalOpen}
-                applying={applyingWorkflowPreset}
+            <TRWorkflowModal
+                open={workflowModalOpen}
                 onClose={() => {
-                    if (applyingWorkflowPreset) return;
-                    setWorkflowPresetModalOpen(false);
+                    if (applyingWorkflow) return;
+                    setWorkflowModalOpen(false);
                 }}
-                onApply={handleApplyWorkflowPreset}
+                onApply={handleApplyWorkflow}
+                breadcrumbs={[
+                    ...(project
+                        ? [
+                              "Projects",
+                              project.name +
+                                  (project.cm_number
+                                      ? ` (#${project.cm_number})`
+                                      : ""),
+                          ]
+                        : []),
+                    "Tabular Reviews",
+                    review?.title || "Untitled Review",
+                    "Add workflow",
+                ]}
+                applying={applyingWorkflow}
             />
 
             <ConfirmPopup

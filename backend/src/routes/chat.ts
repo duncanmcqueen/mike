@@ -16,8 +16,6 @@ import {
 } from "../lib/chatTools";
 import { completeText } from "../lib/llm";
 import {
-    getLegalResearchUsEnabled,
-    getUserApiKeys,
     getUserModelSettings,
 } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
@@ -556,7 +554,10 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         db,
         docIndex,
     );
-    const legalResearchUs = await getLegalResearchUsEnabled(userId, db);
+    const {
+        api_keys: apiKeys,
+        legal_research_us: legalResearchUs,
+    } = await getUserModelSettings(userId, db);
     const apiMessages = buildMessages(
         enrichedMessages,
         docAvailability,
@@ -585,8 +586,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     res.on("close", () => {
         if (!streamFinished) streamAbort.abort();
     });
-
-    const apiKeys = await getUserApiKeys(userId, db);
 
     try {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
