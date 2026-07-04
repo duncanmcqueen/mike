@@ -11,17 +11,16 @@ import {
 import {
     ArrowRight,
     Check,
-    File,
-    FileText,
     FolderOpen,
     Library,
     Square,
     X,
 } from "lucide-react";
 import { AddDocButton } from "./AddDocButton";
-import { AddDocumentsModal } from "../shared/AddDocumentsModal";
+import { FileTypeIcon } from "../shared/FileTypeIcon";
+import { AddDocumentsModal } from "../modals/AddDocumentsModal";
 import { AssistantWorkflowModal } from "./AssistantWorkflowModal";
-import { ApiKeyMissingModal } from "../shared/ApiKeyMissingModal";
+import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import { ModelToggle } from "./ModelToggle";
 import { useSelectedModel } from "@/app/hooks/useSelectedModel";
 import { useUserProfile } from "@/contexts/UserProfileContext";
@@ -193,18 +192,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 </div>
                             )}
                             {attachedDocs.map((doc) => {
-                                const ft = doc.file_type?.toLowerCase();
-                                const isPdf = ft === "pdf";
                                 return (
                                     <div
                                         key={doc.id}
                                         className="inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-1 text-xs text-gray-800 shadow-[0_2px_6px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-xl"
                                     >
-                                        {isPdf ? (
-                                            <FileText className="h-2.5 w-2.5 shrink-0 text-red-500" />
-                                        ) : (
-                                            <File className="h-2.5 w-2.5 shrink-0 text-blue-500" />
-                                        )}
+                                        <FileTypeIcon
+                                            fileType={doc.file_type}
+                                            className="h-2.5 w-2.5"
+                                        />
                                         <span className="max-w-[140px] truncate">
                                             {doc.filename}
                                         </span>
@@ -348,7 +344,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 projectName={projectName}
                 projectCmNumber={projectCmNumber}
             />
-            <ApiKeyMissingModal
+            <ApiKeyMissingPopup
                 open={apiKeyModalProvider !== null}
                 provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}

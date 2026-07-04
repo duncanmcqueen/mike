@@ -20,6 +20,19 @@ Thanks for helping improve Mike. Please keep contributions small, focused, and e
     - why
     - testing
 
+## System Workflows
+
+System workflows live in `workflows/`. Update `metadata.json` for structured
+metadata like author, language, version, practice area, or jurisdictions,
+update `SKILL.md` for workflow instructions, and use `table-config.json` for
+tabular review columns.
+
+After changing system workflows, regenerate the app files:
+
+```bash
+node scripts/build-workflows.js
+```
+
 ## Security
 
 Do not open a public issue for security vulnerabilities. Use [GitHub's private vulnerability reporting](https://github.com/willchen96/mike/security/advisories/new) instead.
