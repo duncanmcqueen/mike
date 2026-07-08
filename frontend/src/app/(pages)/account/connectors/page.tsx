@@ -9,7 +9,7 @@ import {
     Plus,
     RefreshCw,
 } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Input } from "@/app/components/ui/input";
 import { Modal } from "@/app/components/modals/Modal";
 import { NewMcpModal } from "@/app/components/account/NewMcpModal";
 import {

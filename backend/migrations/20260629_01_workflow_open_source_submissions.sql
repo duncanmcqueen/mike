@@ -15,7 +15,6 @@ create table if not exists public.workflow_open_source_submissions (
   submitted_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   reviewed_at timestamptz,
-  reviewed_by_user_id text,
   review_notes text,
   constraint workflow_open_source_submissions_status_check
     check (status in ('pending', 'approved', 'rejected')),

@@ -4,7 +4,6 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "prebuild": "node ../scripts/build-workflows.js",
     "build": "tsc",
     "start": "node dist/index.js"
   },
