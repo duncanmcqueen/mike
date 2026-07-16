@@ -3,10 +3,12 @@
 import { MoreHorizontal, type LucideIcon } from "lucide-react";
 import {
     DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
+import {
+    LiquidDropdownContent,
+    LiquidDropdownItem,
+} from "@/app/components/ui/liquid-dropdown";
 import { cn } from "@/app/lib/utils";
 
 export type HeaderActionsMenuItem = {
@@ -39,11 +41,11 @@ export function HeaderActionsMenu({
                     <MoreHorizontal className="h-4 w-4" />
                 </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="z-[160] w-48 bg-white">
+            <LiquidDropdownContent align="end" className="z-[160] w-48">
                 {items.map((item) => {
                     const Icon = item.icon;
                     return (
-                        <DropdownMenuItem
+                        <LiquidDropdownItem
                             key={item.label}
                             disabled={item.disabled}
                             variant={
@@ -60,10 +62,10 @@ export function HeaderActionsMenu({
                         >
                             {Icon && <Icon className="h-3.5 w-3.5" />}
                             {item.label}
-                        </DropdownMenuItem>
+                        </LiquidDropdownItem>
                     );
                 })}
-            </DropdownMenuContent>
+            </LiquidDropdownContent>
         </DropdownMenu>
     );
 }

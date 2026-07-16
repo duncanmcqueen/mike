@@ -3,11 +3,6 @@
 import { useState, useEffect, useMemo } from "react";
 import {
     PanelLeft,
-    MessageSquare,
-    Folder,
-    FolderOpen,
-    Table2,
-    Library,
     User,
     ChevronsUpDown,
     ChevronDown,
@@ -19,15 +14,26 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { MikeIcon } from "@/app/components/chat/mike-icon";
 import { SidebarChatItem } from "@/app/components/shared/SidebarChatItem";
+import {
+    ChatSkeuoIcon,
+    FolderSkeuoIcon,
+    LibrarySkeuoIcon,
+    TabularReviewSkeuoIcon,
+    WorkflowSkeuoIcon,
+} from "@/app/components/shared/AppSidebarSkeuoIcons";
+import {
+    ProjectSvgIcon,
+} from "@/app/components/shared/FolderSvgIcon";
 import { listProjects } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
 
 const NAV_ITEMS = [
-    { href: "/assistant", label: "Assistant", icon: MessageSquare },
-    { href: "/projects", label: "Projects", icon: FolderOpen },
-    { href: "/tabular-reviews", label: "Tabular Review", icon: Table2 },
-    { href: "/workflows", label: "Workflows", icon: Library },
+    { href: "/assistant", label: "Assistant", icon: ChatSkeuoIcon },
+    { href: "/projects", label: "Projects", icon: FolderSkeuoIcon },
+    { href: "/library", label: "Library", icon: LibrarySkeuoIcon },
+    { href: "/tabular-reviews", label: "Tabular Review", icon: TabularReviewSkeuoIcon },
+    { href: "/workflows", label: "Workflows", icon: WorkflowSkeuoIcon },
 ];
 
 interface AppSidebarProps {
@@ -137,8 +143,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             <div
                 className={cn(
                     isOpen
-                        ? "w-64 h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)] bg-white/65"
-                        : "max-md:hidden w-14 md:h-[calc(100dvh-1.5rem)] md:bg-white/65 h-auto bg-transparent pointer-events-none md:pointer-events-auto",
+                        ? "w-64 h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)] bg-app-surface"
+                        : "max-md:hidden w-14 md:h-[calc(100dvh-1.5rem)] md:bg-app-surface h-auto bg-transparent pointer-events-none md:pointer-events-auto",
                     "my-2 ml-2 mr-0 md:my-3 md:ml-3 md:mr-0 rounded-2xl border border-white/70 shadow-[0_-1px_6px_rgba(15,23,42,0.034),0_4px_9px_rgba(15,23,42,0.074),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-2xl overflow-visible",
                     "flex flex-col transition-all duration-300 absolute md:relative z-[99]",
                 )}
@@ -195,7 +201,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 className={cn(
                                     "w-full h-9 flex items-center gap-3 px-2.5 py-2 rounded-md transition-colors text-left",
                                     isActive
-                                        ? "bg-gray-200/60 text-gray-900"
+                                        ? "bg-app-surface-active text-gray-900"
                                         : "text-gray-700 hover:bg-gray-100",
                                     !isOpen ? "hidden md:flex" : "flex",
                                 )}
@@ -247,7 +253,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                             {[50, 65, 45].map((w, i) => (
                                                 <div
                                                     key={i}
-                                                    className="h-9 flex items-center px-3 rounded-md"
+                                                    className="flex h-8 items-center rounded-md px-3"
                                                 >
                                                     <div
                                                         className="h-3 bg-gray-200 rounded animate-pulse"
@@ -293,17 +299,16 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                         }
                                                         title={project.name}
                                                         className={cn(
-                                                            "flex h-9 w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors",
+                                                            "flex h-8 w-full items-center gap-2 rounded-md px-2.5 py-1 text-left text-xs transition-colors",
                                                             isActive
-                                                                ? "bg-gray-200/60 text-gray-900"
+                                                                ? "bg-app-surface-active text-gray-900"
                                                                 : "text-gray-700 hover:bg-gray-100",
                                                         )}
                                                     >
-                                                        {isActive ? (
-                                                            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-gray-600" />
-                                                        ) : (
-                                                            <Folder className="h-3.5 w-3.5 shrink-0 text-gray-600" />
-                                                        )}
+                                                        <ProjectSvgIcon
+                                                            open={isActive}
+                                                            className="h-3.5 w-3.5 shrink-0"
+                                                        />
                                                         <span className="min-w-0 flex-1 truncate">
                                                             {project.name}
                                                         </span>
@@ -337,12 +342,13 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 }`}
                             >
                                 {!chats ? (
-                                    <div className="space-y-1 px-2.5">
+                                    <div className="space-y-1.5 px-2.5">
                                         {[40, 60, 50, 70, 45].map((w, i) => (
                                             <div
                                                 key={i}
-                                                className="h-9 flex items-center px-3 rounded-md"
+                                                className="flex h-8 items-center rounded-md px-2.5"
                                             >
+                                                <div className="mr-2 h-3.5 w-3.5 shrink-0 rounded bg-gray-200 animate-pulse" />
                                                 <div
                                                     className="h-3 bg-gray-200 rounded animate-pulse"
                                                     style={{ width: `${w}%` }}
@@ -363,7 +369,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 ) : (
                                     <>
                                         <div
-                                            className={`space-y-1 px-2.5 ${
+                                            className={`space-y-1.5 px-2.5 ${
                                                 shouldAnimate
                                                     ? "sidebar-fade-in-2"
                                                     : ""
@@ -430,7 +436,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     "rounded-xl border-white/60",
                                     !isOpen ? "hidden md:flex" : "",
                                     pathname === "/account" || isDropdownOpen
-                                        ? "bg-gray-200/60"
+                                        ? "bg-app-surface-active"
                                         : "hover:bg-gray-100",
                                 )}
                                 title={!isOpen ? user.email : undefined}
@@ -464,7 +470,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     className={cn(
                                         "absolute bottom-full left-0 z-50 mb-1 p-1 whitespace-nowrap",
                                         isOpen ? "right-0" : "w-56",
-                                        "bg-white/80 rounded-xl shadow-[0_6px_17px_rgba(15,23,42,0.1)] border border-white/70 backdrop-blur-xl",
+                                        "bg-app-floating rounded-xl shadow-[0_6px_17px_rgba(15,23,42,0.1)] border border-white/70 backdrop-blur-xl",
                                     )}
                                 >
                                     <button
@@ -474,7 +480,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         }}
                                         className={cn(
                                             "w-full px-4 py-2 text-left text-sm text-gray-700 flex items-center gap-2 rounded-md",
-                                            "hover:bg-white/70",
+                                            "hover:bg-white",
                                         )}
                                     >
                                         <User className="h-4 w-4" />

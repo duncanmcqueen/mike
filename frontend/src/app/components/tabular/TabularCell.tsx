@@ -26,7 +26,7 @@ const FLAG_STYLES = {
 
 function TabularCellSkeleton() {
     return (
-        <div className="flex h-10 items-center px-2">
+        <div className="flex h-8 items-center px-2">
             <SkeletonLine className="h-3.5 w-full" />
         </div>
     );
@@ -193,14 +193,14 @@ export function TabularCell({
 
     if (cell.status === "error") {
         return (
-            <div className="h-10 flex items-center justify-center text-gray-300">
+            <div className="h-8 flex items-center justify-center text-gray-300">
                 <AlertCircle className="h-4 w-4 text-red-300" />
             </div>
         );
     }
 
     if (!cell.content?.summary) {
-        return <div className="h-10" />;
+        return <div className="h-8" />;
     }
 
     const { processed, citations, pills } = preprocessCellMarkdown(
@@ -224,7 +224,7 @@ export function TabularCell({
         <div ref={containerRef} className="relative">
             {/* Normal cell row — always visible, preserves table layout */}
             <div
-                className="group relative h-10 px-2 flex items-center text-xs text-gray-800 leading-relaxed cursor-pointer hover:bg-gray-50 transition-colors"
+                className="group relative h-8 px-2 flex items-center text-xs text-gray-800 leading-relaxed cursor-pointer hover:bg-gray-50 transition-colors"
                 onClick={() => setInlineExpanded((v) => !v)}
             >
                 {cell.content.flag && (

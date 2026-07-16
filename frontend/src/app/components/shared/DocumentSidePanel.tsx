@@ -13,25 +13,28 @@ import {
     X,
 } from "lucide-react";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import { FileTypeIcon } from "@/app/components/shared/FileTypeIcon";
 import { PdfView } from "@/app/components/shared/views/PdfView";
+import { DocxView } from "@/app/components/shared/views/DocxView";
 import { SpreadsheetView } from "@/app/components/shared/views/SpreadsheetView";
+import { PillButton } from "@/app/components/ui/pill-button";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import type { Document } from "@/app/components/shared/types";
-import { isSpreadsheetFilename } from "@/app/components/shared/types";
+import {
+    isDocxFilename,
+    isSpreadsheetFilename,
+} from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { cn } from "@/app/lib/utils";
-import { formatBytes } from "./ProjectPageParts";
+import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
+import { formatBytes } from "@/app/components/projects/ProjectPageParts";
 
 const MIN_DOC_COLUMN_WIDTH = 420;
 const DEFAULT_DOC_COLUMN_WIDTH = 620;
 const MIN_DATA_COLUMN_WIDTH = 280;
 const DEFAULT_DATA_COLUMN_WIDTH = 340;
-const RESIZER_WIDTH = 6;
+const RESIZER_WIDTH = 0;
 const MAX_PANEL_WIDTH = 1180;
-const primaryGlassButtonClass =
-    "inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-blue-800/35 bg-blue-700/90 px-3 text-xs font-medium text-white shadow-[0_3px_9px_rgba(30,64,175,0.16),inset_0_1px_0_rgba(255,255,255,0.22),inset_0_-4px_9px_rgba(30,64,175,0.18)] backdrop-blur-xl transition-all hover:bg-blue-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100";
-const dangerGlassButtonClass =
-    "inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-red-700/35 bg-red-600/90 px-3 text-xs font-medium text-white shadow-[0_3px_9px_rgba(127,29,29,0.16),inset_0_1px_0_rgba(255,255,255,0.22),inset_0_-4px_9px_rgba(127,29,29,0.18)] backdrop-blur-xl transition-all hover:bg-red-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100";
 
 interface DocumentSidePanelProps {
     doc: Document | null;
@@ -181,6 +184,11 @@ export function DocumentSidePanel({
         selectedVersion != null
             ? fileTypeForVersion(selectedVersion, doc.file_type)
             : doc.file_type;
+    const selectedFileTypeKey = selectedFileType?.toLowerCase() ?? "";
+    const selectedIsDocx =
+        isDocxFilename(selectedFilename) ||
+        selectedFileTypeKey === "docx" ||
+        selectedFileTypeKey === "doc";
     const selectedSizeBytes =
         selectedVersion?.size_bytes === undefined
             ? doc.size_bytes
@@ -191,8 +199,6 @@ export function DocumentSidePanel({
             : selectedVersion.page_count;
     const selectedVersionNumber =
         selectedVersion?.version_number ?? doc.active_version_number ?? null;
-    const selectedVersionTag =
-        selectedVersionNumber != null ? `V${selectedVersionNumber}` : null;
     const selectedUploadedAt = selectedVersion?.created_at ?? doc.created_at;
     const selectedExtension = filenameExtension(selectedFilename);
     const replaceFileType = replaceTargetVersion
@@ -201,9 +207,7 @@ export function DocumentSidePanel({
     const replaceVersionAccept =
         replaceFileType === "pdf" ? ".pdf" : ".docx,.doc";
     const ownerLabel =
-        doc.owner_display_name?.trim() ||
-        doc.owner_email?.trim() ||
-        "—";
+        doc.owner_display_name?.trim() || doc.owner_email?.trim() || "—";
 
     async function handleSaveName() {
         if (!selectedVersionId) return;
@@ -405,7 +409,8 @@ export function DocumentSidePanel({
             ref={panelRef}
             className={cn(
                 "fixed z-[190] flex flex-col",
-                "inset-3 md:left-auto rounded-2xl border border-white/70 bg-gray-50/80 shadow-[0_8px_24px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-10px_24px_rgba(255,255,255,0.18),inset_1px_0_0_rgba(255,255,255,0.5)] backdrop-blur-2xl overflow-hidden",
+                LIQUID_PANEL_SURFACE_CLASS,
+                "inset-3 md:left-auto overflow-hidden",
             )}
             style={isMobile ? undefined : { width: panelWidth }}
         >
@@ -414,13 +419,12 @@ export function DocumentSidePanel({
                 className="absolute inset-y-0 left-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-blue-400/60 md:block"
                 title="Resize document view"
             />
-            <div className="flex min-h-11 shrink-0 items-center justify-between gap-3 px-4 py-2 md:h-11 md:py-0">
+            <div className="mx-3 flex min-h-11 shrink-0 items-center justify-between gap-3 py-2 md:h-11 md:py-0">
                 <div className="flex min-w-0 items-center gap-2">
-                    {selectedVersionTag && (
-                        <span className="inline-flex h-5 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-white/75 px-2 text-[10px] font-semibold text-gray-600">
-                            {selectedVersionTag}
-                        </span>
-                    )}
+                    <FileTypeIcon
+                        fileType={selectedFileType ?? selectedFilename}
+                        className="h-4 w-4"
+                    />
                     <div className="min-w-0 truncate text-sm font-medium text-gray-700">
                         {selectedFilename}
                     </div>
@@ -455,10 +459,10 @@ export function DocumentSidePanel({
                     <button
                         type="button"
                         onClick={onClose}
-                        className="flex h-7 w-7 items-center justify-center text-gray-500 transition-colors hover:text-gray-900"
-                        title="Close"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/55 text-gray-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),inset_0_-1px_0_rgba(255,255,255,0.55),0_6px_18px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-colors hover:bg-white/75 hover:text-gray-700"
+                        aria-label="Close"
                     >
-                        <X className="h-4 w-4" />
+                        <X className="h-3.5 w-3.5" />
                     </button>
                 </div>
             </div>
@@ -477,18 +481,18 @@ export function DocumentSidePanel({
                         mobilePane === "document" ? "flex" : "hidden",
                     )}
                 >
-                    <div
-                        className={cn(
-                            "flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-                            "rounded-xl border border-gray-200 bg-white/55 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-xl",
-                        )}
-                    >
+                    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                         {isSpreadsheetFilename(selectedFilename) ? (
                             <SpreadsheetView
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
                                 documentId={doc.id}
                                 versionId={selectedVersionId}
-                                rounded={false}
+                            />
+                        ) : selectedIsDocx ? (
+                            <DocxView
+                                key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}
+                                documentId={doc.id}
+                                versionId={selectedVersionId}
                             />
                         ) : (
                             <PdfView
@@ -497,7 +501,6 @@ export function DocumentSidePanel({
                                     document_id: doc.id,
                                     version_id: selectedVersionId,
                                 }}
-                                rounded={false}
                             />
                         )}
                     </div>
@@ -506,15 +509,15 @@ export function DocumentSidePanel({
                 <div
                     onMouseDown={handleResizeMouseDown}
                     className={cn(
-                        "relative hidden cursor-col-resize transition-colors md:block",
-                        "bg-white/25 hover:bg-blue-400/60",
+                        "relative z-10 hidden w-1.5 -translate-x-1/2 cursor-col-resize transition-colors md:block",
+                        "bg-transparent hover:bg-blue-400/60",
                     )}
                     title="Resize document panel"
                 />
 
                 <aside
                     className={cn(
-                        "mx-3 mb-3 min-h-0 flex-col overflow-hidden rounded-xl md:ml-2 md:mr-3",
+                        "mx-3 mb-3 min-h-0 flex-col overflow-hidden rounded-xl",
                         mobilePane === "details" ? "flex" : "hidden md:flex",
                         "border border-white/70 bg-white shadow-[0_3px_9px_rgba(15,23,42,0.045),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-4px_9px_rgba(255,255,255,0.08)] backdrop-blur-2xl",
                     )}
@@ -621,9 +624,7 @@ export function DocumentSidePanel({
                                     label="Uploaded"
                                     value={
                                         selectedUploadedAt
-                                            ? formatDateTime(
-                                                  selectedUploadedAt,
-                                              )
+                                            ? formatDateTime(selectedUploadedAt)
                                             : "—"
                                     }
                                 />
@@ -668,9 +669,7 @@ export function DocumentSidePanel({
                                     </div>
                                 ) : (
                                     <div className="space-y-1.5">
-                                        {uploading && (
-                                            <VersionUploadSkeleton />
-                                        )}
+                                        {uploading && <VersionUploadSkeleton />}
                                         {orderedVersions.map((version) => {
                                             const title =
                                                 versionTitleFor(version);
@@ -747,8 +746,8 @@ export function DocumentSidePanel({
                                                                     ? "text-gray-300"
                                                                     : typeLabel ===
                                                                         "PDF"
-                                                                    ? "text-red-600"
-                                                                    : "text-blue-600",
+                                                                      ? "text-red-600"
+                                                                      : "text-blue-600",
                                                             )}
                                                         >
                                                             {typeLabel}
@@ -899,14 +898,15 @@ export function DocumentSidePanel({
                             className="hidden"
                             onChange={handleReplaceFileInputChange}
                         />
-                        <button
-                            type="button"
+                        <PillButton
+                            tone="danger"
+                            size="sm"
                             onClick={requestDeleteDocument}
                             disabled={deletingDocument}
                             className={cn(
-                                dangerGlassButtonClass,
+                                "h-8 px-3",
                                 !canDelete &&
-                                    "cursor-not-allowed opacity-45 hover:bg-red-600/90 active:scale-100",
+                                    "cursor-not-allowed opacity-45 active:scale-100",
                             )}
                             title={
                                 canDelete
@@ -920,12 +920,13 @@ export function DocumentSidePanel({
                                 <Trash2 className="h-3.5 w-3.5 shrink-0" />
                             )}
                             Delete
-                        </button>
-                        <button
-                            type="button"
+                        </PillButton>
+                        <PillButton
+                            tone="blue"
+                            size="sm"
                             onClick={() => fileInputRef.current?.click()}
                             disabled={uploading}
-                            className={primaryGlassButtonClass}
+                            className="h-8 px-3"
                         >
                             {uploading ? (
                                 <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
@@ -933,7 +934,7 @@ export function DocumentSidePanel({
                                 <Upload className="h-3.5 w-3.5 shrink-0" />
                             )}
                             Upload new version
-                        </button>
+                        </PillButton>
                     </div>
                 </aside>
             </div>
@@ -951,9 +952,7 @@ export function DocumentSidePanel({
                 title="Replace version?"
                 message={`This will wipe ${versionTitleFor(replaceTargetVersion)} and replace it with ${replaceFile?.name ?? "the selected file"}. Save as a new version instead if you want to keep both copies.`}
                 confirmLabel="Replace"
-                confirmStatus={
-                    replacingVersionId != null ? "loading" : "idle"
-                }
+                confirmStatus={replacingVersionId != null ? "loading" : "idle"}
                 cancelLabel="Cancel"
                 onCancel={() => {
                     if (replacingVersionId != null) return;

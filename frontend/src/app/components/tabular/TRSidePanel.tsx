@@ -24,6 +24,7 @@ import { PdfView } from "../shared/views/PdfView";
 import { SpreadsheetView } from "../shared/views/SpreadsheetView";
 import { DocxView } from "../shared/views/DocxView";
 import { cn } from "@/app/lib/utils";
+import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
 
 function isDocxDocument(d: {
     file_type?: string | null;
@@ -120,7 +121,8 @@ export function TRSidePanel({
         <div
             className={cn(
                 "fixed z-100 flex flex-row",
-                "right-3 top-3 bottom-3 overflow-hidden rounded-2xl border border-white/70 bg-white/20 shadow-[0_8px_24px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-10px_24px_rgba(255,255,255,0.18),inset_1px_0_0_rgba(255,255,255,0.5)] backdrop-blur-2xl",
+                LIQUID_PANEL_SURFACE_CLASS,
+                "right-3 top-3 bottom-3 overflow-hidden",
             )}
         >
             {/* Document panel — left, 600px */}
