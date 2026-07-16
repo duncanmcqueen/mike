@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import {
     deleteTabularReview,
@@ -15,6 +15,7 @@ import {
 } from "@/app/components/projects/ProjectWorkspace";
 import type { TabularReview } from "@/app/components/shared/types";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 
 interface Props {
     params: Promise<{ id: string }>;
@@ -35,13 +36,12 @@ function SelectedReviewActions({
 
     return (
         <div className="relative">
-            <button
+            <TabPillButton
                 onClick={() => onOpenChange(!open)}
-                className="flex items-center gap-1 text-xs font-medium text-gray-700 transition-colors hover:text-gray-900"
             >
                 Actions
                 <ChevronDown className="h-3.5 w-3.5" />
-            </button>
+            </TabPillButton>
             {open && (
                 <div className="absolute right-0 top-full z-[120] mt-1 w-36 overflow-hidden rounded-lg border border-white/60 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_12px_32px_rgba(15,23,42,0.14)] backdrop-blur-xl">
                     <button
@@ -60,7 +60,9 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
     use(params);
     const workspace = useProjectWorkspace();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { user } = useAuth();
+    const previewEmptyStates = searchParams.get("emptyStates") === "1";
     const {
         ensureProjectReviews,
         project,
@@ -77,7 +79,8 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
     const [actionsOpen, setActionsOpen] = useState(false);
     const docs = project?.documents ?? [];
     const reviews = useMemo(() => projectReviews ?? [], [projectReviews]);
-    const loading = projectReviews === null;
+    const visibleReviews = previewEmptyStates ? [] : reviews;
+    const loading = projectReviews === null && !previewEmptyStates;
 
     useEffect(() => {
         void ensureProjectReviews();
@@ -85,8 +88,10 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
 
     const q = search.toLowerCase();
     const filteredReviews = q
-        ? reviews.filter((r) => (r.title ?? "").toLowerCase().includes(q))
-        : reviews;
+        ? visibleReviews.filter((r) =>
+              (r.title ?? "").toLowerCase().includes(q),
+          )
+        : visibleReviews;
     const allReviewsSelected =
         filteredReviews.length > 0 &&
         filteredReviews.every((r) => selectedReviewIds.includes(r.id));
@@ -167,18 +172,18 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
     return (
         <>
             <ProjectSectionToolbar
-                actions={
+                actions={selectedReviewIds.length > 0 ? (
                     <SelectedReviewActions
                         selectedCount={selectedReviewIds.length}
                         open={actionsOpen}
                         onOpenChange={setActionsOpen}
                         onDelete={() => void handleDeleteSelectedReviews()}
                     />
-                }
+                ) : undefined}
             />
             <ProjectReviewsTable
                 docs={docs}
-                reviews={reviews}
+                reviews={visibleReviews}
                 filteredReviews={filteredReviews}
                 selectedReviewIds={selectedReviewIds}
                 allReviewsSelected={allReviewsSelected}

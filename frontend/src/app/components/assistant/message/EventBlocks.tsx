@@ -194,11 +194,13 @@ export function DocReadBlock({
     onClick,
     showConnector,
     isStreaming,
+    showFileIcon = true,
 }: {
     filename: string;
     onClick?: () => void;
     showConnector?: boolean;
     isStreaming?: boolean;
+    showFileIcon?: boolean;
 }) {
     return (
         <EventBlock
@@ -212,10 +214,12 @@ export function DocReadBlock({
                 </span>
                 {isStreaming ? (
                     <span className="flex min-w-0 items-center gap-1.5">
-                        <FileTypeIcon
-                            fileType={filename}
-                            className="h-3.5 w-3.5"
-                        />
+                        {showFileIcon && (
+                            <FileTypeIcon
+                                fileType={filename}
+                                className="h-3.5 w-3.5"
+                            />
+                        )}
                         <span className="truncate">{filename}...</span>
                     </span>
                 ) : onClick ? (
@@ -223,18 +227,22 @@ export function DocReadBlock({
                         onClick={onClick}
                         className="flex min-w-0 items-center gap-1.5 text-left transition-colors hover:text-gray-700 cursor-pointer"
                     >
-                        <FileTypeIcon
-                            fileType={filename}
-                            className="h-3.5 w-3.5"
-                        />
+                        {showFileIcon && (
+                            <FileTypeIcon
+                                fileType={filename}
+                                className="h-3.5 w-3.5"
+                            />
+                        )}
                         <span className="truncate">{filename}</span>
                     </button>
                 ) : (
                     <span className="flex min-w-0 items-center gap-1.5">
-                        <FileTypeIcon
-                            fileType={filename}
-                            className="h-3.5 w-3.5"
-                        />
+                        {showFileIcon && (
+                            <FileTypeIcon
+                                fileType={filename}
+                                className="h-3.5 w-3.5"
+                            />
+                        )}
                         <span className="truncate">{filename}</span>
                     </span>
                 )}

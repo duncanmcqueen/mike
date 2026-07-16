@@ -7,6 +7,7 @@ import { chatRouter } from "./routes/chat";
 import { projectsRouter } from "./routes/projects";
 import { projectChatRouter } from "./routes/projectChat";
 import { documentsRouter } from "./routes/documents";
+import { libraryRouter } from "./routes/library";
 import { tabularRouter } from "./routes/tabular";
 import { workflowsRouter } from "./routes/workflows";
 import { userRouter } from "./routes/user";
@@ -127,6 +128,7 @@ app.post("/tabular-review/:reviewId/generate", chatLimiter);
 app.post("/chat/create", chatCreateLimiter);
 app.post("/chat/:chatId/generate-title", chatCreateLimiter);
 app.post("/single-documents", uploadLimiter);
+app.post("/library/:kind/documents", uploadLimiter);
 app.post("/single-documents/:documentId/versions", uploadLimiter);
 app.put(
   "/single-documents/:documentId/versions/:versionId/file",
@@ -149,6 +151,7 @@ app.use("/chat", chatRouter);
 app.use("/projects", projectsRouter);
 app.use("/projects/:projectId/chat", projectChatRouter);
 app.use("/single-documents", documentsRouter);
+app.use("/library", libraryRouter);
 app.use("/tabular-review", tabularRouter);
 app.use("/workflows", workflowsRouter);
 app.use("/user", userRouter);

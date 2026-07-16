@@ -14,7 +14,7 @@ export type CitationQuoteHeaderItem = {
 };
 
 const QUOTE_GLASS_SURFACE =
-    "rounded-2xl bg-white/58 shadow-[0_5px_15px_rgba(15,23,42,0.095),inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-8px_16px_rgba(255,255,255,0.16)] backdrop-blur-2xl";
+    "rounded-2xl bg-white/58 shadow-[0_5px_15px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.88),inset_0_-8px_16px_rgba(255,255,255,0.16)] backdrop-blur-2xl";
 const QUOTE_CARD_SURFACE = "rounded-2xl bg-gray-100";
 
 interface Props {

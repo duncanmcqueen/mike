@@ -7,10 +7,9 @@ import {
     createProject,
     uploadProjectDocument,
 } from "@/app/lib/mikeApi";
-import { useDirectoryData } from "../shared/useDirectoryData";
 import { FileDirectory } from "../shared/FileDirectory";
 import { AddUserInput } from "../shared/AddUserInput";
-import type { Project } from "../shared/types";
+import type { Document, Project } from "../shared/types";
 import type { UserLookupResult } from "@/app/lib/mikeApi";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { Modal } from "../modals/Modal";
@@ -30,7 +29,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const [cmNumber, setCmNumber] = useState("");
     const [practice, setPractice] = useState("");
     const [sharedUsers, setSharedUsers] = useState<UserLookupResult[]>([]);
-    const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+    const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
@@ -38,8 +37,6 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const { user } = useAuth();
     const ownEmail = user?.email?.trim().toLowerCase() ?? null;
     const formId = "new-project-modal-form";
-
-    const { loading: dirLoading, standaloneDocuments, projects: dirProjects } = useDirectoryData(open);
 
     if (!open) return null;
 
@@ -81,10 +78,15 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                     : sharedUsers.map((user) => user.email),
             );
             await Promise.all([
-                ...[...selectedDocIds].map((id) => addDocumentToProject(project.id, id).catch(() => {})),
+                ...selectedDocuments.map((document) =>
+                    addDocumentToProject(project.id, document.id).catch(() => {}),
+                ),
                 ...pendingFiles.map((f) => uploadProjectDocument(project.id, f).catch(() => {})),
             ]);
-            onCreated({ ...project, document_count: selectedDocIds.size + pendingFiles.length });
+            onCreated({
+                ...project,
+                document_count: selectedDocuments.length + pendingFiles.length,
+            });
             resetForm();
             onClose();
         } catch (err: unknown) {
@@ -100,7 +102,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         setCmNumber("");
         setPractice("");
         setSharedUsers([]);
-        setSelectedDocIds(new Set());
+        setSelectedDocuments([]);
         setPendingFiles([]);
         setError("");
     }
@@ -311,15 +313,9 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                 ) : (
                     <div className="flex min-h-0 flex-1 flex-col">
                         <FileDirectory
-                            standaloneDocs={standaloneDocuments}
-                            directoryProjects={dirProjects}
-                            loading={dirLoading}
-                            selectedIds={selectedDocIds}
-                            onChange={setSelectedDocIds}
-                            emptyMessage="No existing documents"
-                            searchable
-                            searchAutoFocus
-                            showProjectTabs
+                            selectedDocuments={selectedDocuments}
+                            onChange={setSelectedDocuments}
+                            showTabs
                         />
                     </div>
                 )}
