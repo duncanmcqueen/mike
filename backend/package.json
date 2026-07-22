@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "test:stack": "bash scripts/test-stack.sh"
+    "test:stack": "bash scripts/test-stack.sh",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
