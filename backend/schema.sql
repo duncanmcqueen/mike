@@ -887,8 +887,12 @@ revoke all on public.courtlistener_citation_index from anon, authenticated;
 revoke all on public.courtlistener_opinion_cluster_index from anon, authenticated;
 
 -- Tables created by this file are owned by the database bootstrap role. The
--- backend connects as service_role, so grant it the privileges that the direct
--- browser roles above intentionally do not have. RLS is still enabled as
--- defense in depth; service_role bypasses it for the backend data path.
-grant all privileges on all tables in schema public to service_role;
-grant all privileges on all sequences in schema public to service_role;
+-- backend connects as service_role, so grant it only the data privileges that
+-- the direct browser roles above intentionally do not have. RLS is still
+-- enabled as defense in depth; service_role bypasses it for the backend path.
+grant select, insert, update, delete
+  on all tables in schema public
+  to service_role;
+grant usage, select
+  on all sequences in schema public
+  to service_role;
