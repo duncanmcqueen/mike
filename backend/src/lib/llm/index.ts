@@ -2,7 +2,7 @@ import { streamClaude, completeClaudeText } from "./claude";
 import { streamGemini, completeGeminiText } from "./gemini";
 import { streamOpenAI, completeOpenAIText } from "./openai";
 import { providerForModel } from "./models";
-import { completeOpenAICompatibleText } from "./openaiCompatible";
+import { completeOpenAICompatibleText, streamOpenAICompatible } from "./openaiCompatible";
 import { completeCommitteeText, isCommitteeId, streamCommitteeChat } from "./committee";
 import { getConfiguredModel } from "./registry";
 import type { StreamChatParams, StreamChatResult, UserApiKeys } from "./types";
@@ -17,11 +17,7 @@ export async function streamChatWithTools(
     const provider = providerForModel(params.model);
     if (provider === "claude") return streamClaude(params);
     if (provider === "openai") return streamOpenAI(params);
-    if (provider === "openai-compatible") {
-        throw new Error(
-            "OpenAI-compatible local models are currently supported for non-tool completions and committee members only.",
-        );
-    }
+    if (provider === "openai-compatible") return streamOpenAICompatible(params);
     return streamGemini(params);
 }
 
