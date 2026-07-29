@@ -136,6 +136,7 @@ export default function ConnectorsPage() {
         clearBearerToken: false,
     });
     const [detailError, setDetailError] = useState<string | null>(null);
+    const [toolsDirty, setToolsDirty] = useState(false);
     const [loadingConnectorId, setLoadingConnectorId] = useState<string | null>(
         null,
     );
@@ -451,6 +452,7 @@ export default function ConnectorsPage() {
                         customHeaders: "",
                         clearBearerToken: false,
                     });
+                    setToolsDirty(false);
                 } finally {
                     setBusyKey(null);
                 }
@@ -538,6 +540,7 @@ export default function ConnectorsPage() {
                     replaceConnector(
                         await setMcpToolEnabled(connectorId, toolId, enabled),
                     );
+                    setToolsDirty(true);
                 } finally {
                     setBusyKey(null);
                 }
@@ -671,9 +674,11 @@ export default function ConnectorsPage() {
                 onDraftChange={setDetailDraft}
                 onShowTokenChange={setShowDetailToken}
                 onShowAdvancedChange={setShowDetailAdvanced}
+                toolsDirty={toolsDirty}
                 onClose={() => {
                     setSelectedConnectorId(null);
                     setSelectedConnectorDetails(null);
+                    setToolsDirty(false);
                 }}
                 onSave={handleSaveSelectedConnector}
                 onClearBearerToken={handleClearBearerToken}
@@ -796,6 +801,7 @@ function McpConnectorDetailsModal({
     draft,
     error,
     busyKey,
+    toolsDirty,
     toolsLoading,
     clearTokenStatus,
     showToken,
@@ -815,6 +821,7 @@ function McpConnectorDetailsModal({
     draft: DetailDraft;
     error: string | null;
     busyKey: string | null;
+    toolsDirty: boolean;
     toolsLoading: boolean;
     clearTokenStatus: "idle" | "clearing" | "cleared";
     showToken: boolean;
@@ -839,7 +846,8 @@ function McpConnectorDetailsModal({
 }) {
     const hasChanges =
         !!connector &&
-        (draft.name.trim() !== connector.name ||
+        (toolsDirty ||
+            draft.name.trim() !== connector.name ||
             draft.serverUrl.trim() !== connector.serverUrl ||
             draft.bearerToken.trim().length > 0 ||
             draft.customHeaders.trim().length > 0);
