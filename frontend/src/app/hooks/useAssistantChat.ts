@@ -675,6 +675,108 @@ export function useAssistantChat({
               continue;
             }
 
+            if (data.type === "ironclad_search_contracts_start") {
+              pushEvent({
+                type: "ironclad_search_contracts",
+                query: (data.query as string) ?? "",
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "ironclad_search_contracts") {
+              updateMatchingEvent(
+                (e) =>
+                  e.type === "ironclad_search_contracts" &&
+                  e.query === (data.query as string) &&
+                  !!e.isStreaming,
+                () => ({
+                  type: "ironclad_search_contracts",
+                  query: (data.query as string) ?? "",
+                  result_count:
+                    typeof data.result_count === "number"
+                      ? (data.result_count as number)
+                      : 0,
+                  error:
+                    typeof data.error === "string"
+                      ? (data.error as string)
+                      : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
+            if (data.type === "ironclad_get_contract_start") {
+              pushEvent({
+                type: "ironclad_get_contract",
+                record_id: (data.record_id as string) ?? null,
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "ironclad_get_contract") {
+              updateMatchingEvent(
+                (e) =>
+                  e.type === "ironclad_get_contract" && !!e.isStreaming,
+                () => ({
+                  type: "ironclad_get_contract",
+                  record_id: (data.record_id as string) ?? null,
+                  name:
+                    typeof data.name === "string"
+                      ? (data.name as string)
+                      : null,
+                  attachment_count:
+                    typeof data.attachment_count === "number"
+                      ? (data.attachment_count as number)
+                      : 0,
+                  error:
+                    typeof data.error === "string"
+                      ? (data.error as string)
+                      : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
+            if (data.type === "ironclad_import_contract_start") {
+              pushEvent({
+                type: "ironclad_import_contract",
+                record_id: (data.record_id as string) ?? "",
+                attachment_key: (data.attachment_key as string) ?? "signedCopy",
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "ironclad_import_contract") {
+              updateMatchingEvent(
+                (e) =>
+                  e.type === "ironclad_import_contract" && !!e.isStreaming,
+                () => ({
+                  type: "ironclad_import_contract",
+                  record_id: (data.record_id as string) ?? "",
+                  attachment_key:
+                    (data.attachment_key as string) ?? "signedCopy",
+                  filename:
+                    typeof data.filename === "string"
+                      ? (data.filename as string)
+                      : undefined,
+                  error:
+                    typeof data.error === "string"
+                      ? (data.error as string)
+                      : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
             if (data.type === "courtlistener_get_cases_start") {
               pushEvent({
                 type: "courtlistener_get_cases",

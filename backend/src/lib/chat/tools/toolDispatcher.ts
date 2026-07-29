@@ -12,7 +12,7 @@ import {
   executeMcpToolCall,
   type McpToolEvent,
 } from "../../mcpConnectors";
-import { createServerSupabase } from "../../supabase";
+import { createServerSQLite } from "../../sqlite";
 import {
   type DocStore,
   type DocIndex,
@@ -33,6 +33,17 @@ import {
 import { convertedPdfKey } from "../../convert";
 import { contentTypeForDocumentType } from "../../documentTypes";
 import { buildDownloadUrl } from "../../downloadTokens";
+import { createDocumentFromBytes } from "../../documentIngest";
+import {
+  downloadIroncladAttachment,
+  findIroncladAttachment,
+  getIroncladRecord,
+  listIroncladRecords,
+} from "../../ironclad";
+import {
+  IRONCLAD_TOOL_NAMES,
+  type IroncladToolEvent,
+} from "./ironcladTools";
 import { loadActiveVersion } from "../../documentVersions";
 import { type EditInput } from "../../docxTrackedChanges";
 import {
@@ -436,7 +447,7 @@ export async function runToolCalls(
   toolCalls: ToolCall[],
   docStore: DocStore,
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerSQLite>,
   write: (s: string) => void,
   workflowStore?: WorkflowStore,
   tabularStore?: TabularCellStore,
@@ -446,6 +457,7 @@ export async function runToolCalls(
   projectId?: string | null,
   courtlistenerState?: CourtlistenerTurnState,
   apiKeys?: import("../../llm").UserApiKeys,
+  userEmail?: string | null,
 ): Promise<{
   toolResults: unknown[];
   docsRead: { filename: string; document_id?: string }[];
@@ -458,6 +470,7 @@ export async function runToolCalls(
   courtlistenerEvents: CourtlistenerToolEvent[];
   caseCitationEvents: CaseCitationEvent[];
   mcpEvents: McpToolEvent[];
+  ironcladEvents: IroncladToolEvent[];
 }> {
   const toolResults: unknown[] = [];
   const docsRead: { filename: string; document_id?: string }[] = [];
@@ -474,6 +487,7 @@ export async function runToolCalls(
   const courtlistenerEvents: CourtlistenerToolEvent[] = [];
   const caseCitationEvents: CaseCitationEvent[] = [];
   const mcpEvents: McpToolEvent[] = [];
+  const ironcladEvents: IroncladToolEvent[] = [];
   const courtState: CourtlistenerTurnState =
     courtlistenerState ??
     {
@@ -1635,7 +1649,7 @@ export async function runToolCalls(
               );
             } else {
               // Preserve the request order so each row pairs
-              // with the right filename. Supabase returns
+              // with the right filename. SQLite returns
               // inserted rows in the same order as the
               // payload.
               const newDocs = (insertedDocs as { id: string }[]).map(
@@ -1858,6 +1872,166 @@ export async function runToolCalls(
         previewFilename,
         "pptx",
       );
+    } else if (tc.function.name === IRONCLAD_TOOL_NAMES.searchContracts) {
+      const query = typeof args.query === "string" ? args.query.trim() : "";
+      write(
+        `data: ${JSON.stringify({ type: "ironclad_search_contracts_start", query })}\n\n`,
+      );
+      try {
+        const limit =
+          typeof args.limit === "number" && Number.isFinite(args.limit)
+            ? Math.min(25, Math.max(1, Math.floor(args.limit)))
+            : 10;
+        const result = await listIroncladRecords({
+          userEmail,
+          search: query,
+          page: 0,
+          pageSize: limit,
+        });
+        const event: IroncladToolEvent = {
+          type: "ironclad_search_contracts",
+          query,
+          result_count: result.list.length,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ records: result.list }),
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Ironclad search failed.";
+        const event: IroncladToolEvent = {
+          type: "ironclad_search_contracts",
+          query,
+          result_count: 0,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ error: message }),
+        });
+      }
+    } else if (tc.function.name === IRONCLAD_TOOL_NAMES.getContract) {
+      const recordId =
+        typeof args.recordId === "string" ? args.recordId.trim() : "";
+      write(
+        `data: ${JSON.stringify({ type: "ironclad_get_contract_start", record_id: recordId })}\n\n`,
+      );
+      try {
+        const record = await getIroncladRecord({ recordId, userEmail });
+        const event: IroncladToolEvent = {
+          type: "ironclad_get_contract",
+          record_id: record.id,
+          name: record.name,
+          attachment_count: record.attachments.length,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(record),
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Ironclad lookup failed.";
+        const event: IroncladToolEvent = {
+          type: "ironclad_get_contract",
+          record_id: recordId || null,
+          attachment_count: 0,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ error: message }),
+        });
+      }
+    } else if (tc.function.name === IRONCLAD_TOOL_NAMES.importContract) {
+      const recordId =
+        typeof args.recordId === "string" ? args.recordId.trim() : "";
+      const attachmentKey =
+        typeof args.attachmentKey === "string" && args.attachmentKey.trim()
+          ? args.attachmentKey.trim()
+          : "signedCopy";
+      write(
+        `data: ${JSON.stringify({ type: "ironclad_import_contract_start", record_id: recordId, attachment_key: attachmentKey })}\n\n`,
+      );
+      try {
+        if (!recordId) throw new Error("recordId is required.");
+        const record = await getIroncladRecord({ recordId, userEmail });
+        const attachment = findIroncladAttachment(record, attachmentKey);
+        const downloaded = await downloadIroncladAttachment({
+          recordId,
+          attachmentKey,
+          userEmail,
+          filenameHint: attachment?.filename ?? null,
+          contentTypeHint: attachment?.contentType ?? null,
+        });
+        const imported = await createDocumentFromBytes({
+          userId,
+          projectId: projectId ?? null,
+          filename: downloaded.filename,
+          content: downloaded.bytes,
+          source: "ironclad",
+          db,
+        });
+        if (!imported.ok) throw new Error(imported.detail);
+        const documentId = String(imported.document.id);
+        const filename =
+          (imported.document.filename as string) ?? downloaded.filename;
+        const result = {
+          document_id: documentId,
+          version_id: imported.document.current_version_id ?? null,
+          version_number: 1,
+          filename,
+          storage_path: imported.document.storage_path ?? null,
+          download_url: buildDownloadUrl(
+            (imported.document.storage_path as string) ?? "",
+            filename,
+          ),
+          note:
+            "Imported into Mike documents. Use the doc_id label from the tool activity to read it.",
+        };
+        registerGeneratedDocument(
+          tc,
+          result as Record<string, unknown>,
+          filename,
+          (imported.document.file_type as string) ?? "pdf",
+        );
+        const event: IroncladToolEvent = {
+          type: "ironclad_import_contract",
+          record_id: recordId,
+          attachment_key: attachmentKey,
+          filename,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Ironclad import failed.";
+        const event: IroncladToolEvent = {
+          type: "ironclad_import_contract",
+          record_id: recordId,
+          attachment_key: attachmentKey,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        ironcladEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ error: message }),
+        });
+      }
     }
   }
 
@@ -1892,5 +2066,6 @@ export async function runToolCalls(
     courtlistenerEvents,
     caseCitationEvents,
     mcpEvents,
+    ironcladEvents,
   };
 }

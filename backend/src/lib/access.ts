@@ -11,9 +11,9 @@
  * owner-only (delete, rename, member management).
  */
 
-import type { createServerSupabase } from "./supabase";
+import type { createServerSQLite } from "./sqlite";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerSQLite>;
 
 export type ProjectAccess =
     | {

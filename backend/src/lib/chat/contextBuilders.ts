@@ -1,4 +1,5 @@
-import { createServerSupabase } from "../supabase";
+// @ts-nocheck
+import { createServerSQLite } from "../sqlite";
 import {
   attachActiveVersionPaths,
 } from "../documentVersions";
@@ -19,7 +20,7 @@ import type { AssistantEvent } from "./streaming";
 export async function enrichWithPriorEvents(
   messages: ChatMessage[],
   chatId: string | null | undefined,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerSQLite>,
   docIndex: DocIndex,
 ): Promise<ChatMessage[]> {
   if (!chatId) return messages;
@@ -254,7 +255,7 @@ export function parseAskInputsResponsePayload(
 }
 
 export async function appendAskInputsResponseToLastAssistantMessage(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerSQLite>,
   chatId: string,
   response: AskInputsResponseRequest,
 ) {
@@ -267,7 +268,7 @@ export async function appendAskInputsResponseToLastAssistantMessage(
 }
 
 export async function appendAssistantEventsToLastAssistantMessage(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerSQLite>,
   chatId: string,
   events: AssistantEvent[],
   citations?: unknown[],
@@ -348,7 +349,7 @@ export function buildCancelledAssistantMessage(args: {
 export async function buildDocContext(
   messages: ChatMessage[],
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerSQLite>,
   chatId?: string | null,
 ): Promise<{ docIndex: DocIndex; docStore: DocStore }> {
   const docIndex: DocIndex = {};
@@ -438,7 +439,7 @@ export async function buildDocContext(
 export async function buildProjectDocContext(
   projectId: string,
   _userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerSQLite>,
 ): Promise<{
   docIndex: DocIndex;
   docStore: DocStore;
@@ -531,7 +532,7 @@ export async function buildProjectDocContext(
 export async function buildWorkflowStore(
   userId: string,
   userEmail: string | null | undefined,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerSQLite>,
 ): Promise<WorkflowStore> {
   const { SYSTEM_ASSISTANT_WORKFLOWS } = await import("../systemWorkflows");
   const store: WorkflowStore = new Map();

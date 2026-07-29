@@ -1,6 +1,6 @@
-import type { createServerSupabase } from "./supabase";
+import type { createServerSQLite } from "./sqlite";
 
-type Supa = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerSQLite>;
 
 interface DocRow {
     id: string;
@@ -46,7 +46,7 @@ export interface ActiveVersion {
  */
 export async function loadActiveVersion(
     documentId: string,
-    db: Supa,
+    db: Db,
     versionId?: string | null,
 ): Promise<ActiveVersion | null> {
     const { data: doc } = await db
@@ -89,7 +89,7 @@ export async function loadActiveVersion(
  * null paths.
  */
 export async function attachActiveVersionPaths<T extends VersionPathRow>(
-    db: Supa,
+    db: Db,
     docs: T[],
 ): Promise<T[]> {
     if (docs.length === 0) return docs;
@@ -166,7 +166,7 @@ export async function attachActiveVersionPaths<T extends VersionPathRow>(
  * One extra query regardless of list size.
  */
 export async function attachLatestVersionNumbers<T extends DocRow>(
-    db: Supa,
+    db: Db,
     docs: T[],
 ): Promise<T[]> {
     if (docs.length === 0) return docs;

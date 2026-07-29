@@ -1,4 +1,6 @@
 import { COURTLISTENER_SYSTEM_PROMPT } from "./tools/courtlistenerTools";
+import { IRONCLAD_SYSTEM_PROMPT } from "./tools/ironcladTools";
+import { isIroncladConfigured } from "../ironclad";
 
 const SYSTEM_PROMPT_BEFORE_RESEARCH = `You are Mike, an AI legal assistant for lawyers and legal professionals. Help analyze documents, answer legal questions, and draft legal documents.
 
@@ -72,12 +74,16 @@ GENERAL GUIDANCE:
  * Assemble the chat system prompt. When `includeResearchTools` is true the
  * CourtListener (US case-law) research instructions are spliced in; when
  * false they are omitted entirely so the model is not told about tools it
- * does not have.
+ * does not have. The Ironclad section is included whenever the instance has
+ * Ironclad credentials configured.
  */
 export function buildSystemPrompt(includeResearchTools = true): string {
-  return includeResearchTools
+  const base = includeResearchTools
     ? `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${COURTLISTENER_SYSTEM_PROMPT}\n${SYSTEM_PROMPT_AFTER_RESEARCH}`
     : `${SYSTEM_PROMPT_BEFORE_RESEARCH}\n\n${SYSTEM_PROMPT_AFTER_RESEARCH}`;
+  return isIroncladConfigured()
+    ? `${base}\n\n${IRONCLAD_SYSTEM_PROMPT}`
+    : base;
 }
 
 export const SYSTEM_PROMPT = buildSystemPrompt(true);

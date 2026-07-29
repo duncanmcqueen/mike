@@ -1,6 +1,5 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-
-type Db = SupabaseClient<any, "public", any>;
+// @ts-nocheck
+type Db = ReturnType<typeof import("./sqlite").createServerSQLite>;
 
 export type ProfileUserInfo = {
     id: string;

@@ -1,6 +1,6 @@
-import { createServerSupabase } from "./supabase";
+import { createServerSQLite } from "./sqlite";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerSQLite>;
 
 const PAGE_SIZE = 1000;
 

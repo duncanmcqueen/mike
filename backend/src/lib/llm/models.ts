@@ -1,4 +1,5 @@
 import type { Provider } from "./types";
+import { configuredModelIds, configuredProviderForModel } from "./registry";
 
 // ---------------------------------------------------------------------------
 // Canonical model IDs
@@ -49,6 +50,8 @@ const ALL_MODELS = new Set<string>([
 // ---------------------------------------------------------------------------
 
 export function providerForModel(model: string): Provider {
+    const configured = configuredProviderForModel(model);
+    if (configured) return configured;
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("gpt-")) return "openai";
@@ -56,6 +59,7 @@ export function providerForModel(model: string): Provider {
 }
 
 export function resolveModel(id: string | null | undefined, fallback: string): string {
+    if (id && configuredModelIds().includes(id)) return id;
     if (id && ALL_MODELS.has(id)) return id;
     return fallback;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Upload, Loader2, X } from "lucide-react";
+import { AlertCircle, FileDown, Upload, Loader2, X } from "lucide-react";
 import {
     uploadStandaloneDocument,
     uploadProjectDocument,
@@ -14,6 +14,7 @@ import {
     invalidateDirectoryCache,
 } from "../shared/useDirectoryData";
 import { Modal } from "./Modal";
+import { IroncladImportModal } from "./IroncladImportModal";
 import {
     SUPPORTED_DOCUMENT_ACCEPT,
     formatUnsupportedDocumentWarning,
@@ -45,6 +46,7 @@ export function AddDocumentsModal({
     const [uploadingFilenames, setUploadingFilenames] = useState<string[]>([]);
     const [uploadWarning, setUploadWarning] = useState<string | null>(null);
     const [extraUploadedDocs, setExtraUploadedDocs] = useState<Document[]>([]);
+    const [ironcladOpen, setIroncladOpen] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -153,6 +155,16 @@ export function AddDocumentsModal({
             open={open}
             onClose={onClose}
             breadcrumbs={breadcrumb}
+            headerAction={
+                <button
+                    type="button"
+                    onClick={() => setIroncladOpen(true)}
+                    className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+                >
+                    <FileDown className="h-3.5 w-3.5" />
+                    Import from Ironclad
+                </button>
+            }
             secondaryAction={{
                 label: uploading ? "Uploading…" : "Upload",
                 icon: uploading ? (
@@ -216,6 +228,17 @@ export function AddDocumentsModal({
                     showProjectTabs
                 />
             </div>
+
+            <IroncladImportModal
+                open={ironcladOpen}
+                onClose={() => setIroncladOpen(false)}
+                projectId={projectId ?? null}
+                onImported={(doc) => {
+                    invalidateDirectoryCache();
+                    setExtraUploadedDocs((prev) => [doc, ...prev]);
+                    setSelectedIds((prev) => new Set([...prev, doc.id]));
+                }}
+            />
         </Modal>
     );
 }

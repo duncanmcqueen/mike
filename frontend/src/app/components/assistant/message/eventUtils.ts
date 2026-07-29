@@ -28,6 +28,12 @@ export function toolCallLabel(name: string): string {
     if (name === "courtlistener_read_case") return "Reading case...";
     if (name === "courtlistener_verify_citations")
         return "Verifying citations...";
+    if (name === "ironclad_search_contracts")
+        return "Searching Ironclad contracts...";
+    if (name === "ironclad_get_contract")
+        return "Loading Ironclad record...";
+    if (name === "ironclad_import_contract")
+        return "Importing Ironclad contract...";
     if (name.startsWith("mcp_")) return "Using connector...";
     return name ? `Running ${name}...` : "Working...";
 }

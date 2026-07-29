@@ -1,6 +1,6 @@
-import { createServerSupabase } from "../supabase";
+import { createServerSQLite } from "../sqlite";
 
-export type Db = ReturnType<typeof createServerSupabase>;
+export type Db = ReturnType<typeof createServerSQLite>;
 
 export type McpTransport = "streamable_http";
 export type McpAuthType = "none" | "bearer" | "oauth";
@@ -118,8 +118,8 @@ export type ToolCacheRow = {
     input_schema: Record<string, unknown>;
     output_schema: Record<string, unknown> | null;
     annotations: Record<string, unknown> | null;
-    enabled: boolean;
-    requires_confirmation: boolean;
+    enabled: boolean | number | string;
+    requires_confirmation: boolean | number | string;
     last_seen_at: string;
 };
 

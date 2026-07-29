@@ -1,9 +1,9 @@
 /**
  * Mike API client — all requests to the Node.js backend.
- * Attaches the Supabase auth token for user authentication.
+ * Attaches the local auth token for user authentication.
  */
 
-import { supabase } from "@/app/lib/supabase";
+import { getAuthToken } from "@/app/lib/auth";
 import type {
     AssistantEvent,
     Chat,
@@ -65,11 +65,9 @@ export function isMfaRequiredError(error: unknown) {
 }
 
 async function getAuthHeader(): Promise<Record<string, string>> {
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) return {};
-    return { Authorization: `Bearer ${session.access_token}` };
+    const token = await getAuthToken();
+    if (!token) return {};
+    return { Authorization: `Bearer ${token}` };
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -183,6 +181,89 @@ export async function deleteAccount(): Promise<void> {
     return apiRequest<void>("/user/account", { method: "DELETE" });
 }
 
+export async function submitSupportFeedback(payload: {
+    type: "bug" | "feature" | "question" | "other";
+    subject: string;
+    message: string;
+    link?: string;
+}): Promise<void> {
+    return apiRequest<void>("/user/support", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Ironclad
+// ---------------------------------------------------------------------------
+
+export type IroncladRecordSummary = {
+    id: string;
+    name: string;
+    type: string | null;
+    agreementDate: string | null;
+    lastUpdated: string | null;
+    counterpartyName: string | null;
+};
+
+export type IroncladAttachment = {
+    key: string;
+    filename: string | null;
+    contentType: string | null;
+};
+
+export type IroncladRecordDetail = IroncladRecordSummary & {
+    attachments: IroncladAttachment[];
+};
+
+export async function getIroncladStatus(): Promise<{ configured: boolean }> {
+    return apiRequest<{ configured: boolean }>("/integrations/ironclad/status");
+}
+
+export async function searchIroncladRecords(params: {
+    search?: string;
+    page?: number;
+    pageSize?: number;
+    sortField?: "agreementDate" | "name" | "lastUpdated";
+    sortDirection?: "ASC" | "DESC";
+}): Promise<{
+    list: IroncladRecordSummary[];
+    page: number;
+    pageSize: number;
+    totalCount: number | null;
+}> {
+    const query = new URLSearchParams();
+    if (params.search?.trim()) query.set("search", params.search.trim());
+    if (typeof params.page === "number") query.set("page", String(params.page));
+    if (typeof params.pageSize === "number")
+        query.set("pageSize", String(params.pageSize));
+    if (params.sortField) query.set("sortField", params.sortField);
+    if (params.sortDirection) query.set("sortDirection", params.sortDirection);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return apiRequest(`/integrations/ironclad/records${suffix}`);
+}
+
+export async function getIroncladRecord(
+    recordId: string,
+): Promise<IroncladRecordDetail> {
+    return apiRequest<IroncladRecordDetail>(
+        `/integrations/ironclad/records/${encodeURIComponent(recordId)}`,
+    );
+}
+
+export async function importIroncladRecord(payload: {
+    recordId: string;
+    attachmentKey: string;
+    projectId?: string | null;
+}): Promise<Document> {
+    return apiRequest<Document>("/integrations/ironclad/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
 export async function deleteAllChats(): Promise<void> {
     return apiRequest<void>("/user/chats", { method: "DELETE" });
 }
@@ -270,6 +351,20 @@ export async function updateUserMfaOnLogin(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
     });
+}
+
+export type ConfiguredModelSummary = {
+    id: string;
+    label: string;
+    provider: "claude" | "gemini" | "openai" | "openai-compatible" | "committee";
+    location: "cloud" | "local" | "committee";
+};
+
+export async function getConfiguredModels(): Promise<ConfiguredModelSummary[]> {
+    const response = await apiRequest<{ configured: ConfiguredModelSummary[] }>(
+        "/user/models",
+    );
+    return response.configured;
 }
 
 export type ApiKeyProvider =

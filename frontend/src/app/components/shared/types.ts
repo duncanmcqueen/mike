@@ -256,6 +256,29 @@ export type AssistantEvent =
       isStreaming?: boolean;
     }
   | {
+      type: "ironclad_search_contracts";
+      query: string;
+      result_count?: number;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
+      type: "ironclad_get_contract";
+      record_id: string | null;
+      name?: string | null;
+      attachment_count?: number;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
+      type: "ironclad_import_contract";
+      record_id: string;
+      attachment_key: string;
+      filename?: string;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
       type: "case_citation";
       cluster_id: number | null;
       case_name: string | null;

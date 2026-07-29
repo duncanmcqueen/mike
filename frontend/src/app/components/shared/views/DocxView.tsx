@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { useFetchDocxBytes } from "@/app/hooks/useFetchDocxBytes";
-import { supabase } from "@/app/lib/supabase";
+import { getAuthToken } from "@/app/lib/auth";
 import {
     clearDocxQuoteHighlights,
     highlightDocxQuote,
@@ -145,10 +145,7 @@ async function tagWIdsOnRenderedDom(
     versionId: string | null | undefined,
 ): Promise<void> {
     try {
-        const {
-            data: { session },
-        } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        const token = await getAuthToken();
         const apiBase =
             process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
         const qs = versionId
@@ -441,7 +438,7 @@ export function DocxView({
             scrollRef.current,
             quotesRef.current,
         );
-    }, [quoteKey, quoteFocusKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [quoteKey, quoteFocusKey]);
 
     // Fire onScrollChange (rAF-throttled) so parents can persist scroll
     // per-tab. We still maintain lastScrollTopRef locally for same-mount

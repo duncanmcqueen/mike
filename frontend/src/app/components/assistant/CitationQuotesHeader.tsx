@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Minus, RectangleHorizontal, Rows3 } from "lucide-react";
 import { CiteButton } from "@/app/components/ui/cite-button";
 
@@ -45,11 +45,9 @@ export function CitationQuotesHeader({
     const hasMultipleQuotes = quotes.length > 1;
     const currentQuote = quotes[currentIndex];
 
-    useEffect(() => {
-        if (!hasMultipleQuotes && viewMode === "list") {
-            setViewMode("single");
-        }
-    }, [hasMultipleQuotes, viewMode]);
+    if (!hasMultipleQuotes && viewMode === "list") {
+        setViewMode("single");
+    }
 
     return (
         <div className="px-3">

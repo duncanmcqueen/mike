@@ -82,9 +82,13 @@ export function ChatView({
     const { setSidebarOpen } = useSidebar();
     const panelCloseTimerRef = useRef<number | null>(null);
 
-    useEffect(() => {
+    // Clear dismissed ask-input cards when switching chats
+    // (adjust-during-render).
+    const [prevChatId, setPrevChatId] = useState(chatId);
+    if (prevChatId !== chatId) {
+        setPrevChatId(chatId);
         setHiddenAskInputKeys(new Set());
-    }, [chatId]);
+    }
 
     const showPanel = useCallback(() => {
         if (panelCloseTimerRef.current !== null) {
@@ -506,7 +510,7 @@ export function ChatView({
                 `calc(100dvh - ${headerHeight + messageGap * 3 + userMessageHeight + paddingBottom}px)`,
             );
         }
-    }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [messages.length]);
 
     const updateScrollButton = useCallback(() => {
         const c = messagesContainerRef.current;
@@ -519,8 +523,11 @@ export function ChatView({
         const c = messagesContainerRef.current;
         if (!c) return;
         c.addEventListener("scroll", updateScrollButton);
-        updateScrollButton();
-        return () => c.removeEventListener("scroll", updateScrollButton);
+        const raf = requestAnimationFrame(updateScrollButton);
+        return () => {
+            cancelAnimationFrame(raf);
+            c.removeEventListener("scroll", updateScrollButton);
+        };
     }, [messages, updateScrollButton]);
 
     const scrollToBottom = () => {
@@ -550,37 +557,50 @@ export function ChatView({
         if (isResponseLoading) scrollLatestUserToTop();
     }, [isResponseLoading, scrollLatestUserToTop]);
 
+    // Hide messages again when the chat empties (adjust-during-render).
+    const [prevEmpty, setPrevEmpty] = useState(messages.length === 0);
+    const isEmpty = messages.length === 0;
+    if (prevEmpty !== isEmpty) {
+        setPrevEmpty(isEmpty);
+        if (isEmpty) {
+            setMessagesVisible(false);
+        }
+    }
+
     useEffect(() => {
         if (messages.length === 0) {
             hasScrolledRef.current = false;
-            setMessagesVisible(false);
-        } else if (!hasScrolledRef.current) {
-            const userMsgCount = messages.filter(
-                (m) => m.role === "user",
-            ).length;
-            if (
-                userMsgCount >= 2 &&
-                latestUserMessageRef.current &&
-                messagesContainerRef.current
-            ) {
-                setTimeout(() => {
-                    const container = messagesContainerRef.current;
-                    const element = latestUserMessageRef.current;
-                    if (container && element) {
-                        container.scrollTo({
-                            top: element.offsetTop - 24,
-                            behavior: "instant",
-                        });
-                    }
-                    hasScrolledRef.current = true;
-                    setMessagesVisible(true);
-                }, 100);
-            } else {
+            return;
+        }
+        if (hasScrolledRef.current) return;
+        const userMsgCount = messages.filter(
+            (m) => m.role === "user",
+        ).length;
+        if (
+            userMsgCount >= 2 &&
+            latestUserMessageRef.current &&
+            messagesContainerRef.current
+        ) {
+            const timer = setTimeout(() => {
+                const container = messagesContainerRef.current;
+                const element = latestUserMessageRef.current;
+                if (container && element) {
+                    container.scrollTo({
+                        top: element.offsetTop - 24,
+                        behavior: "instant",
+                    });
+                }
                 hasScrolledRef.current = true;
                 setMessagesVisible(true);
-            }
+            }, 100);
+            return () => clearTimeout(timer);
         }
-    }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+        const raf = requestAnimationFrame(() => {
+            hasScrolledRef.current = true;
+            setMessagesVisible(true);
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [messages]);
 
     useEffect(() => {
         if (panelMounted && window.innerWidth < 768) {
@@ -682,8 +702,8 @@ export function ChatView({
                                         {msg.role === "user" ? (
                                             <UserMessage
                                                 content={msg.content ?? ""}
-                                                files={(msg as any).files}
-                                                workflow={(msg as any).workflow}
+                                                files={msg.files}
+                                                workflow={msg.workflow}
                                             />
                                         ) : (
                                             <AssistantMessage
@@ -692,11 +712,11 @@ export function ChatView({
                                                     i === messages.length - 1 &&
                                                     isResponseLoading
                                                 }
-                                                isError={!!(msg as any).error}
+                                                isError={!!msg.error}
                                                 errorMessage={
-                                                    typeof (msg as any)
-                                                        .error === "string"
-                                                        ? (msg as any).error
+                                                    typeof msg.error ===
+                                                    "string"
+                                                        ? msg.error
                                                         : undefined
                                                 }
                                                 citations={msg.citations}

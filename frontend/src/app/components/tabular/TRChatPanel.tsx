@@ -302,22 +302,24 @@ function preprocessTRCitations(
 function TRResponseStatus({ isActive }: { isActive: boolean }) {
     const [showDone, setShowDone] = useState(false);
     const [doneVisible, setDoneVisible] = useState(false);
-    const wasActiveRef = useRef(false);
+    const [prevActive, setPrevActive] = useState(isActive);
 
-    useEffect(() => {
-        if (wasActiveRef.current && !isActive) {
+    if (prevActive !== isActive) {
+        setPrevActive(isActive);
+        if (prevActive && !isActive) {
             setShowDone(true);
             setDoneVisible(true);
-            const t = setTimeout(() => setDoneVisible(false), 1500);
-            wasActiveRef.current = isActive;
-            return () => clearTimeout(t);
-        }
-        if (!wasActiveRef.current && isActive) {
+        } else if (!prevActive && isActive) {
             setShowDone(false);
             setDoneVisible(false);
         }
-        wasActiveRef.current = isActive;
-    }, [isActive]);
+    }
+
+    useEffect(() => {
+        if (!doneVisible) return;
+        const t = setTimeout(() => setDoneVisible(false), 1500);
+        return () => clearTimeout(t);
+    }, [doneVisible]);
 
     return (
         <div className="w-full h-9 flex items-center mb-2">
@@ -892,7 +894,7 @@ export function TRChatPanel({
                 setMessagesVisible(true);
             }
         }
-    }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [messages]);
 
     useEffect(() => {
         const userEl = latestUserMessageRef.current;
@@ -1173,6 +1175,10 @@ export function TRChatPanel({
                 controller.signal,
                 { reviewTitle, projectName },
             );
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`HTTP ${response.status}: ${errText}`);
+            }
             if (!response.body) throw new Error("No response body");
 
             const reader = response.body.getReader();

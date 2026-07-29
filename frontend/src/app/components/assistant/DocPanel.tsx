@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
-import { supabase } from "@/app/lib/supabase";
+import { getAuthToken } from "@/app/lib/auth";
 import { PdfView } from "../shared/views/PdfView";
 import { DocxView } from "../shared/views/DocxView";
 import { SpreadsheetView } from "../shared/views/SpreadsheetView";
@@ -354,10 +354,7 @@ function DownloadButton({
         if (busy || isReloading) return;
         setBusy(true);
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            const token = await getAuthToken();
             const apiBase =
                 process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
             const qs = versionId

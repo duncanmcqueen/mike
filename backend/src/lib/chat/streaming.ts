@@ -6,7 +6,7 @@ import {
   type OpenAIToolSchema,
 } from "../llm";
 import { safeErrorMessage } from "../safeError";
-import { createServerSupabase } from "../supabase";
+import { createServerSQLite } from "../sqlite";
 import {
   buildUserMcpTools,
   type McpToolEvent,
@@ -16,6 +16,9 @@ import {
   type CaseCitationEvent,
   type CourtlistenerToolEvent,
 } from "./tools/courtlistenerTools";
+import { IRONCLAD_TOOLS } from "./tools/ironcladTools";
+import { isIroncladConfigured } from "../ironclad";
+import type { IroncladToolEvent } from "./tools/ironcladTools";
 import {
   type DocStore,
   type DocIndex,
@@ -98,6 +101,7 @@ export type AssistantEvent =
   | CaseCitationEvent
   | CourtlistenerToolEvent
   | McpToolEvent
+  | IroncladToolEvent
   | { type: "case_opinions"; cluster_id: number; case: unknown }
   | { type: "content"; text: string }
   | { type: "error"; message: string };
@@ -148,7 +152,8 @@ export async function runLLMStream(params: {
   docStore: DocStore;
   docIndex: DocIndex;
   userId: string;
-  db: ReturnType<typeof createServerSupabase>;
+  userEmail?: string | null;
+  db: ReturnType<typeof createServerSQLite>;
   write: (s: string) => void;
   extraTools?: unknown[];
   includeResearchTools?: boolean;
@@ -185,10 +190,12 @@ export async function runLLMStream(params: {
     apiKeys,
     signal,
     projectId,
+    userEmail,
   } = params;
   const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
+  const ironcladTools = isIroncladConfigured() ? IRONCLAD_TOOLS : [];
   const mcpTools = await buildUserMcpTools(userId, db);
-  const baseTools = [...TOOLS, ...researchTools, ...WORKFLOW_TOOLS];
+  const baseTools = [...TOOLS, ...researchTools, ...WORKFLOW_TOOLS, ...ironcladTools];
   const activeTools = extraTools?.length
     ? [...baseTools, ...mcpTools, ...extraTools]
     : [...baseTools, ...mcpTools];
@@ -400,6 +407,7 @@ export async function runLLMStream(params: {
           courtlistenerEvents,
           caseCitationEvents,
           mcpEvents,
+          ironcladEvents,
         } = await runToolCalls(
           toolCalls,
           docStore,
@@ -414,6 +422,7 @@ export async function runLLMStream(params: {
           projectId,
           courtlistenerTurnState,
           apiKeys,
+          userEmail,
         );
         throwIfAborted(signal);
         for (const r of docsRead) {
@@ -475,6 +484,9 @@ export async function runLLMStream(params: {
           events.push(event);
         }
         for (const event of mcpEvents) {
+          events.push(event);
+        }
+        for (const event of ironcladEvents) {
           events.push(event);
         }
         for (const event of caseCitationEvents) {

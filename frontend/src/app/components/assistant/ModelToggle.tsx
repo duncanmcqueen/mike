@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, Check, AlertCircle } from "lucide-react";
 import {
     DropdownMenu,
@@ -11,12 +11,12 @@ import {
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
-import type { ApiKeyState } from "@/app/lib/mikeApi";
+import { getConfiguredModels, type ApiKeyState } from "@/app/lib/mikeApi";
 
 export interface ModelOption {
     id: string;
     label: string;
-    group: "Anthropic" | "Google" | "OpenAI";
+    group: "Anthropic" | "Google" | "OpenAI" | "Local" | "Committee";
 }
 
 export const MODELS: ModelOption[] = [
@@ -46,7 +46,47 @@ export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
 
 export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
-const GROUP_ORDER: ModelOption["group"][] = ["Anthropic", "Google", "OpenAI"];
+const GROUP_ORDER: ModelOption["group"][] = [
+    "Committee",
+    "Local",
+    "Anthropic",
+    "Google",
+    "OpenAI",
+];
+
+export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
+    const [options, setOptions] = useState<ModelOption[]>(base);
+
+    useEffect(() => {
+        let cancelled = false;
+        getConfiguredModels()
+            .then((configured) => {
+                if (cancelled || configured.length === 0) return;
+                const extra = configured.map((model): ModelOption => {
+                    const group =
+                        model.location === "committee"
+                            ? "Committee"
+                            : model.location === "local"
+                              ? "Local"
+                              : model.provider === "claude"
+                                ? "Anthropic"
+                                : model.provider === "gemini"
+                                  ? "Google"
+                                  : "OpenAI";
+                    return { id: model.id, label: model.label, group };
+                });
+                const merged = new Map<string, ModelOption>();
+                [...base, ...extra].forEach((model) => merged.set(model.id, model));
+                setOptions(Array.from(merged.values()));
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+        };
+    }, [base]);
+
+    return options;
+}
 
 interface Props {
     value: string;
@@ -56,7 +96,8 @@ interface Props {
 
 export function ModelToggle({ value, onChange, apiKeys }: Props) {
     const [isOpen, setIsOpen] = useState(false);
-    const selected = MODELS.find((m) => m.id === value);
+    const options = useConfiguredModelOptions(MODELS);
+    const selected = options.find((m) => m.id === value);
     const selectedLabel = selected?.label ?? "Model";
     const selectedAvailable = apiKeys
         ? isModelAvailable(value, apiKeys)
@@ -85,7 +126,7 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56 z-50" side="top" align="end">
                 {GROUP_ORDER.map((group, gi) => {
-                    const items = MODELS.filter((m) => m.group === group);
+                    const items = options.filter((m) => m.group === group);
                     if (items.length === 0) return null;
                     return (
                         <div key={group}>

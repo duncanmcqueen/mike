@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Send, CheckCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { submitSupportFeedback } from "@/app/lib/mikeApi";
 
 type FeedbackType = "bug" | "feature" | "question" | "other";
 
@@ -57,21 +58,12 @@ export default function SupportPage() {
         setIsSubmitting(true);
 
         try {
-            const response = await fetch("/api/support", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    type: feedbackType,
-                    subject,
-                    message,
-                    email: user?.email,
-                    link,
-                }),
+            await submitSupportFeedback({
+                type: feedbackType,
+                subject,
+                message,
+                link: link || undefined,
             });
-
-            if (!response.ok) {
-                throw new Error("Failed to submit feedback");
-            }
 
             setIsSubmitted(true);
         } catch (err) {
@@ -228,7 +220,7 @@ export default function SupportPage() {
                             {/* Email Display (if logged in) */}
                             {user?.email && (
                                 <div className="text-sm text-gray-500">
-                                    We'll respond to:{" "}
+                                    We&apos;ll respond to:{" "}
                                     <span className="font-medium">
                                         {user.email}
                                     </span>

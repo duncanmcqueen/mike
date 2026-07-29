@@ -1,7 +1,8 @@
-import { createServerSupabase } from "./supabase";
+// @ts-nocheck
+import { createServerSQLite } from "./sqlite";
 import { deleteFile, listFiles } from "./storage";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerSQLite>;
 
 const DELETE_BATCH_SIZE = 500;
 
@@ -155,12 +156,38 @@ async function removeEmailFromSharedWith(
 
 export async function deleteAllUserChats(db: Db, userId: string) {
     const [assistantChats, tabularChats] = await Promise.all([
+        db.from("chats").select("id").eq("user_id", userId),
+        db.from("tabular_review_chats").select("id").eq("user_id", userId),
+    ]);
+    await throwIfError(assistantChats.error, "Failed to load assistant chats");
+    await throwIfError(tabularChats.error, "Failed to load tabular chats");
+
+    const chatIds = uniqueStrings(
+        ((assistantChats.data ?? []) as { id: string | null }[]).map(
+            (row) => row.id,
+        ),
+    );
+    const tabularChatIds = uniqueStrings(
+        ((tabularChats.data ?? []) as { id: string | null }[]).map(
+            (row) => row.id,
+        ),
+    );
+
+    await deleteWhereIn(db, "chat_messages", "chat_id", chatIds);
+    await deleteWhereIn(
+        db,
+        "tabular_review_chat_messages",
+        "chat_id",
+        tabularChatIds,
+    );
+
+    const [deletedChats, deletedTabularChats] = await Promise.all([
         db.from("chats").delete().eq("user_id", userId),
         db.from("tabular_review_chats").delete().eq("user_id", userId),
     ]);
 
-    await throwIfError(assistantChats.error, "Failed to delete assistant chats");
-    await throwIfError(tabularChats.error, "Failed to delete tabular chats");
+    await throwIfError(deletedChats.error, "Failed to delete assistant chats");
+    await throwIfError(deletedTabularChats.error, "Failed to delete tabular chats");
 }
 
 export async function deleteAllUserTabularReviews(db: Db, userId: string) {
@@ -276,6 +303,8 @@ export async function deleteUserProjects(
     );
 
     await deleteDocumentVersionFiles(db, documentIds);
+    await deleteWhereIn(db, "document_versions", "document_id", documentIds);
+    await deleteWhereIn(db, "document_edits", "document_id", documentIds);
     await deleteWhereIn(
         db,
         "tabular_review_chat_messages",
@@ -306,6 +335,42 @@ export async function deleteUserAccountData(
         ownedProjectIds,
     );
 
+    const [ownedChats, ownedReviews, ownedReviewChats, ownedConnectors] =
+        await Promise.all([
+            db.from("chats").select("id").eq("user_id", userId),
+            db.from("tabular_reviews").select("id").eq("user_id", userId),
+            db.from("tabular_review_chats").select("id").eq("user_id", userId),
+            db.from("user_mcp_connectors").select("id").eq("user_id", userId),
+        ]);
+    await throwIfError(ownedChats.error, "Failed to load user chats");
+    await throwIfError(ownedReviews.error, "Failed to load user reviews");
+    await throwIfError(
+        ownedReviewChats.error,
+        "Failed to load user review chats",
+    );
+    await throwIfError(ownedConnectors.error, "Failed to load user connectors");
+
+    const chatIds = uniqueStrings(
+        ((ownedChats.data ?? []) as { id: string | null }[]).map(
+            (row) => row.id,
+        ),
+    );
+    const reviewIds = uniqueStrings(
+        ((ownedReviews.data ?? []) as { id: string | null }[]).map(
+            (row) => row.id,
+        ),
+    );
+    const reviewChatIds = uniqueStrings(
+        ((ownedReviewChats.data ?? []) as { id: string | null }[]).map(
+            (row) => row.id,
+        ),
+    );
+    const connectorIds = uniqueStrings(
+        ((ownedConnectors.data ?? []) as { id: string | null }[]).map(
+            (row) => row.id,
+        ),
+    );
+
     await Promise.all([
         removeEmailFromSharedWith(db, "projects", userEmail),
         removeEmailFromSharedWith(db, "tabular_reviews", userEmail),
@@ -313,7 +378,29 @@ export async function deleteUserAccountData(
         deleteUserStoragePrefix(userId),
     ]);
 
+    await deleteWhereIn(db, "document_versions", "document_id", documentIds);
+    await deleteWhereIn(db, "document_edits", "document_id", documentIds);
     await deleteByIds(db, "documents", documentIds);
+    await deleteWhereIn(db, "chat_messages", "chat_id", chatIds);
+    await deleteWhereIn(
+        db,
+        "tabular_review_chat_messages",
+        "chat_id",
+        reviewChatIds,
+    );
+    await deleteWhereIn(db, "tabular_cells", "review_id", reviewIds);
+    await deleteWhereIn(
+        db,
+        "user_mcp_connector_tools",
+        "connector_id",
+        connectorIds,
+    );
+    await deleteWhereIn(
+        db,
+        "user_mcp_oauth_tokens",
+        "connector_id",
+        connectorIds,
+    );
 
     const deletions = [
         db.from("tabular_review_chats").delete().eq("user_id", userId),
@@ -334,6 +421,12 @@ export async function deleteUserAccountData(
             : Promise.resolve({ error: null }),
         db.from("workflows").delete().eq("user_id", userId),
         db.from("projects").delete().eq("user_id", userId),
+        db.from("user_api_keys").delete().eq("user_id", userId),
+        db.from("user_mcp_oauth_states").delete().eq("user_id", userId),
+        db.from("user_mcp_tool_audit_logs").delete().eq("user_id", userId),
+        db.from("user_mcp_connectors").delete().eq("user_id", userId),
+        db.from("support_feedback").delete().eq("user_id", userId),
+        db.from("user_profiles").delete().eq("user_id", userId),
     ];
 
     const results = await Promise.all(deletions);

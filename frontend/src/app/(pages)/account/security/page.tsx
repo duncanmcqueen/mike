@@ -8,7 +8,7 @@ import {
     type KeyboardEvent,
 } from "react";
 import { Copy, Loader2 } from "lucide-react";
-import { supabase } from "@/app/lib/supabase";
+import { localAuth } from "@/app/lib/auth";
 import { Button } from "@/app/components/ui/button";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { isMfaRequiredError } from "@/app/lib/mikeApi";
@@ -191,8 +191,8 @@ export default function SecurityPage() {
         setStatus(null);
         traceMfa("[security/mfa] refreshing state");
         const [factorResult, aalResult] = await Promise.all([
-            supabase.auth.mfa.listFactors(),
-            supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
+            localAuth.mfa.listFactors(),
+            localAuth.mfa.getAuthenticatorAssuranceLevel(),
         ]);
 
         if (factorResult.error) {
@@ -251,7 +251,7 @@ export default function SecurityPage() {
         try {
             traceMfa("[security/mfa] enrollment requested");
 
-            let { data, error } = await supabase.auth.mfa.enroll({
+            let { data, error } = await localAuth.mfa.enroll({
                 factorType: "totp",
                 friendlyName: "Mike",
             });
@@ -259,7 +259,7 @@ export default function SecurityPage() {
                 traceMfa("[security/mfa] retrying enrollment with unique name", {
                     error: error.message,
                 });
-                const retry = await supabase.auth.mfa.enroll({
+                const retry = await localAuth.mfa.enroll({
                     factorType: "totp",
                     friendlyName: `Mike ${Date.now()}`,
                 });
@@ -272,7 +272,7 @@ export default function SecurityPage() {
                 factorId: data.id,
             });
 
-            const challenge = await supabase.auth.mfa.challenge({
+            const challenge = await localAuth.mfa.challenge({
                 factorId: data.id,
             });
             if (challenge.error) throw challenge.error;
@@ -326,7 +326,7 @@ export default function SecurityPage() {
                 factorId: enrollment.factorId,
                 challengeId: enrollment.challengeId,
             });
-            const { error } = await supabase.auth.mfa.verify({
+            const { error } = await localAuth.mfa.verify({
                 factorId: enrollment.factorId,
                 challengeId: enrollment.challengeId,
                 code: verificationCode.trim(),
@@ -359,7 +359,7 @@ export default function SecurityPage() {
         setVerificationCode("");
         setSetupKeyCopied(false);
         if (factorId) {
-            await supabase.auth.mfa.unenroll({ factorId }).catch(() => null);
+            await localAuth.mfa.unenroll({ factorId }).catch(() => null);
         }
         await refreshMfaState();
     }
@@ -374,7 +374,7 @@ export default function SecurityPage() {
     async function requestUnenroll(factorId: string) {
         setStatus(null);
         const { data, error } =
-            await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+            await localAuth.mfa.getAuthenticatorAssuranceLevel();
         if (error) {
             setStatus(error.message);
             return;
@@ -391,7 +391,7 @@ export default function SecurityPage() {
     async function unenrollFactor(factorId: string) {
         setBusy(true);
         setStatus(null);
-        const { error } = await supabase.auth.mfa.unenroll({ factorId });
+        const { error } = await localAuth.mfa.unenroll({ factorId });
         setBusy(false);
 
         if (error) {

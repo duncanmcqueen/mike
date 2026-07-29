@@ -20,27 +20,10 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
     const isVerifyPage = pathname === "/verify-mfa";
 
     useEffect(() => {
-        if (!user) {
-            setGateState("idle");
-            return;
-        }
-        if (loading) {
-            return;
-        }
-        if (!profile?.mfaOnLogin) {
-            setGateState("idle");
-            return;
-        }
-
-        if (hasRecentMfaVerification()) {
-            setGateState("verified");
-            return;
-        }
+        if (!user || loading || !profile?.mfaOnLogin) return;
+        if (hasRecentMfaVerification()) return;
 
         let cancelled = false;
-        setGateState((previous) =>
-            previous === "verified" ? "verified" : "checking",
-        );
 
         async function checkLoginMfa() {
             try {
@@ -57,16 +40,41 @@ export function MfaLoginGate({ children }: { children: ReactNode }) {
         return () => {
             cancelled = true;
         };
-    }, [loading, profile?.mfaOnLogin, user?.id]);
+    }, [loading, profile?.mfaOnLogin, user]);
+
+    // Reset the gate synchronously when the auth/profile inputs change
+    // (adjust-during-render); the async check above refines it.
+    const checkKey = `${user?.id ?? ""}:${loading}:${profile?.mfaOnLogin ?? ""}`;
+    const [prevCheckKey, setPrevCheckKey] = useState(checkKey);
+    if (prevCheckKey !== checkKey) {
+        setPrevCheckKey(checkKey);
+        if (!user || loading || !profile?.mfaOnLogin) {
+            setGateState("idle");
+        } else if (hasRecentMfaVerification()) {
+            setGateState("verified");
+        } else {
+            setGateState((previous) =>
+                previous === "verified" ? "verified" : "checking",
+            );
+        }
+    }
+
+    // A just-completed verification (marked in sessionStorage by the verify
+    // page) clears the gate without waiting for the async check.
+    if (
+        user &&
+        !loading &&
+        profile?.mfaOnLogin &&
+        gateState === "required" &&
+        hasRecentMfaVerification()
+    ) {
+        setGateState("verified");
+    }
 
     useEffect(() => {
         if (!user || loading || !profile?.mfaOnLogin) return;
 
         if (gateState === "required" && !isVerifyPage) {
-            if (hasRecentMfaVerification()) {
-                setGateState("verified");
-                return;
-            }
             const search = searchParams.toString();
             const next = `${pathname}${search ? `?${search}` : ""}`;
             router.replace(`/verify-mfa?next=${encodeURIComponent(next)}`);

@@ -4,7 +4,7 @@ import {
   uploadFile,
 } from "../../storage";
 import { convertedPdfKey, docxToPdf } from "../../convert";
-import { createServerSupabase } from "../../supabase";
+import { createServerSQLite } from "../../sqlite";
 import {
   applyTrackedEdits,
   extractDocxBodyText,
@@ -84,7 +84,7 @@ export async function generateDocx(
   title: string,
   sections: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerSQLite>,
   options?: { landscape?: boolean; projectId?: string | null },
 ) {
   try {
@@ -937,7 +937,7 @@ async function persistGeneratedFile(params: {
   extension: "xlsx" | "pptx";
   buffer: Buffer;
   userId: string;
-  db: ReturnType<typeof createServerSupabase>;
+  db: ReturnType<typeof createServerSQLite>;
   projectId?: string | null;
 }) {
   const { title, extension, buffer, userId, db, projectId } = params;
@@ -1031,7 +1031,7 @@ export async function generateExcel(
   title: string,
   sheets: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerSQLite>,
   options?: { projectId?: string | null },
 ) {
   try {
@@ -1057,7 +1057,7 @@ export async function generatePpt(
   title: string,
   slides: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerSQLite>,
   options?: { projectId?: string | null },
 ) {
   try {
@@ -1089,7 +1089,7 @@ export async function generatePpt(
  */
 export async function loadCurrentVersionBytes(
   documentId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerSQLite>,
 ): Promise<{ bytes: Buffer; storage_path: string } | null> {
   const active = await loadActiveVersion(documentId, db);
   if (!active) return null;
@@ -1107,7 +1107,7 @@ export async function runEditDocument(params: {
   documentId: string;
   userId: string;
   edits: EditInput[];
-  db: ReturnType<typeof createServerSupabase>;
+  db: ReturnType<typeof createServerSQLite>;
   /**
    * If provided, append these edits to the existing turn-scoped version
    * (overwrites the file at storagePath and reuses the document_versions
@@ -1208,10 +1208,10 @@ export async function runEditDocument(params: {
       .select("version_number")
       .eq("document_id", documentId)
       .in("source", ["upload", "user_upload", "assistant_edit"])
-      .order("version_number", { ascending: false, nullsFirst: false })
+      .order("version_number", { ascending: false, nullsFirst: false, numeric: true })
       .limit(1)
       .maybeSingle();
-    nextVersionNumber = ((maxRow?.version_number as number | null) ?? 1) + 1;
+    nextVersionNumber = (Number(maxRow?.version_number ?? 1) || 1) + 1;
 
     // Inherit the filename from the most recent prior version so
     // user-applied renames carry forward through further edits. Malformed
@@ -1333,7 +1333,7 @@ export async function getTurnReadIdentity(params: {
   docLabel: string;
   docStore: DocStore;
   docIndex?: DocIndex;
-  db?: ReturnType<typeof createServerSupabase>;
+  db?: ReturnType<typeof createServerSQLite>;
 }): Promise<{
   key: string;
   docLabel: string;
@@ -1406,7 +1406,7 @@ export async function readDocumentContent(
   docStore: DocStore,
   write: (s: string) => void,
   docIndex?: DocIndex,
-  db?: ReturnType<typeof createServerSupabase>,
+  db?: ReturnType<typeof createServerSQLite>,
   opts?: { emitEvents?: boolean },
 ): Promise<string> {
   const emitEvents = opts?.emitEvents ?? true;
@@ -1671,7 +1671,7 @@ export async function findInDocumentContent(params: {
   docStore: DocStore;
   write: (s: string) => void;
   docIndex?: DocIndex;
-  db?: ReturnType<typeof createServerSupabase>;
+  db?: ReturnType<typeof createServerSQLite>;
 }): Promise<string> {
   const {
     docLabel,

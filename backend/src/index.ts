@@ -12,6 +12,7 @@ import { workflowsRouter } from "./routes/workflows";
 import { userRouter } from "./routes/user";
 import { downloadsRouter } from "./routes/downloads";
 import { caseLawRouter } from "./routes/caseLaw";
+import { ironcladRouter } from "./routes/ironclad";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -84,6 +85,12 @@ const dataDeleteLimiter = makeLimiter({
   message: "Too many data deletion requests. Please try again later.",
 });
 
+const authLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_AUTH_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_AUTH_MAX", 30),
+  message: "Too many auth attempts. Please try again later.",
+});
+
 function jsonLimitForPath(path: string): string {
   return "50mb";
 }
@@ -120,6 +127,11 @@ app.use(
 
 app.use(generalLimiter);
 
+app.post("/user/auth/signup", authLimiter);
+app.post("/user/auth/login", authLimiter);
+app.post("/users/auth/signup", authLimiter);
+app.post("/users/auth/login", authLimiter);
+
 app.post("/chat", chatLimiter);
 app.post("/projects/:projectId/chat", chatLimiter);
 app.post("/tabular-review/:reviewId/chat", chatLimiter);
@@ -133,6 +145,7 @@ app.put(
   uploadLimiter,
 );
 app.post("/projects/:projectId/documents", uploadLimiter);
+app.post("/integrations/ironclad/import", uploadLimiter);
 app.get("/user/export", exportLimiter);
 app.get("/user/chats/export", exportLimiter);
 app.get("/user/tabular-reviews/export", exportLimiter);
@@ -155,8 +168,32 @@ app.use("/user", userRouter);
 app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
 app.use("/case-law", caseLawRouter);
+app.use("/integrations/ironclad", ironcladRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+app.use(
+  (
+    err: unknown,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    const detail =
+      err instanceof Error && err.message ? err.message : "Internal server error";
+    console.error("[express] unhandled route error", {
+      path: _req.path,
+      error: detail,
+    });
+    if (!res.headersSent) {
+      res.status(500).json({ detail });
+    }
+  },
+);
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[process] unhandled rejection", reason);
+});
 
 app.listen(PORT, () => {
   console.log(`Mike backend running on port ${PORT}`);

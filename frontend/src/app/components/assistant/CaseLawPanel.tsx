@@ -201,7 +201,11 @@ export function CaseLawPanel({
         tab.opinions?.length ? tab.opinions : (cachedOpinions ?? []),
     );
     const [error, setError] = useState<string | null>(null);
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(
+        () =>
+            !tab.opinions?.length &&
+            !(cachedOpinions?.length),
+    );
     const [activeOpinionId, setActiveOpinionId] = useState<number | null>(null);
     const [relevantQuotes, setRelevantQuotes] = useState<CaseCitationQuote[]>(
         tab.quotes ?? [],
@@ -214,24 +218,34 @@ export function CaseLawPanel({
     const opinionScrollRef = useRef<HTMLDivElement | null>(null);
     const opinionContentRef = useRef<HTMLElement | null>(null);
 
-    useEffect(() => {
+    // Sync opinion/quote state when the tab changes (adjust-during-render);
+    // the effect below only performs the async fetch.
+    const [prevTab, setPrevTab] = useState(tab);
+    if (prevTab !== tab) {
+        setPrevTab(tab);
         if (tab.opinions?.length) {
             setOpinions(tab.opinions);
             setLoading(false);
             setError(null);
-            return;
+        } else {
+            const cached = courtlistenerOpinionsCache.get(tab.clusterId);
+            if (cached?.length) {
+                setOpinions(cached);
+                setLoading(false);
+                setError(null);
+            } else {
+                setLoading(true);
+                setError(null);
+            }
         }
+    }
+
+    useEffect(() => {
+        if (tab.opinions?.length) return;
         const cached = courtlistenerOpinionsCache.get(tab.clusterId);
-        if (cached?.length) {
-            setOpinions(cached);
-            setLoading(false);
-            setError(null);
-            return;
-        }
+        if (cached?.length) return;
 
         let cancelled = false;
-        setLoading(true);
-        setError(null);
         const requestKey = caseCitationRequestKey(tab);
         let request = caseOpinionsRequestCache.get(requestKey);
         if (!request) {
@@ -264,17 +278,22 @@ export function CaseLawPanel({
         };
     }, [tab]);
 
-    useEffect(() => {
-        const firstOpinionId =
-            orderOpinions(opinions).find(
-                ({ opinion }) => typeof opinion.opinionId === "number",
-            )?.opinion.opinionId ?? null;
+    const firstOpinionId =
+        orderOpinions(opinions).find(
+            ({ opinion }) => typeof opinion.opinionId === "number",
+        )?.opinion.opinionId ?? null;
+    const [prevFirstOpinionId, setPrevFirstOpinionId] =
+        useState(firstOpinionId);
+    if (prevFirstOpinionId !== firstOpinionId) {
+        setPrevFirstOpinionId(firstOpinionId);
         setActiveOpinionId(firstOpinionId);
-    }, [opinions]);
+    }
 
-    useEffect(() => {
+    const [prevTabQuotes, setPrevTabQuotes] = useState(tab.quotes);
+    if (prevTabQuotes !== tab.quotes) {
+        setPrevTabQuotes(tab.quotes);
         setRelevantQuotes(tab.quotes ?? []);
-    }, [tab.quotes]);
+    }
 
     const title = tab.caseName;
     const citation = tab.citation;
@@ -320,14 +339,14 @@ export function CaseLawPanel({
         [quoteCacheKey],
     );
 
-    useEffect(() => {
+    if (quoteIndexState.cacheKey !== quoteCacheKey) {
         setQuoteIndexState({ cacheKey: quoteCacheKey, index: 0 });
         const firstQuote = relevantQuotes[0];
         setActiveQuoteKey(firstQuote ? relevantQuoteKey(firstQuote, 0) : null);
         if (typeof firstQuote?.opinionId === "number") {
             setActiveOpinionId(firstQuote.opinionId);
         }
-    }, [quoteCacheKey, relevantQuotes]);
+    }
 
     useEffect(() => {
         const root = opinionContentRef.current;

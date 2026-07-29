@@ -1,7 +1,7 @@
 -- Migration date: 2026-05-11
 
 -- Store landing-page contact form submissions.
--- The landing server route writes with the Supabase service role; browser
+-- The landing server route writes with the SQLite service role; browser
 -- anon/authenticated roles should not have direct table access.
 
 create table if not exists public.contact_messages (

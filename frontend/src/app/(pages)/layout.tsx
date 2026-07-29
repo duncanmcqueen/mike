@@ -19,24 +19,29 @@ export default function MikeLayout({
     const [mobileActionsContainer, setMobileActionsContainer] =
         useState<HTMLDivElement | null>(null);
 
-    const [isSidebarOpenDesktop, setIsSidebarOpenDesktop] = useState(() => {
-        if (typeof window !== "undefined") {
-            const saved = localStorage.getItem("sidebarOpen");
-            return saved !== null ? saved === "true" : true;
-        }
-        return true;
-    });
+    const [isSidebarOpenDesktop, setIsSidebarOpenDesktop] = useState(true);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-    const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
-        if (typeof window !== "undefined" && window.innerWidth < 768) {
-            return false;
-        }
-        return true;
-    });
+    useEffect(() => {
+        const frame = requestAnimationFrame(() => {
+            if (window.innerWidth < 768) {
+                setIsSidebarOpen(false);
+                return;
+            }
+            const saved = localStorage.getItem("sidebarOpen");
+            const open = saved !== null ? saved === "true" : true;
+            setIsSidebarOpenDesktop(open);
+            setIsSidebarOpen(open);
+        });
+        return () => cancelAnimationFrame(frame);
+    }, []);
 
     useEffect(() => {
         if (typeof window !== "undefined" && window.innerWidth >= 768) {
-            localStorage.setItem("sidebarOpen", isSidebarOpen.toString());
+            localStorage.setItem(
+                "sidebarOpen",
+                isSidebarOpenDesktop.toString(),
+            );
         }
     }, [isSidebarOpenDesktop]);
 

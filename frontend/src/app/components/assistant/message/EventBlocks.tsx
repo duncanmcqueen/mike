@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDown, Download, Loader2 } from "lucide-react";
-import { supabase } from "@/app/lib/supabase";
+import { getAuthToken } from "@/app/lib/auth";
 import type { AssistantEvent } from "../../shared/types";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { RESPONSE_GLASS_SURFACE, withoutMarkdownNode } from "./messageStyles";
@@ -383,10 +383,7 @@ export function DocDownloadBlock({
         if (busy || isReloading || !href) return;
         setBusy(true);
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            const token = await getAuthToken();
             const resp = await fetch(href, {
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
             });

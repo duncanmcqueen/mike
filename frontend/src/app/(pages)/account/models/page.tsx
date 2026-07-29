@@ -15,6 +15,7 @@ import type { ApiKeyState } from "@/app/lib/mikeApi";
 import {
     MODELS,
     SETTINGS_MODELS,
+    useConfiguredModelOptions,
     type ModelOption,
 } from "@/app/components/assistant/ModelToggle";
 import {
@@ -31,6 +32,8 @@ type ModelPreferenceField = "titleModel" | "tabularModel";
 
 export default function ModelPreferencesPage() {
     const { profile, updateModelPreference } = useUserProfile();
+    const settingsOptions = useConfiguredModelOptions(SETTINGS_MODELS);
+    const chatOptions = useConfiguredModelOptions(MODELS);
     const [savingField, setSavingField] = useState<ModelPreferenceField | null>(
         null,
     );
@@ -93,7 +96,7 @@ export default function ModelPreferencesPage() {
                             profile?.titleModel ??
                             "gemini-3.1-flash-lite-preview"
                         }
-                        options={SETTINGS_MODELS}
+                        options={settingsOptions}
                         apiKeys={profile?.apiKeys}
                         isSaving={savingField === "titleModel"}
                         isSaved={savedField === "titleModel"}
@@ -115,7 +118,7 @@ export default function ModelPreferencesPage() {
                             profile?.tabularModel ??
                             "gemini-3-flash-preview"
                         }
-                        options={MODELS}
+                        options={chatOptions}
                         apiKeys={profile?.apiKeys}
                         isSaving={savingField === "tabularModel"}
                         isSaved={savedField === "tabularModel"}
@@ -145,7 +148,9 @@ function ModelPreferenceDropdown({
     const [isOpen, setIsOpen] = useState(false);
     const selected = options.find((m) => m.id === value);
     const selectedAvailable = apiKeys ? isModelAvailable(value, apiKeys) : true;
-    const groups: ("Anthropic" | "Google" | "OpenAI")[] = [
+    const groups: ModelOption["group"][] = [
+        "Committee",
+        "Local",
         "Anthropic",
         "Google",
         "OpenAI",

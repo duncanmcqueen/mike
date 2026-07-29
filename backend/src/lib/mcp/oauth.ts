@@ -8,7 +8,7 @@ import type {
     OAuthClientMetadata,
     OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { createServerSupabase } from "../supabase";
+import { createServerSQLite } from "../sqlite";
 import {
     authConfigPatch,
     base64Url,
@@ -45,8 +45,7 @@ function parseWwwAuthenticate(value: string | null): string | null {
 }
 
 async function fetchJson(url: string, init?: RequestInit) {
-    await validateRemoteMcpUrl(url);
-    const response = await fetch(url, { ...init, redirect: "manual" });
+    const response = await guardedFetch(url, init);
     if (!response.ok) {
         throw new Error(`Failed to fetch OAuth metadata (${response.status}).`);
     }
@@ -59,11 +58,10 @@ async function fetchJson(url: string, init?: RequestInit) {
 
 async function discoverProtectedResourceMetadataUrl(serverUrl: string) {
     const attempts: Array<() => Promise<Response>> = [
-        () => fetch(serverUrl, { method: "GET", redirect: "manual" }),
+        () => guardedFetch(serverUrl, { method: "GET" }),
         () =>
-            fetch(serverUrl, {
+            guardedFetch(serverUrl, {
                 method: "POST",
-                redirect: "manual",
                 headers: {
                     Accept: "application/json, text/event-stream",
                     "Content-Type": "application/json",
@@ -189,10 +187,8 @@ async function registerOAuthClient(
     redirectUri: string,
 ) {
     if (!metadata.registrationEndpoint) return null;
-    await validateRemoteMcpUrl(metadata.registrationEndpoint);
-    const response = await fetch(metadata.registrationEndpoint, {
+    const response = await guardedFetch(metadata.registrationEndpoint, {
         method: "POST",
-        redirect: "manual",
         headers: {
             Accept: "application/json",
             "Content-Type": "application/json",
@@ -329,8 +325,7 @@ async function refreshOAuthAccessToken(row: OAuthTokenRow, db: Db) {
     });
     if (clientSecret) body.set("client_secret", clientSecret);
     if (row.resource) body.set("resource", row.resource);
-    await validateRemoteMcpUrl(row.token_endpoint);
-    const response = await fetch(row.token_endpoint, {
+    const response = await guardedFetch(row.token_endpoint, {
         method: "POST",
         headers: {
             Accept: "application/json",
@@ -610,7 +605,7 @@ export async function startUserMcpConnectorOAuth(
     userId: string,
     connectorId: string,
     redirectUri: string,
-    db: Db = createServerSupabase(),
+    db: Db = createServerSQLite(),
 ): Promise<{ authorizationUrl: string | null; alreadyAuthorized: boolean }> {
     const connector = await loadConnector(userId, connectorId, db);
     const provider = new DbMcpOAuthProvider(
@@ -641,7 +636,7 @@ export async function startUserMcpConnectorOAuth(
 export async function completeMcpConnectorOAuthAuthorization(
     state: string,
     code: string,
-    db: Db = createServerSupabase(),
+    db: Db = createServerSQLite(),
 ): Promise<{ userId: string; connectorId: string }> {
     const { data, error } = await db
         .from("user_mcp_oauth_states")

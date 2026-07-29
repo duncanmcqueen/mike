@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import dns from "dns/promises";
 import net from "net";
+import { Agent } from "undici";
 import {
     BLOCKED_METADATA_HOSTS,
     HEADER_NAME_RE,
@@ -190,10 +191,14 @@ function toToolSummary(row: ToolCacheRow): McpToolSummary {
         openaiToolName: row.openai_tool_name,
         title: row.title,
         description: row.description,
-        enabled: row.enabled,
+        enabled:
+            row.enabled === true || row.enabled === 1 || row.enabled === "1",
         readOnly: truthyAnnotation(row.annotations, "readOnlyHint"),
         destructive: truthyAnnotation(row.annotations, "destructiveHint"),
-        requiresConfirmation: row.requires_confirmation,
+        requiresConfirmation:
+            row.requires_confirmation === true ||
+            row.requires_confirmation === 1 ||
+            row.requires_confirmation === "1",
         lastSeenAt: row.last_seen_at,
     };
 }
@@ -259,7 +264,13 @@ function isBlockedIp(ip: string) {
     return true;
 }
 
-export async function validateRemoteMcpUrl(rawUrl: string): Promise<string> {
+type ValidatedTarget = {
+    url: string;
+    hostname: string;
+    addresses: { address: string; family: number }[];
+};
+
+async function resolveValidatedTarget(rawUrl: string): Promise<ValidatedTarget> {
     let url: URL;
     try {
         url = new URL(rawUrl);
@@ -283,14 +294,19 @@ export async function validateRemoteMcpUrl(rawUrl: string): Promise<string> {
     }
 
     const literalFamily = net.isIP(hostname);
-    const addresses = literalFamily
-        ? [{ address: hostname }]
+    const addresses: { address: string; family: number }[] = literalFamily
+        ? [{ address: hostname, family: literalFamily }]
         : await dns.lookup(hostname, { all: true, verbatim: true });
     if (!addresses.length || addresses.some(({ address }) => isBlockedIp(address))) {
         throw new Error("MCP server URL resolves to a blocked network address.");
     }
 
-    return url.toString();
+    return { url: url.toString(), hostname, addresses };
+}
+
+export async function validateRemoteMcpUrl(rawUrl: string): Promise<string> {
+    const target = await resolveValidatedTarget(rawUrl);
+    return target.url;
 }
 
 export function headersForAuth(config: McpConnectorAuthConfig) {
@@ -352,6 +368,41 @@ export function authConfigPatch(config: McpConnectorAuthConfig): Record<string, 
     });
 }
 
+// Cache one dispatcher per validated hostname+address set. Pinning the
+// pre-validated DNS answers closes the DNS-rebinding window between
+// validateRemoteMcpUrl and the actual connection (which would otherwise
+// re-resolve the hostname).
+const dispatcherCache = new Map<string, Agent>();
+
+function pinnedDispatcher(target: ValidatedTarget): Agent {
+    const key = `${target.hostname}|${target.addresses
+        .map((entry) => `${entry.address}:${entry.family}`)
+        .sort()
+        .join(",")}`;
+    const cached = dispatcherCache.get(key);
+    if (cached) return cached;
+    const agent = new Agent({
+        connect: {
+            lookup: (_hostname, options, callback) => {
+                if (options?.all) {
+                    callback(
+                        null,
+                        target.addresses.map((entry) => ({
+                            address: entry.address,
+                            family: entry.family,
+                        })),
+                    );
+                } else {
+                    const first = target.addresses[0];
+                    callback(null, first.address, first.family);
+                }
+            },
+        },
+    });
+    dispatcherCache.set(key, agent);
+    return agent;
+}
+
 export async function guardedFetch(
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
@@ -362,8 +413,13 @@ export async function guardedFetch(
             : input instanceof URL
               ? input.toString()
               : input.url;
-    await validateRemoteMcpUrl(url);
-    return fetch(input, { ...init, redirect: "manual" });
+    const target = await resolveValidatedTarget(url);
+    const dispatcher = pinnedDispatcher(target);
+    return fetch(input, {
+        ...init,
+        redirect: "manual",
+        dispatcher,
+    } as Parameters<typeof fetch>[1]);
 }
 
 export function base64Url(buffer: Buffer) {

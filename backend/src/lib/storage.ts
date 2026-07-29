@@ -1,57 +1,60 @@
 /**
- * Cloudflare R2 storage utilities for Mike document management.
- * R2 is S3-compatible — uses @aws-sdk/client-s3.
+ * SQLite-backed document byte storage.
  *
- * Required env vars:
- *   R2_ENDPOINT_URL     — https://<account-id>.r2.cloudflarestorage.com
- *   R2_ACCESS_KEY_ID    — R2 API token (Access Key ID)
- *   R2_SECRET_ACCESS_KEY — R2 API token (Secret Access Key)
- *   R2_BUCKET_NAME      — bucket name (default: "mike")
+ * The rest of the backend stores opaque storage keys on document_versions.
+ * This module maps those keys to BLOB rows in a local SQLite database so the
+ * application no longer depends on remote object storage for files.
  */
 
-import {
-  S3Client,
-  PutObjectCommand,
-  DeleteObjectCommand,
-  ListObjectsV2Command,
-} from "@aws-sdk/client-s3";
-import * as S3Commands from "@aws-sdk/client-s3";
-import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
+import fs from "node:fs";
+import path from "node:path";
+// node:sqlite is available in the Node 22 runtime used by this project, but
+// older @types/node releases may not expose declarations for it yet.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import { DatabaseSync } from "node:sqlite";
+import { signDownload } from "./downloadTokens";
 
-const GetObjectCommand = (S3Commands as any).GetObjectCommand;
+type SqliteDatabase = {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    run(...values: unknown[]): unknown;
+    get(...values: unknown[]): Record<string, unknown> | undefined;
+    all(...values: unknown[]): Record<string, unknown>[];
+  };
+};
 
-let cachedClient: S3Client | undefined;
+let cachedDb: SqliteDatabase | undefined;
 
-function getClient(): S3Client {
-  if (!cachedClient) {
-    cachedClient = new S3Client({
-      region: "auto",
-      endpoint: process.env.R2_ENDPOINT_URL!,
-      forcePathStyle: true,
-      credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-      },
-    });
-  }
-  return cachedClient;
+function storageDbPath(): string {
+  return (
+    process.env.SQLITE_STORAGE_PATH?.trim() ||
+    path.join(process.cwd(), "data", "mike-files.sqlite")
+  );
 }
 
-const BUCKET = process.env.R2_BUCKET_NAME ?? "mike";
-
-export const storageEnabled = Boolean(
-  process.env.R2_ENDPOINT_URL &&
-  process.env.R2_ACCESS_KEY_ID &&
-  process.env.R2_SECRET_ACCESS_KEY,
-);
-
-function requireStorageConfig(): void {
-  if (!storageEnabled) {
-    throw new Error(
-      "R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY must be set",
-    );
+function getDb(): SqliteDatabase {
+  if (!cachedDb) {
+    const dbPath = storageDbPath();
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    cachedDb = new DatabaseSync(dbPath) as SqliteDatabase;
+    cachedDb.exec(`
+      create table if not exists file_storage (
+        key text primary key,
+        content blob not null,
+        content_type text not null,
+        size_bytes integer not null,
+        created_at text not null default (datetime('now')),
+        updated_at text not null default (datetime('now'))
+      );
+      create index if not exists idx_file_storage_key_prefix
+        on file_storage(key);
+    `);
   }
+  return cachedDb;
 }
+
+export const storageEnabled = true;
 
 // ---------------------------------------------------------------------------
 // Upload
@@ -62,16 +65,20 @@ export async function uploadFile(
   content: ArrayBuffer,
   contentType: string,
 ): Promise<void> {
-  requireStorageConfig();
-  const client = getClient();
-  await client.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      Body: Buffer.from(content),
-      ContentType: contentType,
-    }),
-  );
+  const buffer = Buffer.from(content);
+  getDb()
+    .prepare(
+      `
+      insert into file_storage (key, content, content_type, size_bytes, updated_at)
+      values (?, ?, ?, ?, datetime('now'))
+      on conflict(key) do update set
+        content = excluded.content,
+        content_type = excluded.content_type,
+        size_bytes = excluded.size_bytes,
+        updated_at = datetime('now')
+    `,
+    )
+    .run(key, buffer, contentType, buffer.byteLength);
 }
 
 // ---------------------------------------------------------------------------
@@ -79,39 +86,31 @@ export async function uploadFile(
 // ---------------------------------------------------------------------------
 
 export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
-  if (!storageEnabled) return null;
-  try {
-    const client = getClient();
-    const response = (await client.send(
-      new GetObjectCommand({ Bucket: BUCKET, Key: key }),
-    )) as any;
-    if (!response.Body) return null;
-    const bytes = await response.Body.transformToByteArray();
-    return bytes.buffer as ArrayBuffer;
-  } catch {
-    return null;
-  }
+  const row = getDb()
+    .prepare("select content from file_storage where key = ?")
+    .get(key);
+  const content = row?.content;
+  if (!content) return null;
+  const buffer = Buffer.isBuffer(content)
+    ? content
+    : Buffer.from(content as ArrayBuffer);
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  ) as ArrayBuffer;
 }
 
 export async function listFiles(prefix: string): Promise<string[]> {
-  if (!storageEnabled) return [];
-  const client = getClient();
-  const keys: string[] = [];
-  let ContinuationToken: string | undefined;
-  do {
-    const response = await client.send(
-      new ListObjectsV2Command({
-        Bucket: BUCKET,
-        Prefix: prefix,
-        ContinuationToken,
-      }),
-    );
-    for (const item of response.Contents ?? []) {
-      if (item.Key) keys.push(item.Key);
-    }
-    ContinuationToken = response.NextContinuationToken;
-  } while (ContinuationToken);
-  return keys;
+  return getDb()
+    .prepare(
+      "select key from file_storage where key like ? escape '\\' order by key asc",
+    )
+    .all(`${escapeLike(prefix)}%`)
+    .map((row) => String(row.key));
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -119,13 +118,11 @@ export async function listFiles(prefix: string): Promise<string[]> {
 // ---------------------------------------------------------------------------
 
 export async function deleteFile(key: string): Promise<void> {
-  if (!storageEnabled) return;
-  const client = getClient();
-  await client.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+  getDb().prepare("delete from file_storage where key = ?").run(key);
 }
 
 // ---------------------------------------------------------------------------
-// Signed URL (pre-signed for temporary direct access)
+// Download URL
 // ---------------------------------------------------------------------------
 
 export async function getSignedUrl(
@@ -133,25 +130,7 @@ export async function getSignedUrl(
   expiresIn = 3600,
   downloadFilename?: string,
 ): Promise<string | null> {
-  if (!storageEnabled) return null;
-  try {
-    const client = getClient();
-    // Override the response Content-Disposition so the browser uses this
-    // filename on download, instead of the last path segment of the R2 key
-    // (which includes the document UUID). The `download` attribute on <a>
-    // is ignored for cross-origin URLs, so we have to set it server-side.
-    const responseContentDisposition = downloadFilename
-      ? buildContentDisposition("attachment", downloadFilename)
-      : undefined;
-    const command = new GetObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      ResponseContentDisposition: responseContentDisposition,
-    }) as any;
-    return await awsGetSignedUrl(client, command, { expiresIn });
-  } catch {
-    return null;
-  }
+  return `/download/${signDownload(key, downloadFilename || path.basename(key), expiresIn)}`;
 }
 
 export function normalizeDownloadFilename(name: string): string {

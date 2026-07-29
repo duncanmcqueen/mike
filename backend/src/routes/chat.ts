@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerSQLite } from "../lib/sqlite";
 import {
     buildDocContext,
     buildMessages,
@@ -26,7 +26,7 @@ import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 
 export const chatRouter = Router();
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerSQLite>;
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
@@ -158,7 +158,7 @@ async function getAccessibleChat(
 // listed per-project via GET /projects/:projectId/chats.
 chatRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     const requestedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
     const limit = Number.isFinite(requestedLimit)
         ? Math.min(Math.max(requestedLimit, 1), 100)
@@ -181,7 +181,7 @@ chatRouter.post("/create", requireAuth, async (req, res) => {
         return void res.status(400).json({ detail: parsedProjectId.detail });
     }
     const projectId = parsedProjectId.projectId;
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     const projectAccess = await validateAccessibleProjectId(
         projectId,
         userId,
@@ -208,7 +208,7 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerSQLite();
 
     const chat = await getAccessibleChat(chatId, userId, userEmail, db);
     if (!chat)
@@ -230,7 +230,7 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
 // we merge the current DB status in so EditCards render with the real state.
 async function hydrateEditStatuses(
     messages: Record<string, unknown>[],
-    db: ReturnType<typeof createServerSupabase>,
+    db: ReturnType<typeof createServerSQLite>,
 ): Promise<Record<string, unknown>[]> {
     const editIds = new Set<string>();
     const versionIds = new Set<string>();
@@ -342,11 +342,12 @@ async function hydrateEditStatuses(
 chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
-    const title = (req.body.title ?? "").trim();
+    const title =
+        typeof req.body?.title === "string" ? req.body.title.trim() : "";
     if (!title)
         return void res.status(400).json({ detail: "title is required" });
 
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     const { data, error } = await db
         .from("chats")
         .update({ title })
@@ -364,7 +365,23 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
 chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerSQLite();
+    const { data: chat, error: loadError } = await db
+        .from("chats")
+        .select("id")
+        .eq("id", chatId)
+        .eq("user_id", userId)
+        .maybeSingle();
+    if (loadError) return void res.status(500).json({ detail: loadError.message });
+    if (!chat) return void res.status(404).json({ detail: "Chat not found" });
+
+    const { error: messagesError } = await db
+        .from("chat_messages")
+        .delete()
+        .eq("chat_id", chatId);
+    if (messagesError)
+        return void res.status(500).json({ detail: messagesError.message });
+
     const { error } = await db
         .from("chats")
         .delete()
@@ -385,7 +402,7 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
     if (!message)
         return void res.status(400).json({ detail: "message is required" });
 
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     const chat = await getAccessibleChat(chatId, userId, userEmail, db);
     if (!chat)
         return void res.status(404).json({ detail: "Chat not found" });
@@ -456,7 +473,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     });
 
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
     let resolvedProjectId: string | null = parsedProjectId.projectId;
@@ -592,6 +609,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             apiKeys,
             signal: streamAbort.signal,
             projectId: resolvedProjectId,
+            userEmail,
         });
 
         devLog("[chat/stream] LLM stream finished", {

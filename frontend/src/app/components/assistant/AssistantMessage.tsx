@@ -723,6 +723,75 @@ export function AssistantMessage({
                 />
             );
         }
+        if (event.type === "ironclad_search_contracts") {
+            const count = event.result_count ?? 0;
+            const detail = event.isStreaming
+                ? event.query
+                    ? `for "${event.query}"`
+                    : undefined
+                : event.error
+                  ? event.error
+                  : `${count} ${count === 1 ? "record" : "records"}${event.query ? ` for "${event.query}"` : ""}`;
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={
+                        event.isStreaming
+                            ? "Searching Ironclad"
+                            : event.error
+                              ? "Ironclad search failed"
+                              : "Searched Ironclad"
+                    }
+                    detail={detail}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "ironclad_get_contract") {
+            const attachments = event.attachment_count ?? 0;
+            const detail = event.error
+                ? event.error
+                : event.name
+                  ? `${event.name} — ${attachments} ${attachments === 1 ? "attachment" : "attachments"}`
+                  : undefined;
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={
+                        event.isStreaming
+                            ? "Loading Ironclad record"
+                            : event.error
+                              ? "Ironclad lookup failed"
+                              : "Loaded Ironclad record"
+                    }
+                    detail={detail}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "ironclad_import_contract") {
+            const detail = event.error ? event.error : event.filename;
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={
+                        event.isStreaming
+                            ? "Importing Ironclad contract"
+                            : event.error
+                              ? "Ironclad import failed"
+                              : "Imported Ironclad contract"
+                    }
+                    detail={detail}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                />
+            );
+        }
         return null;
     };
 

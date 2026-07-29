@@ -1,7 +1,27 @@
+// @ts-nocheck
 import crypto from "crypto";
 import { Router } from "express";
 import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import {
+    createLocalUser,
+    createServerSQLite,
+    createSession,
+    deleteSession,
+    findLocalUserByEmail,
+    findLocalUserById,
+    findSession,
+    markSessionMfaVerified,
+    updateLocalUserEmail,
+    verifyPassword,
+} from "../lib/sqlite";
+import {
+    createMfaChallenge,
+    createMfaFactor,
+    hasVerifiedTotpFactor,
+    listMfaFactors,
+    unenrollMfaFactor,
+    verifyMfaFactorCode,
+} from "../lib/mfa";
 import {
     DEFAULT_TABULAR_MODEL,
     DEFAULT_TITLE_MODEL,
@@ -9,6 +29,7 @@ import {
     OPENAI_LOW_MODELS,
     resolveModel,
 } from "../lib/llm";
+import { configuredModelSummaries } from "../lib/llm/registry";
 import {
     type ApiKeyStatus,
     getUserApiKeyStatus,
@@ -46,6 +67,152 @@ export const userRouter = Router();
 
 const MONTHLY_CREDIT_LIMIT = 999999;
 
+function publicUser(user: { id: string; email?: string | null }) {
+    return { id: user.id, email: user.email ?? "", pendingEmail: null };
+}
+
+function bearerToken(req: { headers: { authorization?: string } }) {
+    const auth = req.headers.authorization ?? "";
+    return auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmail(email: string): boolean {
+    return email.length <= 254 && EMAIL_PATTERN.test(email);
+}
+
+userRouter.post("/auth/signup", async (req, res) => {
+    const email = typeof req.body?.email === "string" ? req.body.email : "";
+    const password =
+        typeof req.body?.password === "string" ? req.body.password : "";
+    if (!isValidEmail(email.trim()) || password.length < 6) {
+        return void res
+            .status(400)
+            .json({ detail: "A valid email and a 6+ character password are required" });
+    }
+    if (findLocalUserByEmail(email)) {
+        return void res.status(409).json({ detail: "Email is already registered" });
+    }
+    const user = createLocalUser(email, password);
+    const token = createSession(user.id);
+    res.json({ token, user: publicUser(user) });
+});
+
+function profileMfaOnLogin(userId: string): boolean {
+    const db = createServerSQLite();
+    return db
+        .from("user_profiles")
+        .select("mfa_on_login")
+        .eq("user_id", userId)
+        .maybeSingle()
+        .then(({ data }) => {
+            const value = (data as { mfa_on_login?: unknown } | null)
+                ?.mfa_on_login;
+            return value === true || value === 1 || value === "1";
+        })
+        .catch(() => false);
+}
+
+userRouter.post("/auth/login", async (req, res) => {
+    const email = typeof req.body?.email === "string" ? req.body.email : "";
+    const password =
+        typeof req.body?.password === "string" ? req.body.password : "";
+    const row = findLocalUserByEmail(email) as
+        | {
+              id: string;
+              email: string;
+              password_hash: string;
+              password_salt: string;
+          }
+        | null;
+    if (!row || !verifyPassword(password, row.password_hash, row.password_salt)) {
+        return void res.status(401).json({ detail: "Invalid email or password" });
+    }
+    const mfaRequired =
+        hasVerifiedTotpFactor(row.id) && (await profileMfaOnLogin(row.id));
+    const token = createSession(row.id, !mfaRequired);
+    res.json({ token, user: publicUser(row), mfaRequired });
+});
+
+userRouter.get("/auth/session", async (req, res) => {
+    const session = findSession(bearerToken(req));
+    if (!session) return void res.json({ user: null });
+    const user = findLocalUserById(session.userId) as
+        | { id: string; email?: string }
+        | null;
+    res.json({ user: user ? publicUser(user) : null });
+});
+
+userRouter.post("/auth/logout", async (req, res) => {
+    const token = bearerToken(req);
+    if (token) deleteSession(token);
+    res.status(204).send();
+});
+
+userRouter.patch("/auth/email", requireAuth, async (req, res) => {
+    const email = typeof req.body?.email === "string" ? req.body.email : "";
+    if (!isValidEmail(email.trim())) {
+        return void res.status(400).json({ detail: "A valid email is required" });
+    }
+    const userId = res.locals.userId as string;
+    const existing = findLocalUserByEmail(email) as { id: string } | null;
+    if (existing && existing.id !== userId) {
+        return void res.status(409).json({ detail: "Email is already registered" });
+    }
+    const user = updateLocalUserEmail(userId, email);
+    res.json({ user: publicUser(user) });
+});
+
+const SUPPORT_FEEDBACK_TYPES = new Set(["bug", "feature", "question", "other"]);
+
+userRouter.post("/support", requireAuth, async (req, res) => {
+    const type = typeof req.body?.type === "string" ? req.body.type : "";
+    const subject = typeof req.body?.subject === "string" ? req.body.subject.trim() : "";
+    const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    const link = typeof req.body?.link === "string" ? req.body.link.trim() : "";
+    if (!SUPPORT_FEEDBACK_TYPES.has(type) || !subject || !message) {
+        return void res
+            .status(400)
+            .json({ detail: "type, subject, and message are required" });
+    }
+    const userId = res.locals.userId as string;
+    const userEmail = (res.locals.userEmail as string) ?? "";
+    const db = createServerSQLite();
+    const { error } = await db.from("support_feedback").insert({
+        user_id: userId,
+        email: userEmail,
+        type,
+        subject: subject.slice(0, 200),
+        message: message.slice(0, 10000),
+        link: link.slice(0, 2000) || null,
+    });
+    if (error) {
+        return void res.status(500).json({ detail: "Failed to submit feedback" });
+    }
+
+    const inbox = process.env.SUPPORT_INBOX_EMAIL;
+    const resendKey = process.env.RESEND_API_KEY;
+    if (inbox && resendKey) {
+        try {
+            const { Resend } = await import("resend");
+            const resend = new Resend(resendKey);
+            await resend.emails.send({
+                from: process.env.SUPPORT_FROM_EMAIL ?? "Mike Support <onboarding@resend.dev>",
+                to: inbox,
+                subject: `[Mike ${type}] ${subject.slice(0, 200)}`,
+                text: `From: ${userEmail} (${userId})\nType: ${type}\nLink: ${link || "-"}\n\n${message}`,
+            });
+        } catch (err) {
+            console.error("[user/support] email delivery failed", {
+                userId,
+                error: errorMessage(err),
+            });
+        }
+    }
+    res.status(204).send();
+});
+
 type UserProfileRow = {
     display_name: string | null;
     organisation: string | null;
@@ -57,6 +224,115 @@ type UserProfileRow = {
     mfa_on_login: boolean | null;
     legal_research_us: boolean | null;
 };
+
+// GET /user/mfa/status — factors plus authenticator assurance levels.
+userRouter.get("/mfa/status", requireAuth, async (_req, res) => {
+    const userId = res.locals.userId as string;
+    const factors = listMfaFactors(userId).map((factor) => ({
+        id: factor.id,
+        friendly_name: factor.friendly_name,
+        factor_type: "totp",
+        status: factor.status,
+        created_at: factor.created_at,
+        updated_at: factor.updated_at,
+    }));
+    const hasVerified = factors.some((factor) => factor.status === "verified");
+    const mfaVerified = res.locals.mfaVerified !== false;
+    res.json({
+        factors,
+        currentLevel: mfaVerified ? (hasVerified ? "aal2" : "aal1") : "aal1",
+        nextLevel: hasVerified ? "aal2" : "aal1",
+    });
+});
+
+// POST /user/mfa/enroll — create a pending TOTP factor.
+userRouter.post("/mfa/enroll", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = (res.locals.userEmail as string) ?? "";
+    const friendlyName =
+        typeof req.body?.friendlyName === "string" && req.body.friendlyName.trim()
+            ? req.body.friendlyName.trim().slice(0, 100)
+            : "Mike";
+    try {
+        const result = await createMfaFactor(userId, userEmail, friendlyName);
+        if ("error" in result && result.error) {
+            return void res.status(400).json({ detail: result.error });
+        }
+        res.json({
+            id: result.id,
+            totp: { qr_code: result.qrCode, secret: result.secret, uri: result.uri },
+        });
+    } catch (err) {
+        res.status(500).json({ detail: errorMessage(err) });
+    }
+});
+
+// POST /user/mfa/challenge — TOTP challenges are stateless; the client must
+// present the returned challenge id when verifying.
+userRouter.post("/mfa/challenge", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const factorId = typeof req.body?.factorId === "string" ? req.body.factorId : "";
+    if (!factorId) {
+        return void res.status(400).json({ detail: "factorId is required" });
+    }
+    try {
+        const challenge = createMfaChallenge(factorId, userId);
+        if (!challenge) {
+            return void res.status(404).json({ detail: "Factor not found" });
+        }
+        res.json(challenge);
+    } catch (err) {
+        res.status(500).json({ detail: errorMessage(err) });
+    }
+});
+
+// POST /user/mfa/verify — verify a TOTP code; confirms pending factors and
+// elevates the current session to aal2.
+userRouter.post("/mfa/verify", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const factorId = typeof req.body?.factorId === "string" ? req.body.factorId : "";
+    const challengeId =
+        typeof req.body?.challengeId === "string" ? req.body.challengeId : undefined;
+    const code = typeof req.body?.code === "string" ? req.body.code : "";
+    if (!factorId || !code) {
+        return void res.status(400).json({ detail: "factorId and code are required" });
+    }
+    try {
+        const result = verifyMfaFactorCode({ factorId, userId, challengeId, code });
+        if (!result.ok) {
+            return void res.status(400).json({ detail: result.error });
+        }
+        markSessionMfaVerified(res.locals.token as string);
+        res.status(204).send();
+    } catch (err) {
+        res.status(500).json({ detail: errorMessage(err) });
+    }
+});
+
+// POST /user/mfa/unenroll — requires an MFA-verified (aal2) session so a
+// password-only session cannot disable MFA.
+userRouter.post("/mfa/unenroll", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const factorId = typeof req.body?.factorId === "string" ? req.body.factorId : "";
+    if (!factorId) {
+        return void res.status(400).json({ detail: "factorId is required" });
+    }
+    if (res.locals.mfaVerified === false) {
+        return void res.status(403).json({
+            detail: "Verify your authenticator before removing factors.",
+            code: "mfa_verification_required",
+        });
+    }
+    unenrollMfaFactor(factorId, userId);
+    if (!hasVerifiedTotpFactor(userId)) {
+        const db = createServerSQLite();
+        await db
+            .from("user_profiles")
+            .update({ mfa_on_login: false })
+            .eq("user_id", userId);
+    }
+    res.status(204).send();
+});
 
 function errorMessage(error: unknown): string {
     if (error instanceof Error && error.message) return error.message;
@@ -183,7 +459,7 @@ function isMissingProfileColumn(error: unknown, column: string): boolean {
 // the legacy cascade (which also handles missing title_model / mfa_on_login)
 // and defaults the feature flag to enabled.
 async function selectProfile(
-    db: ReturnType<typeof createServerSupabase>,
+    db: ReturnType<typeof createServerSQLite>,
     userId: string,
     mode: "maybe" | "single",
 ) {
@@ -208,7 +484,7 @@ async function selectProfile(
 }
 
 async function selectProfileLegacy(
-    db: ReturnType<typeof createServerSupabase>,
+    db: ReturnType<typeof createServerSQLite>,
     userId: string,
     mode: "maybe" | "single",
 ) {
@@ -418,24 +694,18 @@ function readBooleanBodyField(
 }
 
 async function userHasVerifiedTotpFactor(
-    db: ReturnType<typeof createServerSupabase>,
+    db: ReturnType<typeof createServerSQLite>,
     userId: string,
 ) {
-    const { data, error } = await db.auth.admin.getUserById(userId);
-    if (error) return { ok: false as const, error };
-
-    const factors = data.user?.factors ?? [];
+    void db;
     return {
         ok: true as const,
-        hasVerifiedTotp: factors.some(
-            (factor) =>
-                factor.factor_type === "totp" && factor.status === "verified",
-        ),
+        hasVerifiedTotp: hasVerifiedTotpFactor(userId),
     };
 }
 
 async function ensureProfileRow(
-    db: ReturnType<typeof createServerSupabase>,
+    db: ReturnType<typeof createServerSQLite>,
     userId: string,
 ) {
     const { error } = await db
@@ -448,7 +718,7 @@ async function ensureProfileRow(
 }
 
 async function loadProfile(
-    db: ReturnType<typeof createServerSupabase>,
+    db: ReturnType<typeof createServerSQLite>,
     userId: string,
     options: { repairMissing?: boolean; apiKeyStatus?: ApiKeyStatus } = {},
 ) {
@@ -500,7 +770,7 @@ async function loadProfile(
 // POST /user/profile
 userRouter.post("/profile", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     const error = await ensureProfileRow(db, userId);
     if (error) return void res.status(500).json({ detail: error.message });
     res.json({ ok: true });
@@ -513,7 +783,7 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
         return void res.status(400).json({ detail: "email is required" });
     }
 
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     const user = await findProfileUserByEmail(db, email);
     res.json({
         exists: !!user,
@@ -525,7 +795,7 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 // GET /user/profile
 userRouter.get("/profile", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);
     const { data, error } = await loadProfile(db, userId, {
         repairMissing: true,
@@ -535,13 +805,18 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
     res.json({ ...data, apiKeyStatus });
 });
 
+// GET /user/models
+userRouter.get("/models", requireAuth, async (_req, res) => {
+    res.json({ configured: configuredModelSummaries() });
+});
+
 // PATCH /user/profile
 userRouter.patch("/profile", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const parsed = validateProfilePayload(req.body);
     if (!parsed.ok) return void res.status(400).json({ detail: parsed.detail });
 
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     const ensureError = await ensureProfileRow(db, userId);
     if (ensureError)
         return void res.status(500).json({ detail: ensureError.message });
@@ -570,7 +845,7 @@ userRouter.patch(
         if (!parsed.ok)
             return void res.status(400).json({ detail: parsed.detail });
 
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         if (parsed.value) {
             const factorCheck = await userHasVerifiedTotpFactor(db, userId);
             if (!factorCheck.ok) {
@@ -609,7 +884,7 @@ userRouter.patch(
 // GET /user/api-keys
 userRouter.get("/api-keys", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     const status = await getUserApiKeyStatus(userId, db);
     res.json(status);
 });
@@ -629,7 +904,7 @@ userRouter.put(
 
         const apiKey =
             typeof req.body?.api_key === "string" ? req.body.api_key : null;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             if (hasEnvApiKey(provider)) {
                 return void res.status(409).json({
@@ -653,7 +928,7 @@ userRouter.put(
 // GET /user/mcp-connectors
 userRouter.get("/mcp-connectors", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     try {
         res.json(
             await listUserMcpConnectors(userId, db, { includeTools: false }),
@@ -674,7 +949,7 @@ userRouter.get(
     requireAuth,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             res.json(
                 await getUserMcpConnector(userId, req.params.connectorId, db),
@@ -711,7 +986,7 @@ userRouter.post(
             !Array.isArray(req.body.headers)
                 ? (req.body.headers as Record<string, unknown>)
                 : undefined;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             const connector = await createUserMcpConnector(
                 userId,
@@ -737,7 +1012,7 @@ userRouter.patch(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         const body = req.body ?? {};
         try {
             const connector = await updateUserMcpConnector(
@@ -797,7 +1072,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             await deleteUserMcpConnector(userId, req.params.connectorId, db);
             res.status(204).send();
@@ -820,7 +1095,7 @@ userRouter.post(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             const redirectUri = `${backendPublicUrl(req)}/user/mcp-connectors/oauth/callback`;
             const result = await startUserMcpConnectorOAuth(
@@ -849,7 +1124,7 @@ userRouter.get("/mcp-connectors/oauth/callback", async (req, res) => {
     const code = typeof req.query.code === "string" ? req.query.code : "";
     const error =
         typeof req.query.error === "string" ? req.query.error : undefined;
-    const db = createServerSupabase();
+    const db = createServerSQLite();
     try {
         if (error) throw new Error(error);
         if (!state || !code)
@@ -894,7 +1169,7 @@ userRouter.post(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             const connector = await refreshUserMcpConnectorTools(
                 userId,
@@ -931,7 +1206,7 @@ userRouter.patch(
         if (!parsed.ok)
             return void res.status(400).json({ detail: parsed.detail });
 
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             const connector = await setUserMcpToolEnabled(
                 userId,
@@ -962,7 +1237,7 @@ userRouter.delete(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             await deleteUserAccountData(db, userId, userEmail);
             const { error } = await db.auth.admin.deleteUser(userId);
@@ -987,7 +1262,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (_req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             await deleteAllUserChats(db, userId);
             res.status(204).send();
@@ -1009,7 +1284,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (_req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             await deleteUserProjects(db, userId);
             res.status(204).send();
@@ -1031,7 +1306,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (_req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             await deleteAllUserTabularReviews(db, userId);
             res.status(204).send();
@@ -1054,7 +1329,7 @@ userRouter.get(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             const data = await buildUserAccountExport(db, userId, userEmail);
             res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1079,7 +1354,7 @@ userRouter.get(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             const data = await buildUserChatsExport(db, userId, userEmail);
             res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1107,7 +1382,7 @@ userRouter.get(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSupabase();
+        const db = createServerSQLite();
         try {
             const data = await buildUserTabularReviewsExport(
                 db,

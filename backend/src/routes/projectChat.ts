@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerSQLite } from "../lib/sqlite";
 import {
     buildProjectDocContext,
     buildMessages,
@@ -58,8 +58,12 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const askInputsResponse = parseAskInputsResponsePayload(
         ask_inputs_response,
     );
+    if (!Array.isArray(messages) || messages.length === 0)
+        return void res
+            .status(400)
+            .json({ detail: "messages must be a non-empty array" });
 
-    const db = createServerSupabase();
+    const db = createServerSQLite();
 
     // Verify the user has access to the project (owner or shared member).
     const projectAccess = await checkProjectAccess(
@@ -207,6 +211,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             apiKeys,
             signal: streamAbort.signal,
             projectId,
+            userEmail,
         });
 
         const persistedEvents = stripTransientAssistantEvents(events);

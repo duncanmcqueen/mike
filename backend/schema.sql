@@ -1,5 +1,5 @@
--- Mike Supabase schema
--- Use this for a fresh Supabase database. Existing deployments should instead
+-- Mike SQLite schema
+-- Use this for a fresh SQLite database. Existing deployments should instead
 -- apply the dated incremental migration files in backend/migrations that are
 -- newer than the version of Mike they currently have deployed.
 
@@ -259,7 +259,8 @@ create table if not exists public.document_versions (
       'assistant_edit'::text,
       'user_accept'::text,
       'user_reject'::text,
-      'generated'::text
+      'generated'::text,
+      'ironclad'::text
     ]))
 );
 
@@ -829,7 +830,7 @@ alter table public.courtlistener_opinion_cluster_index enable row level security
 -- Direct client grant hardening
 -- ---------------------------------------------------------------------------
 --
--- The frontend uses Supabase directly only for authentication. Application
+-- The frontend uses SQLite directly only for authentication. Application
 -- data access goes through the backend API with the service role after the
 -- backend verifies the user's JWT. Do not grant the browser anon/authenticated
 -- roles direct table privileges for backend-owned data.

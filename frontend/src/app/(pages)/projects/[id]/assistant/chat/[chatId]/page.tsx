@@ -205,6 +205,22 @@ function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
 
 export default function ProjectAssistantChatPage({ params }: Props) {
     const { id: projectId, chatId } = use(params);
+    return (
+        <ProjectAssistantChatPageInner
+            key={chatId}
+            projectId={projectId}
+            chatId={chatId}
+        />
+    );
+}
+
+function ProjectAssistantChatPageInner({
+    projectId,
+    chatId,
+}: {
+    projectId: string;
+    chatId: string;
+}) {
     const router = useRouter();
 
     const { setSidebarOpen } = useSidebar();
