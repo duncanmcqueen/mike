@@ -189,9 +189,10 @@ export function ChatView({
         (tab: AssistantSidePanelTab) => {
             setTabs((prev) => {
                 const idx = prev.findIndex((t) =>
-                    tab.kind === "case"
+                    t.id === tab.id ||
+                    (tab.kind === "case"
                         ? t.kind === "case" && t.id === tab.id
-                        : t.kind !== "case" && t.documentId === tab.documentId,
+                        : t.kind !== "case" && t.documentId === tab.documentId),
                 );
                 if (idx >= 0) {
                     const existing = prev[idx];
@@ -224,6 +225,7 @@ export function ChatView({
             const showQuotes = options?.showQuotes ?? true;
             if (citation.kind === "case") {
                 if (!chatId) return;
+                if (citation.cluster_id == null) return;
                 upsertTab({
                     kind: "case",
                     id: `case:${citation.cluster_id}`,
