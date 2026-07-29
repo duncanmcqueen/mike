@@ -407,19 +407,42 @@ export async function guardedFetch(
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
 ) {
-    const url =
-        typeof input === "string"
-            ? input
-            : input instanceof URL
-              ? input.toString()
-              : input.url;
-    const target = await resolveValidatedTarget(url);
-    const dispatcher = pinnedDispatcher(target);
-    return fetch(input, {
-        ...init,
-        redirect: "manual",
-        dispatcher,
-    } as Parameters<typeof fetch>[1]);
+    let currentInput = input;
+    let currentInit = init;
+
+    for (let redirectCount = 0; ; redirectCount++) {
+        const url =
+            typeof currentInput === "string"
+                ? currentInput
+                : currentInput instanceof URL
+                  ? currentInput.toString()
+                  : currentInput.url;
+        const target = await resolveValidatedTarget(url);
+        const dispatcher = pinnedDispatcher(target);
+        const response = await fetch(currentInput, {
+            ...currentInit,
+            redirect: "manual",
+            dispatcher,
+        } as Parameters<typeof fetch>[1]);
+
+        const isRedirect = [301, 302, 303, 307, 308].includes(response.status);
+        if (!isRedirect || redirectCount >= 5) return response;
+
+        const location = response.headers.get("location");
+        if (!location) return response;
+        const nextUrl = new URL(location, url).toString();
+
+        const method = currentInit?.method?.toUpperCase() ?? "GET";
+        if (
+            response.status === 303 ||
+            ((response.status === 301 || response.status === 302) &&
+                method === "POST")
+        ) {
+            const { body: _body, ...rest } = currentInit ?? {};
+            currentInit = { ...rest, method: "GET" };
+        }
+        currentInput = nextUrl;
+    }
 }
 
 export function base64Url(buffer: Buffer) {
