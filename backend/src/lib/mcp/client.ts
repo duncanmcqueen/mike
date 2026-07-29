@@ -184,6 +184,16 @@ export function toolRequiresConfirmation(
     );
 }
 
+export function sqliteTruthy(value: unknown): boolean {
+    return (
+        value === true ||
+        value === 1 ||
+        value === "1" ||
+        value === "1.0" ||
+        value === "true"
+    );
+}
+
 function toToolSummary(row: ToolCacheRow): McpToolSummary {
     return {
         id: row.id,
@@ -191,14 +201,10 @@ function toToolSummary(row: ToolCacheRow): McpToolSummary {
         openaiToolName: row.openai_tool_name,
         title: row.title,
         description: row.description,
-        enabled:
-            row.enabled === true || row.enabled === 1 || row.enabled === "1",
+        enabled: sqliteTruthy(row.enabled),
         readOnly: truthyAnnotation(row.annotations, "readOnlyHint"),
         destructive: truthyAnnotation(row.annotations, "destructiveHint"),
-        requiresConfirmation:
-            row.requires_confirmation === true ||
-            row.requires_confirmation === 1 ||
-            row.requires_confirmation === "1",
+        requiresConfirmation: sqliteTruthy(row.requires_confirmation),
         lastSeenAt: row.last_seen_at,
     };
 }

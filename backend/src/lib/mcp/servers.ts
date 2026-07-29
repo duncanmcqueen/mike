@@ -12,6 +12,7 @@ import {
     mcpOAuthCallbackUrl,
     normalizeJsonSchema,
     openaiToolName,
+    sqliteTruthy,
     toConnectorSummary,
     toolRequiresConfirmation,
     validateCustomHeaders,
@@ -477,8 +478,7 @@ export async function buildUserMcpTools(
     const { data: connectors, error: connectorError } = await db
         .from("user_mcp_connectors")
         .select("*")
-        .eq("user_id", userId)
-        .eq("enabled", true);
+        .eq("user_id", userId);
     if (connectorError) {
         console.error("[mcp-connectors] failed to load connectors", {
             userId,
@@ -486,7 +486,9 @@ export async function buildUserMcpTools(
         });
         return [];
     }
-    const connectorRows = (connectors ?? []) as ConnectorRow[];
+    const connectorRows = ((connectors ?? []) as ConnectorRow[]).filter(
+        (connector) => sqliteTruthy(connector.enabled),
+    );
     if (!connectorRows.length) return [];
     const connectorById = new Map(
         connectorRows.map((connector) => [connector.id, connector]),
@@ -497,8 +499,6 @@ export async function buildUserMcpTools(
         .select(
             "connector_id, openai_tool_name, tool_name, title, description, input_schema, requires_confirmation, enabled",
         )
-        .eq("enabled", true)
-        .eq("requires_confirmation", false)
         .in("connector_id", connectorRows.map((connector) => connector.id));
     if (error) {
         console.error("[mcp-connectors] failed to load tools", {
@@ -508,7 +508,13 @@ export async function buildUserMcpTools(
         return [];
     }
 
-    return (data ?? []).map((row) => {
+    return (data ?? [])
+        .filter(
+            (row) =>
+                sqliteTruthy(row.enabled) &&
+                !sqliteTruthy(row.requires_confirmation),
+        )
+        .map((row) => {
         const raw = row as Record<string, unknown>;
         const connector = connectorById.get(String(raw.connector_id));
         const connectorName = connector?.name;
@@ -538,20 +544,21 @@ async function resolveCallableTool(
         .from("user_mcp_connector_tools")
         .select("*")
         .eq("openai_tool_name", openaiToolName)
-        .eq("enabled", true)
-        .eq("requires_confirmation", false)
         .single();
     if (error || !data) return null;
     const row = data as ToolCacheRow;
+    if (!sqliteTruthy(row.enabled) || sqliteTruthy(row.requires_confirmation)) {
+        return null;
+    }
     const { data: connectorData, error: connectorError } = await db
         .from("user_mcp_connectors")
         .select("*")
         .eq("id", row.connector_id)
         .eq("user_id", userId)
-        .eq("enabled", true)
         .single();
     if (connectorError || !connectorData) return null;
     const connector = connectorData as ConnectorRow;
+    if (!sqliteTruthy(connector.enabled)) return null;
     return { connector, tool: row };
 }
 
