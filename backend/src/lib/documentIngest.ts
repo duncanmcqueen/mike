@@ -24,6 +24,8 @@ export async function createDocumentFromBytes(params: {
     content: Buffer;
     source?: string;
     db: Db;
+    libraryKind?: "file" | "template";
+    libraryFolderId?: string | null;
 }): Promise<
     | { ok: true; document: IngestedDocument }
     | { ok: false; status: number; detail: string }
@@ -47,6 +49,8 @@ export async function createDocumentFromBytes(params: {
             project_id: projectId,
             user_id: userId,
             status: "processing",
+            library_kind: params.libraryKind ?? "file",
+            library_folder_id: params.libraryFolderId ?? null,
         })
         .select("*")
         .single();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 
 export function PreResponseWrapper({
@@ -19,21 +19,24 @@ export function PreResponseWrapper({
     compact?: boolean;
     forceOpen?: boolean;
 }) {
-    const [toggledOpen, setToggledOpen] = useState<boolean | null>(null);
+    const [userToggled, setUserToggled] = useState(false);
+    const [isOpen, setIsOpen] = useState(!shouldMinimize);
     // Once content has streamed in (shouldMinimize=true even once), stay
     // minimized even if a later render briefly evaluates shouldMinimize=false.
     // Without this latch, the wrapper visibly pops open when isStreaming
     // flips off at the end of the response.
-    const [hasMinimized, setHasMinimized] = useState(shouldMinimize);
-    if (shouldMinimize && !hasMinimized) {
-        setHasMinimized(true);
-    }
+    const hasMinimizedRef = useRef(shouldMinimize);
 
-    const isOpen = forceOpen
-        ? true
-        : toggledOpen !== null
-          ? toggledOpen
-          : !shouldMinimize && !hasMinimized;
+    useEffect(() => {
+        if (forceOpen) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- streaming open/minimize latch (see comment above)
+            setIsOpen(true);
+            return;
+        }
+        if (shouldMinimize) hasMinimizedRef.current = true;
+        if (userToggled) return;
+        setIsOpen(!shouldMinimize && !hasMinimizedRef.current);
+    }, [forceOpen, shouldMinimize, userToggled]);
 
     const stepWord = `step${stepCount === 1 ? "" : "s"}`;
     const label = isStreaming
@@ -48,7 +51,8 @@ export function PreResponseWrapper({
             <button
                 type="button"
                 onClick={() => {
-                    setToggledOpen(!isOpen);
+                    setUserToggled(true);
+                    setIsOpen((v) => !v);
                 }}
                 className={`w-full flex items-center justify-between font-serif text-gray-500 hover:text-gray-700 transition-colors ${buttonTextClass}`}
             >

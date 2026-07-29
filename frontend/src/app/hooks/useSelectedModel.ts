@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_MODEL_ID } from "../components/assistant/ModelToggle";
 
 const STORAGE_KEY = "mike.selectedModel";
@@ -13,7 +13,12 @@ function readStored(): string {
 }
 
 export function useSelectedModel(): [string, (id: string) => void] {
-    const [model, setModelState] = useState<string>(() => readStored());
+    const [model, setModelState] = useState<string>(DEFAULT_MODEL_ID);
+
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- hydration-safe localStorage read; SSR must render the default model
+        setModelState(readStored());
+    }, []);
 
     const setModel = useCallback((id: string) => {
         const next = id && id.trim() ? id : DEFAULT_MODEL_ID;

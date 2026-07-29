@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, ZoomIn, ZoomOut } from "lucide-react";
 import { useFetchSingleDoc } from "@/app/hooks/useFetchSingleDoc";
-import { DocxView } from "./DocxView";
 import type { CitationQuote } from "../types";
 import {
     clearHighlights,
@@ -78,11 +77,6 @@ export function PdfView({
         doc?.document_id ?? null,
         doc?.version_id ?? null,
     );
-
-    // /display returned DOCX bytes — the active version has no PDF
-    // rendition, so fall back to docx-preview (still applies citation
-    // highlighting via the same `quotes` API).
-    const fallbackToDocx = result?.type === "docx";
 
     // Track container width via ResizeObserver so re-renders fire on resize
     useEffect(() => {
@@ -178,7 +172,7 @@ export function PdfView({
     // container — calling `scrollIntoView` on a child of the absolutely-
     // positioned text layer can scroll just the overlay while leaving the
     // canvas untouched, which is why we don't use it here.
-    function scrollToHighlightOnPage(pageNum: number) {
+    const scrollToHighlightOnPage = useCallback((pageNum: number) => {
         const pageEntry = renderedPagesRef.current[pageNum - 1];
         const scrollEl = scrollContainerRef.current;
         if (!pageEntry || !scrollEl) return;
@@ -209,7 +203,7 @@ export function PdfView({
                 behavior: "instant" as ScrollBehavior,
             });
         }
-    }
+    }, []);
 
     const renderPDF = useCallback(
         async (
@@ -330,7 +324,7 @@ export function PdfView({
 
             reveal();
         },
-        [applyHighlights],
+        [applyHighlights, scrollToHighlightOnPage],
     );
 
     const rehighlightQuotes = useCallback(
@@ -342,7 +336,7 @@ export function PdfView({
                 scrollToHighlightOnPage(scrollPage);
             }
         },
-        [applyHighlights],
+        [applyHighlights, scrollToHighlightOnPage],
     );
 
     // Trackpad pinch-to-zoom (wheel + ctrlKey)
@@ -472,6 +466,12 @@ export function PdfView({
         const list = quoteList;
 
         let cancelled = false;
+        queueMicrotask(() => {
+            if (cancelled) return;
+            setZoom(1.0);
+            setNumPages(0);
+        });
+
         (async () => {
             const lib = await getPdfJs();
             if (cancelled) return;
@@ -536,18 +536,6 @@ export function PdfView({
                 currentPageRef.current,
             );
         }
-    }
-
-    if (fallbackToDocx && doc?.document_id) {
-        return (
-            <DocxView
-                documentId={doc.document_id}
-                versionId={doc.version_id ?? null}
-                quotes={quotes}
-                quoteFocusKey={quoteFocusKey}
-                rounded={rounded}
-            />
-        );
     }
 
     return (

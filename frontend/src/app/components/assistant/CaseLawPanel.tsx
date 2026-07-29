@@ -224,6 +224,7 @@ export function CaseLawPanel({
     if (prevTab !== tab) {
         setPrevTab(tab);
         if (tab.opinions?.length) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- sync path of an async fetch effect: serve prop/cache data without a loading flash
             setOpinions(tab.opinions);
             setLoading(false);
             setError(null);
@@ -278,22 +279,19 @@ export function CaseLawPanel({
         };
     }, [tab]);
 
-    const firstOpinionId =
-        orderOpinions(opinions).find(
-            ({ opinion }) => typeof opinion.opinionId === "number",
-        )?.opinion.opinionId ?? null;
-    const [prevFirstOpinionId, setPrevFirstOpinionId] =
-        useState(firstOpinionId);
-    if (prevFirstOpinionId !== firstOpinionId) {
-        setPrevFirstOpinionId(firstOpinionId);
+    useEffect(() => {
+        const firstOpinionId =
+            orderOpinions(opinions).find(
+                ({ opinion }) => typeof opinion.opinionId === "number",
+            )?.opinion.opinionId ?? null;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- reset active opinion after opinions load
         setActiveOpinionId(firstOpinionId);
-    }
+    }, [opinions]);
 
-    const [prevTabQuotes, setPrevTabQuotes] = useState(tab.quotes);
-    if (prevTabQuotes !== tab.quotes) {
-        setPrevTabQuotes(tab.quotes);
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- sync quote list when the tab prop changes
         setRelevantQuotes(tab.quotes ?? []);
-    }
+    }, [tab.quotes]);
 
     const title = tab.caseName;
     const citation = tab.citation;
@@ -339,14 +337,15 @@ export function CaseLawPanel({
         [quoteCacheKey],
     );
 
-    if (quoteIndexState.cacheKey !== quoteCacheKey) {
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- reset quote selection when the quote set changes
         setQuoteIndexState({ cacheKey: quoteCacheKey, index: 0 });
         const firstQuote = relevantQuotes[0];
         setActiveQuoteKey(firstQuote ? relevantQuoteKey(firstQuote, 0) : null);
         if (typeof firstQuote?.opinionId === "number") {
             setActiveOpinionId(firstQuote.opinionId);
         }
-    }
+    }, [quoteCacheKey, relevantQuotes]);
 
     useEffect(() => {
         const root = opinionContentRef.current;

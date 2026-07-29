@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import { ChevronDown, Check, AlertCircle } from "lucide-react";
 import {
     DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
+import {
+    LiquidDropdownContent,
+    LiquidDropdownItem,
+} from "@/app/components/ui/liquid-dropdown";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import { getConfiguredModels, type ApiKeyState } from "@/app/lib/mikeApi";
 
@@ -53,6 +55,8 @@ const GROUP_ORDER: ModelOption["group"][] = [
     "Google",
     "OpenAI",
 ];
+const itemClassName =
+    "rounded-xl px-2.5 py-1.5 text-gray-700 focus:bg-app-surface-hover focus:text-gray-900 data-[highlighted]:bg-app-surface-hover data-[highlighted]:text-gray-900";
 
 export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
     const [options, setOptions] = useState<ModelOption[]>(base);
@@ -108,7 +112,7 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
             <DropdownMenuTrigger asChild>
                 <button
                     type="button"
-                    className={`flex items-center gap-1.5 rounded-lg px-2 h-8 text-sm transition-colors cursor-pointer text-gray-400 hover:bg-gray-100 hover:text-gray-700 ${isOpen ? "bg-gray-100 text-gray-700" : ""}`}
+                    className={`flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-2 text-sm text-gray-400 transition-colors hover:text-gray-700 ${isOpen ? "text-gray-700" : ""}`}
                     title={
                         !selectedAvailable
                             ? "API key missing for selected model"
@@ -124,13 +128,19 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                     />
                 </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-56 z-50" side="top" align="end">
+            <LiquidDropdownContent
+                className="z-50 w-56 p-1.5 text-gray-700"
+                side="top"
+                align="end"
+            >
                 {GROUP_ORDER.map((group, gi) => {
                     const items = options.filter((m) => m.group === group);
                     if (items.length === 0) return null;
                     return (
                         <div key={group}>
-                            {gi > 0 && <DropdownMenuSeparator />}
+                            {gi > 0 && (
+                                <DropdownMenuSeparator className="-mx-1 my-1 bg-white/70" />
+                            )}
                             <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-gray-400">
                                 {group}
                             </DropdownMenuLabel>
@@ -139,9 +149,9 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                                     ? isModelAvailable(m.id, apiKeys)
                                     : true;
                                 return (
-                                    <DropdownMenuItem
+                                    <LiquidDropdownItem
                                         key={m.id}
-                                        className="cursor-pointer"
+                                        className={`${itemClassName} ${m.id === value ? "bg-app-surface-hover text-gray-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]" : ""}`}
                                         onSelect={() => onChange(m.id)}
                                     >
                                         <span
@@ -158,13 +168,13 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                                         {m.id === value && available && (
                                             <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
                                         )}
-                                    </DropdownMenuItem>
+                                    </LiquidDropdownItem>
                                 );
                             })}
                         </div>
                     );
                 })}
-            </DropdownMenuContent>
+            </LiquidDropdownContent>
         </DropdownMenu>
     );
 }

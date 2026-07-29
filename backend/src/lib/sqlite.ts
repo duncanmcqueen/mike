@@ -277,6 +277,56 @@ class SqliteQueryBuilder implements PromiseLike<Result<any>> {
     throw new Error(`Unsupported SQLite not() operator: ${operator}`);
   }
 
+  or(expression: string) {
+    const terms = expression
+      .split(",")
+      .map((term) => term.trim())
+      .filter(Boolean);
+    const clauses: string[] = [];
+    const clauseValues: unknown[] = [];
+    for (const term of terms) {
+      const match = term.match(/^([A-Za-z_][A-Za-z0-9_]*)\.(eq|neq|is|in)\.(.+)$/);
+      if (!match) {
+        throw new Error(`Unsupported SQLite or() term: ${term}`);
+      }
+      const [, column, operator, rawValue] = match;
+      ensureColumns(this.table, { [column]: null });
+      if (operator === "is") {
+        if (rawValue === "null") clauses.push(`${quoteIdent(column)} is null`);
+        else if (rawValue === "not.null")
+          clauses.push(`${quoteIdent(column)} is not null`);
+        else {
+          clauses.push(`${quoteIdent(column)} is ?`);
+          clauseValues.push(encode(rawValue));
+        }
+        continue;
+      }
+      if (operator === "in") {
+        const values = rawValue.replace(/^\(|\)$/g, "").split(",").filter(Boolean);
+        if (!values.length) {
+          clauses.push("1 = 0");
+          continue;
+        }
+        clauses.push(
+          `${quoteIdent(column)} in (${values.map(() => "?").join(", ")})`,
+        );
+        clauseValues.push(...values.map(encode));
+        continue;
+      }
+      clauses.push(
+        operator === "eq"
+          ? `${quoteIdent(column)} = ?`
+          : `${quoteIdent(column)} != ?`,
+      );
+      clauseValues.push(encode(rawValue));
+    }
+    if (clauses.length) {
+      this.filters.push(`(${clauses.join(" or ")})`);
+      this.values.push(...clauseValues);
+    }
+    return this;
+  }
+
   filter(column: string, operator: string, value: unknown) {
     ensureColumns(this.table, { [column]: null });
     if (operator === "cs") {

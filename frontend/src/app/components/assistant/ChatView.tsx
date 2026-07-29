@@ -82,13 +82,10 @@ export function ChatView({
     const { setSidebarOpen } = useSidebar();
     const panelCloseTimerRef = useRef<number | null>(null);
 
-    // Clear dismissed ask-input cards when switching chats
-    // (adjust-during-render).
-    const [prevChatId, setPrevChatId] = useState(chatId);
-    if (prevChatId !== chatId) {
-        setPrevChatId(chatId);
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- reset per-chat UI state when switching chats
         setHiddenAskInputKeys(new Set());
-    }
+    }, [chatId]);
 
     const showPanel = useCallback(() => {
         if (panelCloseTimerRef.current !== null) {
@@ -523,11 +520,9 @@ export function ChatView({
         const c = messagesContainerRef.current;
         if (!c) return;
         c.addEventListener("scroll", updateScrollButton);
-        const raf = requestAnimationFrame(updateScrollButton);
-        return () => {
-            cancelAnimationFrame(raf);
-            c.removeEventListener("scroll", updateScrollButton);
-        };
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- initial scroll-button state must be measured from the live DOM
+        updateScrollButton();
+        return () => c.removeEventListener("scroll", updateScrollButton);
     }, [messages, updateScrollButton]);
 
     const scrollToBottom = () => {
@@ -557,50 +552,38 @@ export function ChatView({
         if (isResponseLoading) scrollLatestUserToTop();
     }, [isResponseLoading, scrollLatestUserToTop]);
 
-    // Hide messages again when the chat empties (adjust-during-render).
-    const [prevEmpty, setPrevEmpty] = useState(messages.length === 0);
-    const isEmpty = messages.length === 0;
-    if (prevEmpty !== isEmpty) {
-        setPrevEmpty(isEmpty);
-        if (isEmpty) {
-            setMessagesVisible(false);
-        }
-    }
-
     useEffect(() => {
         if (messages.length === 0) {
             hasScrolledRef.current = false;
-            return;
-        }
-        if (hasScrolledRef.current) return;
-        const userMsgCount = messages.filter(
-            (m) => m.role === "user",
-        ).length;
-        if (
-            userMsgCount >= 2 &&
-            latestUserMessageRef.current &&
-            messagesContainerRef.current
-        ) {
-            const timer = setTimeout(() => {
-                const container = messagesContainerRef.current;
-                const element = latestUserMessageRef.current;
-                if (container && element) {
-                    container.scrollTo({
-                        top: element.offsetTop - 24,
-                        behavior: "instant",
-                    });
-                }
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- hide messages until scroll position is restored to avoid a visible jump
+            setMessagesVisible(false);
+        } else if (!hasScrolledRef.current) {
+            const userMsgCount = messages.filter(
+                (m) => m.role === "user",
+            ).length;
+            if (
+                userMsgCount >= 2 &&
+                latestUserMessageRef.current &&
+                messagesContainerRef.current
+            ) {
+                setTimeout(() => {
+                    const container = messagesContainerRef.current;
+                    const element = latestUserMessageRef.current;
+                    if (container && element) {
+                        container.scrollTo({
+                            top: element.offsetTop - 24,
+                            behavior: "instant",
+                        });
+                    }
+                    hasScrolledRef.current = true;
+                    setMessagesVisible(true);
+                }, 100);
+            } else {
                 hasScrolledRef.current = true;
                 setMessagesVisible(true);
-            }, 100);
-            return () => clearTimeout(timer);
+            }
         }
-        const raf = requestAnimationFrame(() => {
-            hasScrolledRef.current = true;
-            setMessagesVisible(true);
-        });
-        return () => cancelAnimationFrame(raf);
-    }, [messages]);
+    }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (panelMounted && window.innerWidth < 768) {

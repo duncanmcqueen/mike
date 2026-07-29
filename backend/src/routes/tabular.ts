@@ -402,6 +402,14 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     );
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
+    if (
+        (req.body.title != null || req.body.document_ids != null) &&
+        !access.isOwner
+    ) {
+        return void res.status(403).json({
+            detail: "Only the review owner can change review settings",
+        });
+    }
     if (req.body.columns_config != null) {
         if (!access.isOwner) {
             return void res.status(403).json({
@@ -1045,6 +1053,29 @@ tabularRouter.delete(
         const { error } = await db
             .from("tabular_review_chats")
             .delete()
+            .eq("id", chatId)
+            .eq("user_id", userId);
+        if (error) return void res.status(500).json({ detail: error.message });
+        res.status(204).send();
+    },
+);
+
+// PATCH /tabular-review/:reviewId/chats/:chatId — rename a chat
+tabularRouter.patch(
+    "/:reviewId/chats/:chatId",
+    requireAuth,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const { chatId } = req.params;
+        const title =
+            typeof req.body?.title === "string" ? req.body.title.trim() : "";
+        if (!title)
+            return void res.status(400).json({ detail: "Title is required" });
+        const db = createServerSupabase();
+        // Owner-only rename — mirrors the delete rule above.
+        const { error } = await db
+            .from("tabular_review_chats")
+            .update({ title: title.slice(0, 200) })
             .eq("id", chatId)
             .eq("user_id", userId);
         if (error) return void res.status(500).json({ detail: error.message });

@@ -1,8 +1,12 @@
 # Mike
 
-Mike is a legal document assistant with a Next.js frontend, an Express backend,
-local SQLite persistence, local file-byte storage, and configurable AI model
-providers.
+![Mike](https://mikeoss.com/link-image.jpg)
+
+Mike or MikeOSS is a legal AI platform that is able to assist you with document
+review, drafting and legal research.
+
+It has a Next.js frontend, an Express backend, local SQLite persistence, local
+file-byte storage, and configurable AI model providers.
 
 Website: [mikeoss.com](https://mikeoss.com)
 
@@ -11,6 +15,12 @@ Website: [mikeoss.com](https://mikeoss.com)
 - `frontend/` - Next.js application
 - `backend/` - Express API, SQLite access, document processing, and model routing
 - `docs/model-orchestration.md` - local OpenAI-compatible and committee model setup
+
+## System Workflows
+
+Mike's system assistant and tabular review workflows are maintained in the
+[`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows)
+repository.
 
 ## Prerequisites
 

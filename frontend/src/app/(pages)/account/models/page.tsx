@@ -4,12 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Check, ChevronDown, Loader2 } from "lucide-react";
 import {
     DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
+import {
+    LiquidDropdownContent,
+    LiquidDropdownItem,
+} from "@/app/components/ui/liquid-dropdown";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 import {
@@ -183,7 +185,7 @@ function ModelPreferenceDropdown({
                     )}
                 </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent
+            <LiquidDropdownContent
                 className="z-50"
                 style={{ width: "var(--radix-dropdown-menu-trigger-width)" }}
                 align="start"
@@ -203,7 +205,7 @@ function ModelPreferenceDropdown({
                                     ? isModelAvailable(m.id, apiKeys)
                                     : true;
                                 return (
-                                    <DropdownMenuItem
+                                    <LiquidDropdownItem
                                         key={m.id}
                                         className="cursor-pointer"
                                         onSelect={() => onChange(m.id)}
@@ -224,13 +226,13 @@ function ModelPreferenceDropdown({
                                         {m.id === value && available && (
                                             <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
                                         )}
-                                    </DropdownMenuItem>
+                                    </LiquidDropdownItem>
                                 );
                             })}
                         </div>
                     );
                 })}
-            </DropdownMenuContent>
+            </LiquidDropdownContent>
         </DropdownMenu>
     );
 }
