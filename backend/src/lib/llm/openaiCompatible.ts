@@ -112,7 +112,7 @@ export async function completeOpenAICompatibleText(params: {
     );
   }
 
-  return json.choices?.[0]?.message?.content ?? "";
+  return stripThinkTags(json.choices?.[0]?.message?.content ?? "");
 }
 
 function extractSseJson(buffer: string): { events: unknown[]; rest: string } {
@@ -144,6 +144,76 @@ function abortError(): Error {
   const err = new Error("Stream aborted.");
   err.name = "AbortError";
   return err;
+}
+
+const THINK_OPEN = "<think>";
+const THINK_CLOSE = "</think>";
+
+// Routes inline <think>...</think> blocks (qwen/deepseek style) to the
+// reasoning channel instead of the visible content stream. Tags can be
+// split across SSE chunks, so partial-tag suffixes are buffered.
+class ThinkTagFilter {
+  private insideThink = false;
+  private buffer = "";
+  sawReasoning = false;
+
+  feed(text: string): { content: string[]; reasoning: string[] } {
+    this.buffer += text;
+    const content: string[] = [];
+    const reasoning: string[] = [];
+
+    while (this.buffer.length) {
+      const tag = this.insideThink ? THINK_CLOSE : THINK_OPEN;
+      const idx = this.buffer.indexOf(tag);
+      if (idx === -1) {
+        const hold = this.partialTagSuffixLength(tag);
+        const emit = this.buffer.slice(0, this.buffer.length - hold);
+        this.buffer = this.buffer.slice(this.buffer.length - hold);
+        if (emit) this.emit(emit, content, reasoning);
+        break;
+      }
+      const before = this.buffer.slice(0, idx);
+      if (before) this.emit(before, content, reasoning);
+      this.buffer = this.buffer.slice(idx + tag.length);
+      this.insideThink = !this.insideThink;
+    }
+
+    return { content, reasoning };
+  }
+
+  flush(): { content: string[]; reasoning: string[] } {
+    const content: string[] = [];
+    const reasoning: string[] = [];
+    if (this.buffer) {
+      this.emit(this.buffer, content, reasoning);
+      this.buffer = "";
+    }
+    return { content, reasoning };
+  }
+
+  private emit(text: string, content: string[], reasoning: string[]) {
+    if (this.insideThink) {
+      this.sawReasoning = true;
+      reasoning.push(text);
+    } else {
+      content.push(text);
+    }
+  }
+
+  private partialTagSuffixLength(tag: string): number {
+    const max = Math.min(this.buffer.length, tag.length - 1);
+    for (let len = max; len > 0; len--) {
+      if (this.buffer.endsWith(tag.slice(0, len))) return len;
+    }
+    return 0;
+  }
+}
+
+function stripThinkTags(text: string): string {
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/g, "")
+    .replace(/<\/?think>/g, "")
+    .trim();
 }
 
 function throwIfAborted(signal?: AbortSignal) {
@@ -239,6 +309,7 @@ export async function streamOpenAICompatible(
     let buffer = "";
     let iterationText = "";
     let sawReasoning = false;
+    const thinkFilter = new ThinkTagFilter();
     const pendingToolCalls = new Map<
       number,
       { id: string; name: string; arguments: string }
@@ -268,8 +339,14 @@ export async function streamOpenAICompatible(
         }
 
         if (typeof delta.content === "string" && delta.content) {
-          iterationText += delta.content;
-          callbacks.onContentDelta?.(delta.content);
+          const segments = thinkFilter.feed(delta.content);
+          for (const text of segments.reasoning) {
+            callbacks.onReasoningDelta?.(text);
+          }
+          for (const text of segments.content) {
+            iterationText += text;
+            callbacks.onContentDelta?.(text);
+          }
         }
 
         for (const toolCall of delta.tool_calls ?? []) {
@@ -287,7 +364,18 @@ export async function streamOpenAICompatible(
       }
     }
 
-    if (sawReasoning) callbacks.onReasoningBlockEnd?.();
+    const flushed = thinkFilter.flush();
+    for (const text of flushed.reasoning) {
+      callbacks.onReasoningDelta?.(text);
+    }
+    for (const text of flushed.content) {
+      iterationText += text;
+      callbacks.onContentDelta?.(text);
+    }
+
+    if (sawReasoning || thinkFilter.sawReasoning) {
+      callbacks.onReasoningBlockEnd?.();
+    }
     fullText += iterationText;
     throwIfAborted(params.abortSignal);
 
