@@ -151,6 +151,16 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 NEXT_PUBLIC_MIKE_AUTH_PROVIDER=local
 ```
 
+Next.js embeds `NEXT_PUBLIC_*` values in the browser bundle at build time, so
+they must be set when running `npm run build --prefix frontend` — setting them
+only when starting an already-built application is too late.
+`NEXT_PUBLIC_API_BASE_URL` is always required for production builds; the
+Supabase profile (`NEXT_PUBLIC_MIKE_AUTH_PROVIDER` unset or `supabase`)
+additionally requires `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` from the Supabase project
+dashboard. Production builds fail with a list of missing variables instead of
+producing a bundle that cannot connect to the backend.
+
 See [optional deployment modules](docs/deployment-modules.md) for the module
 allow-list and complete upstream/local deployment examples.
 

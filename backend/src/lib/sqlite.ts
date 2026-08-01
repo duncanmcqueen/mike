@@ -760,6 +760,9 @@ async function sqliteRpc(name: string, args: Row): Promise<Result<any[]>> {
     if (name === "get_tabular_reviews_overview") {
       return { data: await tabularReviewsOverview(args), error: null };
     }
+    if (name === "get_tabular_review_ids_overview") {
+      return { data: await tabularReviewIdsOverview(args), error: null };
+    }
     if (name === "get_workflows_overview") {
       return { data: await workflowsOverview(args), error: null };
     }
@@ -870,14 +873,19 @@ async function chatsOverview(args: Row): Promise<Row[]> {
   return limit ? rows.slice(0, limit) : rows;
 }
 
-async function tabularReviewsOverview(args: Row): Promise<Row[]> {
+// Mirrors the visible_reviews predicate of the Postgres
+// get_tabular_reviews_overview / get_tabular_review_ids_overview RPCs
+// (backend/migrations/20260726_01, 20260727_01). Keep the two providers'
+// visibility, scope, and search semantics in sync.
+async function visibleTabularReviews(args: Row): Promise<Row[]> {
   const userId = rpcUserId(args);
   const userEmail = rpcUserEmail(args);
   const projectId = typeof args.p_project_id === "string" && args.p_project_id ? args.p_project_id : null;
-  const [projects, reviews, cells] = await Promise.all([
+  const scope = args.p_scope === "in-project" || args.p_scope === "standalone" ? args.p_scope : "all";
+  const searchTerm = typeof args.p_search_term === "string" ? args.p_search_term.trim().toLowerCase() : "";
+  const [projects, reviews] = await Promise.all([
     selectRows("projects"),
     selectRows("tabular_reviews"),
-    selectRows("tabular_cells"),
   ]);
   const accessibleProjectIds = new Set(
     projects
@@ -888,22 +896,65 @@ async function tabularReviewsOverview(args: Row): Promise<Row[]> {
       )
       .map((project) => project.id),
   );
-  return reviews
-    .filter((review) => {
-      if (projectId && review.project_id !== projectId) return false;
-      if (projectId && !accessibleProjectIds.has(projectId)) return false;
-      if (review.user_id === userId) return true;
-      if (review.project_id && accessibleProjectIds.has(review.project_id)) return true;
-      return !projectId && jsonListIncludes(review.shared_with, userEmail);
-    })
-    .sort(createdDesc)
-    .map((review) => ({
-      ...review,
-      is_owner: review.user_id === userId,
-      document_count: Array.isArray(review.document_ids)
-        ? distinctCount(review.document_ids.map((id) => ({ id })), "id")
-        : distinctCount(cells.filter((cell) => cell.review_id === review.id), "document_id"),
-    }));
+  return reviews.filter((review) => {
+    if (projectId && review.project_id !== projectId) return false;
+    if (projectId && !accessibleProjectIds.has(projectId)) return false;
+    if (scope === "in-project" && !review.project_id) return false;
+    if (scope === "standalone" && review.project_id) return false;
+    if (searchTerm && !String(review.title ?? "").toLowerCase().includes(searchTerm)) return false;
+    if (review.user_id === userId) return true;
+    if (review.project_id && accessibleProjectIds.has(review.project_id)) return true;
+    return !projectId && jsonListIncludes(review.shared_with, userEmail);
+  });
+}
+
+function rpcPageSlice<T>(rows: T[], args: Row, defaultLimit: number): T[] {
+  const requestedLimit = Number(args.p_limit);
+  const limit = Number.isFinite(requestedLimit) ? Math.max(requestedLimit, 1) : defaultLimit;
+  const requestedOffset = Number(args.p_offset);
+  const offset = Number.isFinite(requestedOffset) ? Math.max(requestedOffset, 0) : 0;
+  return rows.slice(offset, offset + limit);
+}
+
+async function tabularReviewsOverview(args: Row): Promise<Row[]> {
+  const userId = rpcUserId(args);
+  const [visible, cells] = await Promise.all([
+    visibleTabularReviews(args),
+    selectRows("tabular_cells"),
+  ]);
+  const overview: Row[] = visible.map((review) => ({
+    ...review,
+    is_owner: review.user_id === userId,
+    document_count: Array.isArray(review.document_ids)
+      ? distinctCount(review.document_ids.map((id) => ({ id })), "id")
+      : distinctCount(cells.filter((cell) => cell.review_id === review.id), "document_id"),
+  }));
+  const sortKey = typeof args.p_sort_key === "string" ? args.p_sort_key : "created";
+  const direction = args.p_sort_direction === "asc" ? 1 : -1;
+  const sortValue = (row: Row): string | number => {
+    if (sortKey === "name") return String(row.title ?? "").toLowerCase();
+    if (sortKey === "columns") return Array.isArray(row.columns_config) ? row.columns_config.length : 0;
+    if (sortKey === "documents") return Number(row.document_count ?? 0);
+    return String(row.created_at ?? "");
+  };
+  overview.sort((a, b) => {
+    const left = sortValue(a);
+    const right = sortValue(b);
+    const primary = typeof left === "number" && typeof right === "number"
+      ? left - right
+      : String(left).localeCompare(String(right));
+    if (primary !== 0) return primary * direction;
+    return createdDesc(a, b) || String(a["id"] ?? "").localeCompare(String(b["id"] ?? ""));
+  });
+  return rpcPageSlice(overview, args, 20);
+}
+
+async function tabularReviewIdsOverview(args: Row): Promise<Row[]> {
+  const visible = await visibleTabularReviews(args);
+  const ids = visible
+    .sort((a, b) => createdDesc(a, b) || String(a.id ?? "").localeCompare(String(b.id ?? "")))
+    .map((review) => ({ id: review.id, user_id: review.user_id }));
+  return rpcPageSlice(ids, args, 1000);
 }
 
 async function workflowsOverview(args: Row): Promise<Row[]> {

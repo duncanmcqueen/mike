@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "test:stack": "vitest run src/__tests__/integration/stack.sqlite.test.ts src/__tests__/integration/access.sqlite.test.ts src/__tests__/integration/stack.supabase.test.ts",
+    "test:stack": "vitest run src/__tests__/integration/stack.sqlite.test.ts src/__tests__/integration/access.sqlite.test.ts src/__tests__/integration/stack.supabase.test.ts src/__tests__/integration/tabularPagination.supabase.test.ts",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
