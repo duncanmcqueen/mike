@@ -295,6 +295,29 @@ describe("SQLite tabular-review pagination", () => {
             expect(returnedIds.has(id)).toBe(true);
     });
 
+    it.each([
+        ["omitted", undefined],
+        ["explicitly null", null],
+    ])(
+        "falls back to the default page size when p_limit is %s",
+        async (_label, limit) => {
+            // Postgres reaches the default through
+            // `greatest(coalesce(p_limit, 20), 1)`, so null and absent behave
+            // identically there. Number(null) is 0, so a naive numeric guard
+            // on this side would clamp to a 1-row page instead.
+            const result = await db.rpc("get_tabular_reviews_overview", {
+                p_user_id: ownerId,
+                p_user_email: ownerEmail,
+                p_project_id: null,
+                p_limit: limit,
+                p_offset: null,
+            });
+
+            expect(result.error).toBeNull();
+            expect(result.data).toHaveLength(20);
+        },
+    );
+
     it("defaults to a 20-row page when p_limit/p_offset are omitted", async () => {
         // Mirrors pagination.ts's DEFAULT_LIMIT of 20, which is what
         // backend/src/routes/tabular.ts always ends up sending even when

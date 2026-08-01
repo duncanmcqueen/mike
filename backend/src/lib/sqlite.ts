@@ -908,11 +908,18 @@ async function visibleTabularReviews(args: Row): Promise<Row[]> {
   });
 }
 
+// Mirrors the Postgres `limit greatest(coalesce(p_limit, <default>), 1)
+// offset greatest(coalesce(p_offset, 0), 0)` tail. Absent *and* null both
+// fall back to the default, matching coalesce — Number(null) is 0, so
+// these cannot be collapsed into a plain Number() check.
 function rpcPageSlice<T>(rows: T[], args: Row, defaultLimit: number): T[] {
-  const requestedLimit = Number(args.p_limit);
-  const limit = Number.isFinite(requestedLimit) ? Math.max(requestedLimit, 1) : defaultLimit;
-  const requestedOffset = Number(args.p_offset);
-  const offset = Number.isFinite(requestedOffset) ? Math.max(requestedOffset, 0) : 0;
+  const coalesceNumber = (value: unknown, fallback: number): number => {
+    if (value === null || value === undefined) return fallback;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const limit = Math.max(coalesceNumber(args.p_limit, defaultLimit), 1);
+  const offset = Math.max(coalesceNumber(args.p_offset, 0), 0);
   return rows.slice(offset, offset + limit);
 }
 
