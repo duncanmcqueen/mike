@@ -8,7 +8,7 @@ logs/
 .DS_Store
 data/uv/
 data/uv-cache/
+data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
-data/mike-files.sqlite
 vendor/

@@ -1,4 +1,4 @@
-# USPTO Patent and Trademark MCP Connector
+# Enabling The USPTO Patent And Trademark MCP Server
 
 Mike includes a managed connector for
 [`riemannzeta/patent_mcp_server`](https://github.com/riemannzeta/patent_mcp_server).
@@ -6,24 +6,45 @@ The backend launches version `0.9.5` locally over MCP stdio using Python 3.13
 and the MCP Python SDK 1.x compatibility line. It does not expose an arbitrary
 command field in the web interface.
 
-## Prerequisites
+## Quick Start
 
 1. Install [`uv`](https://docs.astral.sh/uv/getting-started/installation/) on
-   the machine running the Mike backend.
-2. Confirm both commands are visible to the same operating-system user that
-   runs Mike:
+   the machine running the Mike backend, and confirm both commands are visible
+   to the same operating-system user that runs Mike:
 
    ```bash
    uv --version
    uvx --version
    ```
 
-3. Make sure the backend can reach PyPI and the USPTO services used by the MCP
-   server. The first connector setup can take longer while `uvx` downloads the
-   pinned package; later launches use the `uv` cache. Mike defaults that cache
-   to `backend/data/uv` so it works for service accounts with read-only
-   home directories. The cache, tool environments, and any managed Python
-   installs are all contained there.
+2. Restart the Mike backend if it was already running when you installed `uv`.
+3. Sign in to Mike, open **Account > Connectors**, and select **USPTO**.
+4. Wait for provisioning to finish. On first launch, `uvx` downloads a managed
+   Python 3.13 build (about 33 MB) and the server's packages into
+   `backend/data/uv`; with a normal connection this takes about a minute.
+   Later launches use the cache and start in seconds.
+5. Open the **USPTO Patent & Trademark** connector details and review the
+   imported tool catalog — the pinned server currently publishes **52 tools**
+   over MCP (patent search, CPC lookup, trademark search, assignments, status
+   codes, and more). Disable any tools you do not want exposed to assistant
+   conversations.
+
+No API keys are needed for the public tools. The server logs a warning at
+startup when `USPTO_API_KEY` is not set — that is expected, and only means the
+credentialed Open Data Portal tools will return 403 until a key is added.
+
+## Verify The Server Outside Mike (optional)
+
+To isolate download or network problems from Mike, run the exact pinned
+command as the backend service user:
+
+```bash
+uvx --python 3.13 --from patent-mcp-server==0.9.5 --with 'mcp[cli]>=1.28,<2' patent-mcp-server
+```
+
+A successful launch prints the server configuration and
+`Starting USPTO Patent MCP server with stdio transport`, then waits for MCP
+messages on stdin. Exit with Ctrl-C.
 
 ## Optional USPTO Credentials
 
@@ -32,7 +53,8 @@ tools work without API keys. Add keys to `backend/.env` to enable the server's
 credentialed data sources:
 
 ```bash
-# USPTO Open Data Portal and PTAB tools
+# USPTO Open Data Portal tools (register at https://data.uspto.gov,
+# then visit "My ODP" to create a key)
 USPTO_API_KEY=replace-with-your-uspto-odp-key
 
 # TSDR trademark status and document tools
@@ -47,23 +69,33 @@ MCP SDK's safe default environment and the connector's documented settings to
 the child process. Credentials are not stored in connector rows or returned to
 the browser.
 
-## Enable In Mike
-
-1. Open **Account > Connectors**.
-2. Select **USPTO**.
-3. Wait for Mike to launch the server and import its tool catalog.
-4. Open the **USPTO Patent & Trademark** connector details.
-5. Review the imported tools and disable any tools you do not want exposed to
-   assistant conversations.
+## How Mike Runs The Server
 
 Provisioning is idempotent: selecting **USPTO** again refreshes the same
 connector instead of creating a duplicate. Tool refreshes preserve your prior
 enabled/disabled selections. Tools marked destructive or non-read-only by the
 server remain disabled under Mike's existing confirmation policy.
 
-The upstream project currently advertises 61 tools, with 36 active and 25
-retained but unavailable because upstream USPTO APIs were retired. An imported
-tool can therefore be present even when its underlying service is unavailable.
+The `uv` cache, tool environments, and any managed Python installs are
+contained in `backend/data/uv` by default so the connector works for service
+accounts with read-only home directories. Override the location with
+`PATENT_MCP_UV_DATA_DIR` in `backend/.env` if needed.
+
+Without a local checkout configured, Mike runs:
+
+```bash
+uvx --python 3.13 \
+  --from patent-mcp-server==0.9.5 \
+  --with 'mcp[cli]>=1.28,<2' \
+  patent-mcp-server
+```
+
+The explicit Python and MCP SDK constraints are required. Version `0.9.5`
+imports the v1 `mcp.server.fastmcp` module and declares Python `<3.14`, but its
+published dependency metadata does not exclude the incompatible MCP SDK 2.x.
+
+An imported tool can be present even when its underlying USPTO service has
+been retired upstream; the upstream README tracks which tools are active.
 
 ## Run From A Local Checkout
 
@@ -77,7 +109,8 @@ git checkout v0.9.5
 uv sync
 ```
 
-Then set the absolute checkout path in `backend/.env`:
+Clone it anywhere outside the repo (or under `backend/vendor/`, which is
+gitignored), then set the absolute checkout path in `backend/.env`:
 
 ```bash
 PATENT_MCP_DIRECTORY=/absolute/path/to/patent_mcp_server
@@ -96,25 +129,13 @@ uv --directory "$PATENT_MCP_DIRECTORY" run \
   patent-mcp-server
 ```
 
-Without `PATENT_MCP_DIRECTORY`, Mike runs:
-
-```bash
-uvx --python 3.13 \
-  --from patent-mcp-server==0.9.5 \
-  --with 'mcp[cli]>=1.28,<2' \
-  patent-mcp-server
-```
-
-The explicit Python and MCP SDK constraints are required. Version `0.9.5`
-imports the v1 `mcp.server.fastmcp` module and declares Python `<3.14`, but its
-published dependency metadata does not exclude the incompatible MCP SDK 2.x.
-
 ## Troubleshooting
 
 **The preset request says `spawn uvx ENOENT`.** Install `uv`, make sure `uvx`
 is on the backend service user's `PATH`, and restart that service.
 
-**Setup times out on the first attempt.** Run the pinned `uvx` command above
+**Setup times out on the first attempt.** Run the pinned `uvx` command from
+[Verify The Server Outside Mike](#verify-the-server-outside-mike-optional)
 once as the backend service user, then retry. This isolates package download or
 network failures from Mike.
 

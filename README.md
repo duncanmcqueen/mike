@@ -11,14 +11,60 @@ and configurable AI model providers.
 
 Website: [mikeoss.com](https://mikeoss.com)
 
+## Features
+
+- **Document review, drafting, and research** — project and standalone
+  document chat, tabular review, workflows, document versions, and DOCX/PDF
+  handling.
+- **Selectable infrastructure providers** — run fully self-contained on
+  SQLite (database, auth, and file storage) with Node 22+, or use the
+  upstream Supabase + Cloudflare R2 profile. See
+  [deployment modules](docs/deployment-modules.md).
+- **Optional deployment modules** — enable only the product surfaces you
+  want with the `MIKE_ENABLED_MODULES` allow-list.
+- **Model orchestration** — Anthropic, Gemini, OpenAI, and Kimi cloud
+  models, local OpenAI-compatible servers (with streaming tool calling and
+  reasoning channels), and multi-model committee orchestration. See
+  [model orchestration](docs/model-orchestration.md).
+- **Legal monitors** — scheduled classify → gap-check → memo-draft → digest
+  pipelines over RSS/Atom feeds and connector sources, with run history,
+  captured documents, email alerts, and bundled presets (Fintech GC
+  Regulatory Digest, trademark monitoring). See
+  [legal monitor sources](docs/legal-monitor-sources.md).
+- **Playbooks** — reusable contract-review playbooks with versioning, run
+  history, Word export, and document imports. See
+  [playbooks](docs/playbooks.md).
+- **Prompt library** — per-user saved prompts plus a built-in example
+  library, available from the assistant composer. See
+  [prompt library](docs/prompt-library.md).
+- **Gmail integration** — per-user OAuth connection for mailbox search and
+  reading in chat, importing emails as DOCX documents, and sending Monitor
+  alerts. See [Gmail integration](docs/gmail-integration.md).
+- **USPTO patent and trademark connector** — a managed local MCP connector
+  that runs the open-source `patent_mcp_server` with per-tool enablement
+  and audit controls. See
+  [enabling the patent MCP server](docs/patent-mcp-connector.md).
+- **Microsoft Word add-in** — task-pane add-in for chat, tracked edits,
+  comments, project documents, workflows, tabular reviews, local models,
+  and committee models. See [Word add-in setup](docs/word-addin.md).
+- **CourtListener and Ironclad integrations** — US case-law lookup and
+  citation verification; contract search and import from Ironclad CLM.
+- **Account controls** — TOTP multi-factor authentication, per-user feature
+  flags, dark mode, per-user model API keys, and support feedback.
+
 ## Contents
 
 - `frontend/` - Next.js application
 - `backend/` - Express API, provider-neutral data access, document processing, and model routing
+- `word-addin/` - Microsoft Word task-pane add-in
 - `docs/deployment-modules.md` - deployment profiles and optional-module allow-list
 - `docs/model-orchestration.md` - local OpenAI-compatible and committee model setup
+- `docs/legal-monitor-sources.md` - legal monitor feeds, connector sources, and presets
+- `docs/playbooks.md` - contract-review playbooks
+- `docs/prompt-library.md` - saved prompts and the built-in example library
 - `docs/gmail-integration.md` - Gmail OAuth, email import, assistant tools, and Monitor delivery
-- `docs/patent-mcp-connector.md` - managed USPTO patent and trademark MCP connector setup
+- `docs/patent-mcp-connector.md` - enabling the managed USPTO patent and trademark MCP connector
+- `docs/word-addin.md` - Word add-in development, sideloading, and deployment
 
 ## System Workflows
 
@@ -33,6 +79,7 @@ repository.
 - git
 - At least one supported model provider API key, or a local OpenAI-compatible server
 - Optional: a CourtListener API token for case law lookup and citation verification
+- Optional: [`uv`](https://docs.astral.sh/uv/getting-started/installation/) for the USPTO patent/trademark connector
 - LibreOffice installed locally if you need DOC/DOCX to PDF conversion
 
 ## Environment
@@ -93,6 +140,10 @@ USPTO_API_KEY=your-uspto-open-data-portal-key
 TSDR_API_KEY=your-uspto-tsdr-key
 ```
 
+`FRONTEND_URL` must exactly match the origin the browser uses to reach the
+frontend — it is enforced for CORS, so a mismatched port or host makes every
+API request from the browser fail with a network error.
+
 Create `frontend/.env.local`:
 
 ```bash
@@ -121,6 +172,12 @@ npm install --prefix frontend
 npm install --prefix word-addin
 ```
 
+The backend depends on `xlsx` served from the SheetJS CDN rather than the npm
+registry. npm 12 and newer blocks remote tarball dependencies by default; the
+committed `backend/.npmrc` (`allow-remote=root`) re-enables them for the
+backend's direct dependencies, so the install works out of the box. Older npm
+versions ignore the setting.
+
 ## Run Locally
 
 Start the backend:
@@ -137,6 +194,10 @@ npm run dev --prefix frontend
 
 Open `http://localhost:3000`.
 
+The SQLite database and file store are created automatically on first boot at
+`SQLITE_DB_PATH` / `SQLITE_STORAGE_PATH`; no seed database or migration step is
+required for the local profile.
+
 ### Microsoft Word
 
 MikeOSS includes a Word task-pane add-in for chat, tracked edits, comments,
@@ -152,6 +213,29 @@ sideloading, and production deployment instructions.
    **Account > Models & API Keys** and add an Anthropic, Gemini, OpenAI, or
    CourtListener key as needed.
 3. Create or open a project and start chatting with documents.
+
+## Legal Monitors
+
+Mike can run scheduled monitors that pull RSS/Atom feeds and connector
+sources, classify new items, and escalate material developments into saved
+reports and email alerts. Open **Monitors** to create a monitor from scratch
+or install a bundled preset (**Fintech GC Regulatory Digest**, trademark
+monitoring). Each run keeps history, deduplicates and checkpoints items, and
+can capture source documents. See the
+[legal monitor sources guide](docs/legal-monitor-sources.md).
+
+## Playbooks
+
+Reusable contract-review playbooks live under **Playbooks**: define positions
+once, run them against documents in chat via the playbook picker, export
+results to Word, and import existing playbook documents. Playbooks are
+versioned and keep run history. See [playbooks](docs/playbooks.md).
+
+## Prompt Library
+
+**Prompts** stores per-user saved prompts alongside a built-in example
+library, and the assistant composer can insert them directly. See the
+[prompt library guide](docs/prompt-library.md).
 
 ## CourtListener Integration
 
@@ -202,10 +286,20 @@ mailbox under **Account > Features > Email Integration**. See the complete
 ## Patent And Trademark Connector
 
 Mike includes a managed local connector for the open-source
-`patent-mcp-server`. Install `uv`, restart the backend, then select **USPTO**
-under **Account > Connectors**. Mike runs the pinned server over stdio and
-imports its tools into the existing per-tool enablement and audit controls.
-See the [patent MCP connector guide](docs/patent-mcp-connector.md).
+[`patent_mcp_server`](https://github.com/riemannzeta/patent_mcp_server).
+To enable it:
+
+1. Install [`uv`](https://docs.astral.sh/uv/getting-started/installation/) and
+   restart the backend.
+2. Open **Account > Connectors** and select **USPTO**.
+3. Wait for the first launch to download the pinned server (about a minute),
+   then review the imported tools in the connector details.
+
+Mike runs the pinned server over stdio and imports its tools into the existing
+per-tool enablement and audit controls. Public patent and trademark search
+tools work without credentials; add `USPTO_API_KEY` / `TSDR_API_KEY` to unlock
+the credentialed data sources. See the complete
+[patent MCP server guide](docs/patent-mcp-connector.md).
 
 ## Multi-Factor Authentication
 
@@ -218,6 +312,19 @@ login requirement off. `USER_API_KEYS_ENCRYPTION_SECRET` must be set — it
 also encrypts the TOTP secrets at rest.
 
 ## Troubleshooting
+
+**`npm install --prefix backend` fails with `Fetching packages of type
+"remote" have been disabled`.** Your npm config overrides the committed
+`backend/.npmrc`. Run the install with `npm install --prefix backend
+--allow-remote=root`, or remove the conflicting `allow-remote` setting from
+your user-level npmrc.
+
+**Every login or API call fails with "Failed to fetch".** `FRONTEND_URL` in
+`backend/.env` does not match the browser origin of the frontend (protocol,
+host, and port must be identical). Fix it and restart the backend.
+
+**The backend exits with a `node:sqlite` error.** The SQLite providers require
+Node 22 or newer. Check `node --version`.
 
 **The model picker shows a missing-key warning.** Add a key for that provider in
 **Account > Models & API Keys**, configure the provider key in `backend/.env`,
