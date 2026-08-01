@@ -72,8 +72,8 @@ async function createProject(
        so allow extra time for navigation when a file is attached.
 
        (The modal's FileDirectory used to fan out a getProject() request per
-       existing project on open, which could overwhelm the local Supabase
-       gateway and required settle-waits plus a submit-retry loop here. The
+       existing project on open, which could overwhelm the backend storage
+       layer and required settle-waits plus a submit-retry loop here. The
        directory now loads via one batched listProjects?include=documents
        request, so a single submit is reliable.)
 
@@ -280,18 +280,10 @@ test("file upload type validation — .txt file is rejected", async ({ page }) =
        removed from the upload handler. */
     const projectId = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
     expect(projectId, "expected to be on a /projects/<id> page").toBeTruthy();
-    const accessToken = await page.evaluate(() => {
-        const item = Object.entries(localStorage).find(([k]) =>
-            k.includes("auth-token"),
-        );
-        if (!item) return null;
-        try {
-            return JSON.parse(item[1]).access_token ?? null;
-        } catch {
-            return null;
-        }
-    });
-    expect(accessToken, "expected a Supabase session in localStorage").toBeTruthy();
+    const accessToken = await page.evaluate(() =>
+        localStorage.getItem("mike_auth_token"),
+    );
+    expect(accessToken, "expected a Mike auth token in localStorage").toBeTruthy();
     const apiBase = process.env.MIKE_API_BASE_URL ?? "http://localhost:3001";
     const uploadResponse = await page.request.post(
         `${apiBase}/projects/${projectId}/documents`,

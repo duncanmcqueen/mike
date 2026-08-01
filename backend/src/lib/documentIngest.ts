@@ -1,4 +1,4 @@
-import { createServerSQLite } from "./sqlite";
+import { createServerDatabase } from "./database";
 import { uploadFile, storageKey } from "./storage";
 import {
     ALLOWED_DOCUMENT_TYPES,
@@ -8,7 +8,7 @@ import {
 } from "./documentTypes";
 import { convertedPdfKey, docxToPdf } from "./convert";
 
-type Db = ReturnType<typeof createServerSQLite>;
+type Db = ReturnType<typeof createServerDatabase>;
 
 export type IngestedDocument = Record<string, unknown> & { id: string };
 

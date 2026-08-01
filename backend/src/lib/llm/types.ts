@@ -38,6 +38,7 @@ export type StreamCallbacks = {
 
 export type UserApiKeys = {
     claude?: string | null;
+    kimi?: string | null;
     gemini?: string | null;
     openai?: string | null;
     openrouter?: string | null;
@@ -61,6 +62,11 @@ export type StreamChatParams = {
      */
     enableThinking?: boolean;
     abortSignal?: AbortSignal;
+    /**
+     * Maximum time allowed for each provider response. Providers that do not
+     * expose an abortable request may ignore this value.
+     */
+    requestTimeoutMs?: number;
 };
 
 export type StreamChatResult = {
@@ -78,7 +84,9 @@ export type ConfiguredModel = {
     modelName?: string;
     baseUrl?: string;
     apiKeyEnv?: string;
+    apiKeyProvider?: keyof UserApiKeys;
     apiKey?: string;
+    extraBody?: Record<string, unknown>;
 };
 
 export type CommitteeModel = {

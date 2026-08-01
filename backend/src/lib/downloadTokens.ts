@@ -63,7 +63,7 @@ export function signDownload(
 
 export function verifyDownload(
     token: string,
-): { path: string; filename: string } | null {
+): { path: string; filename: string; expiresAt: number | null } | null {
     const parts = token.split(".");
     if (parts.length !== 2) return null;
     const [enc, sigEnc] = parts;
@@ -85,7 +85,11 @@ export function verifyDownload(
         ) {
             return null;
         }
-        return { path: parsed.p, filename: parsed.f };
+        return {
+            path: parsed.p,
+            filename: parsed.f,
+            expiresAt: typeof parsed.e === "number" ? parsed.e : null,
+        };
     } catch {
         return null;
     }

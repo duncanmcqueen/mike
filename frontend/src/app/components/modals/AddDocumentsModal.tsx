@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, FileDown, Upload, Loader2, X } from "lucide-react";
+import { AlertCircle, FileDown, Mail, Upload, Loader2, X } from "lucide-react";
 import {
     uploadStandaloneDocument,
     uploadProjectDocument,
     addDocumentToProject,
+    getGmailStatus,
 } from "@/app/lib/mikeApi";
 import type { Document } from "../shared/types";
 import { FileDirectory } from "../shared/FileDirectory";
@@ -13,11 +14,14 @@ import type { DirectoryTab } from "../shared/useDirectoryData";
 import { invalidateDirectoryCache } from "../shared/useDirectoryData";
 import { Modal } from "./Modal";
 import { IroncladImportModal } from "./IroncladImportModal";
+import { GmailImportModal } from "./GmailImportModal";
 import {
     SUPPORTED_DOCUMENT_ACCEPT,
     formatUnsupportedDocumentWarning,
     partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { featureEnabled } from "@/app/lib/featureFlags";
 
 interface Props {
     open: boolean;
@@ -45,12 +49,17 @@ export function AddDocumentsModal({
     externalUploadedDocuments,
     keepMounted = false,
 }: Props) {
+    const { profile } = useUserProfile();
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [uploading, setUploading] = useState(false);
     const [uploadingFilenames, setUploadingFilenames] = useState<string[]>([]);
     const [uploadWarning, setUploadWarning] = useState<string | null>(null);
     const [extraUploadedDocs, setExtraUploadedDocs] = useState<Document[]>([]);
     const [ironcladOpen, setIroncladOpen] = useState(false);
+    const [gmailOpen, setGmailOpen] = useState(false);
+    const [gmailAvailable, setGmailAvailable] = useState(false);
+    const gmailDeploymentEnabled =
+        profile?.deploymentModules.gmail === true;
     // Tracks whether the modal has ever been opened, so keepMounted only
     // keeps it (and its directory fetch) alive after first use rather than
     // eagerly loading on page mount.
@@ -61,6 +70,27 @@ export function AddDocumentsModal({
     useEffect(() => {
         if (open) setHasOpened(true);
     }, [open]);
+
+    useEffect(() => {
+        if (!open) return;
+        if (!gmailDeploymentEnabled) {
+            setGmailAvailable(false);
+            return;
+        }
+        let cancelled = false;
+        getGmailStatus()
+            .then((status) => {
+                if (!cancelled) {
+                    setGmailAvailable(status.available && status.enabled && status.connected);
+                }
+            })
+            .catch(() => {
+                if (!cancelled) setGmailAvailable(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [gmailDeploymentEnabled, open]);
 
     // Key the sync on the id list itself so a reopen targeting different
     // documents (or ids arriving late) always re-seeds the selection.
@@ -201,14 +231,32 @@ export function AddDocumentsModal({
             keepMounted={keepMounted}
             breadcrumbs={breadcrumb}
             headerAction={
-                <button
-                    type="button"
-                    onClick={() => setIroncladOpen(true)}
-                    className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
-                >
-                    <FileDown className="h-3.5 w-3.5" />
-                    Import from Ironclad
-                </button>
+                <div className="flex items-center gap-1">
+                    {gmailAvailable && (
+                        <button
+                            type="button"
+                            onClick={() => setGmailOpen(true)}
+                            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+                        >
+                            <Mail className="h-3.5 w-3.5" />
+                            Import from Gmail
+                        </button>
+                    )}
+                    {featureEnabled(
+                        profile?.featureFlags,
+                        "ironclad",
+                        profile?.deploymentModules,
+                    ) && (
+                        <button
+                            type="button"
+                            onClick={() => setIroncladOpen(true)}
+                            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+                        >
+                            <FileDown className="h-3.5 w-3.5" />
+                            Import from Ironclad
+                        </button>
+                    )}
+                </div>
             }
             secondaryAction={{
                 label: uploading ? "Uploading…" : "Upload",
@@ -262,14 +310,34 @@ export function AddDocumentsModal({
                 />
             </div>
 
-            <IroncladImportModal
-                open={ironcladOpen}
-                onClose={() => setIroncladOpen(false)}
+            {featureEnabled(
+                profile?.featureFlags,
+                "ironclad",
+                profile?.deploymentModules,
+            ) && (
+                <IroncladImportModal
+                    open={ironcladOpen}
+                    onClose={() => setIroncladOpen(false)}
+                    projectId={projectId ?? null}
+                    onImported={(doc) => {
+                        invalidateDirectoryCache();
+                        setExtraUploadedDocs((prev) => [doc, ...prev]);
+                        setSelectedDocuments((prev) => [...prev, doc]);
+                    }}
+                />
+            )}
+            <GmailImportModal
+                open={gmailOpen}
+                onClose={() => setGmailOpen(false)}
                 projectId={projectId ?? null}
                 onImported={(doc) => {
                     invalidateDirectoryCache();
                     setExtraUploadedDocs((prev) => [doc, ...prev]);
-                    setSelectedDocuments((prev) => [...prev, doc]);
+                    setSelectedDocuments((prev) =>
+                        prev.some((selected) => selected.id === doc.id)
+                            ? prev
+                            : [...prev, doc],
+                    );
                 }}
             />
         </Modal>

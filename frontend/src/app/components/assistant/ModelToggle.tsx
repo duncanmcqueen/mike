@@ -14,11 +14,13 @@ import {
 } from "@/app/components/ui/liquid-dropdown";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import { getConfiguredModels, type ApiKeyState } from "@/app/lib/mikeApi";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { featureEnabled } from "@/app/lib/featureFlags";
 
 export interface ModelOption {
     id: string;
     label: string;
-    group: "Anthropic" | "Google" | "OpenAI" | "Local" | "Committee";
+    group: "Anthropic" | "Moonshot" | "Google" | "OpenAI" | "Local" | "Committee";
 }
 
 export const MODELS: ModelOption[] = [
@@ -29,6 +31,8 @@ export const MODELS: ModelOption[] = [
     { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", group: "Google" },
     { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", group: "Google" },
     { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", group: "Google" },
+    { id: "kimi-k3", label: "Kimi K3", group: "Moonshot" },
+    { id: "kimi-k3-256k", label: "Kimi K3 256K", group: "Moonshot" },
     { id: "gpt-5.5", label: "GPT-5.5", group: "OpenAI" },
     { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
 ];
@@ -52,6 +56,7 @@ const GROUP_ORDER: ModelOption["group"][] = [
     "Committee",
     "Local",
     "Anthropic",
+    "Moonshot",
     "Google",
     "OpenAI",
 ];
@@ -59,7 +64,18 @@ const itemClassName =
     "rounded-xl px-2.5 py-1.5 text-gray-700 focus:bg-app-surface-hover focus:text-gray-900 data-[highlighted]:bg-app-surface-hover data-[highlighted]:text-gray-900";
 
 export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
+    const { profile } = useUserProfile();
     const [options, setOptions] = useState<ModelOption[]>(base);
+    const localModelsEnabled = featureEnabled(
+        profile?.featureFlags,
+        "localModels",
+        profile?.deploymentModules,
+    );
+    const committeeModelsEnabled = featureEnabled(
+        profile?.featureFlags,
+        "committeeModels",
+        profile?.deploymentModules,
+    );
 
     useEffect(() => {
         let cancelled = false;
@@ -74,11 +90,18 @@ export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
                               ? "Local"
                               : model.provider === "claude"
                                 ? "Anthropic"
+                                : model.id.startsWith("kimi-")
+                                  ? "Moonshot"
                                 : model.provider === "gemini"
                                   ? "Google"
                                   : "OpenAI";
                     return { id: model.id, label: model.label, group };
-                });
+                }).filter(
+                    (model) =>
+                        (model.group !== "Local" || localModelsEnabled) &&
+                        (model.group !== "Committee" ||
+                            committeeModelsEnabled),
+                );
                 const merged = new Map<string, ModelOption>();
                 [...base, ...extra].forEach((model) => merged.set(model.id, model));
                 setOptions(Array.from(merged.values()));
@@ -87,7 +110,7 @@ export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
         return () => {
             cancelled = true;
         };
-    }, [base]);
+    }, [base, localModelsEnabled, committeeModelsEnabled]);
 
     return options;
 }
@@ -99,6 +122,7 @@ interface Props {
 }
 
 export function ModelToggle({ value, onChange, apiKeys }: Props) {
+    const { profile } = useUserProfile();
     const [isOpen, setIsOpen] = useState(false);
     const options = useConfiguredModelOptions(MODELS);
     const selected = options.find((m) => m.id === value);
@@ -106,6 +130,32 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
     const selectedAvailable = apiKeys
         ? isModelAvailable(value, apiKeys)
         : true;
+    const selectedLocalModelsEnabled = featureEnabled(
+        profile?.featureFlags,
+        "localModels",
+        profile?.deploymentModules,
+    );
+    const selectedCommitteeModelsEnabled = featureEnabled(
+        profile?.featureFlags,
+        "committeeModels",
+        profile?.deploymentModules,
+    );
+
+    useEffect(() => {
+        if (
+            (selected?.group === "Local" &&
+                !selectedLocalModelsEnabled) ||
+            (selected?.group === "Committee" &&
+                !selectedCommitteeModelsEnabled)
+        ) {
+            onChange(DEFAULT_MODEL_ID);
+        }
+    }, [
+        onChange,
+        selected?.group,
+        selectedCommitteeModelsEnabled,
+        selectedLocalModelsEnabled,
+    ]);
 
     return (
         <DropdownMenu onOpenChange={setIsOpen}>

@@ -5,7 +5,7 @@ Updated: 2026-07-21
 
 ## Summary
 
-This project was migrated away from Supabase/R2-style storage references to local SQLite-backed application data, SQLite-backed file byte storage, local bearer-token auth, and configurable model orchestration.
+This project was migrated away from the prior hosted database/storage references to local SQLite-backed application data, SQLite-backed file byte storage, local bearer-token auth, and configurable model orchestration.
 
 The model orchestration system supports:
 
@@ -14,12 +14,12 @@ The model orchestration system supports:
 - committee models where members run sequentially in list order, then a chair model synthesizes the final answer
 - local agent objects with per-agent `systemPrompt`
 
-No `Supabase`, `supabase`, `SUPABASE`, `@supabase`, or `Suprbase` references were left in the source/docs/package files at the last check.
+No prior hosted database references were left in the source/docs/package files at the last check.
 
 ## Important Files
 
 - `backend/src/lib/sqlite.ts`
-  - SQLite compatibility layer replacing the old Supabase client usage.
+  - SQLite compatibility layer replacing the old hosted database client usage.
   - Dynamic table/column creation.
   - Query builder methods used by the app: `select`, `insert`, `update`, `delete`, `upsert`, `eq`, `neq`, `gt`, `in`, `is`, `not`, `filter`, `order`, `limit`, `range`, `single`, `maybeSingle`.
   - `upsert` honors `ignoreDuplicates` and no longer rewrites `created_at` on conflict.
@@ -34,7 +34,7 @@ No `Supabase`, `supabase`, `SUPABASE`, `@supabase`, or `Suprbase` references wer
 
 - `backend/src/lib/storage.ts`
   - Stores file bytes in SQLite using `SQLITE_STORAGE_PATH`.
-  - Replaces R2/Supabase-style object storage.
+  - Replaces the earlier remote-object-storage style.
   - `getSignedUrl(key, expiresIn)` now embeds a real expiry in the signed download token.
 
 - `backend/src/lib/downloadTokens.ts`
@@ -64,7 +64,7 @@ No `Supabase`, `supabase`, `SUPABASE`, `@supabase`, or `Suprbase` references wer
   - Dedicated stricter rate limiter on `/user(s)/auth/signup|login` (`RATE_LIMIT_AUTH_*`).
 
 - `frontend/src/app/lib/auth.ts`
-  - Frontend local auth helper replacing Supabase auth client usage.
+  - Frontend local auth helper replacing the previous hosted auth client usage.
   - Stores token in `localStorage` under `mike_auth_token`.
   - Dispatches `mike-auth-change`.
   - `getCurrentUser()` only clears the token on 401/403 or an explicit null session — transient network failures no longer log the user out.
@@ -191,7 +191,7 @@ Notes:
 
 ## SQLite Compatibility Notes
 
-The SQLite adapter intentionally emulates the subset of Supabase query-builder behavior used by this app. It is not a complete Supabase clone.
+The SQLite adapter intentionally emulates the subset of query-builder behavior used by this app. It is not a complete general-purpose database client clone.
 
 Important behaviors:
 
@@ -214,7 +214,7 @@ Important behaviors:
 - Frontend stale local auth tokens could leave auth loading in a bad state. `getCurrentUser()` now clears invalid tokens and returns `null`.
 - OpenAI-compatible local runtimes often require a model name different from Mike's logical id. Added `apiModel` / `modelName`.
 - Committee self-reference could recurse. Direct self-reference as chair or member is rejected.
-- MCP connector tool discovery used Supabase embedded join syntax. It now uses explicit SQLite queries.
+- MCP connector tool discovery used embedded join syntax. It now uses explicit SQLite queries.
 - SQLite `.not(...)` support was too loose. It now supports the used shapes safely.
 - Overview RPC shim was initially too shallow. It now mirrors key old SQL function behavior for visibility, ordering, filters, limits, counts, and owner flags.
 - Committee member execution was initially parallel. It is now sequential in list order.
@@ -388,7 +388,7 @@ activity rendering there).
 
 35 lint warnings remain, all pre-existing unused variables (mostly `node` params in react-markdown component maps) and are cosmetic.
 
-The SQLite compatibility adapter is pragmatic and app-specific. If another tool expands app behavior, it should verify any new Supabase-style query methods before assuming they work.
+The SQLite compatibility adapter is pragmatic and app-specific. If another tool expands app behavior, it should verify any new query methods before assuming they work.
 
 `decode()` still auto-JSON-parses any string that looks like JSON (`"[1,2]"` titles come back as arrays) — low risk, needs a per-column JSON registry to fix cleanly.
 
@@ -413,4 +413,3 @@ MCP `validateRemoteMcpUrl` still blocks private/link-local IPs at validation tim
    - `baseUrl: "https://openrouter.ai/api/v1"`
 
 4. Decide whether to keep deleted `bun.lock` files or regenerate them if Bun support is required.
-

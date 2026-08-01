@@ -22,6 +22,11 @@ const MODEL_API_KEY_FIELDS = [
         placeholder: "sk-ant-...",
     },
     {
+        provider: "kimi",
+        label: "Moonshot (Kimi) API Key",
+        placeholder: "sk-...",
+    },
+    {
         provider: "gemini",
         label: "Google (Gemini) API Key",
         placeholder: "AI...",
@@ -163,7 +168,7 @@ function ApiKeyField({
             if (isMfaRequiredError(error)) {
                 setPendingMfaAction("save");
             } else {
-                alert(`Failed to save ${label}.`);
+                alert(apiKeyErrorMessage(error, `Failed to save ${label}.`));
             }
         } finally {
             setIsSaving(false);
@@ -183,7 +188,7 @@ function ApiKeyField({
             if (isMfaRequiredError(error)) {
                 setPendingMfaAction("remove");
             } else {
-                alert(`Failed to remove ${label}.`);
+                alert(apiKeyErrorMessage(error, `Failed to remove ${label}.`));
             }
         } finally {
             setIsSaving(false);
@@ -283,4 +288,8 @@ function ApiKeyField({
             />
         </>
     );
+}
+
+function apiKeyErrorMessage(error: unknown, fallback: string): string {
+    return error instanceof Error && error.message ? error.message : fallback;
 }

@@ -15,7 +15,7 @@ npm run test:coverage # same, plus the per-file coverage table + floor check
 
 Tests live in `backend/src/lib/__tests__/*.test.ts`. Read a couple of the
 existing suites first (`access.test.ts`, `userDataCleanup.test.ts`) and match
-their conventions: plain in-memory Supabase query mocks (no network, no real
+their conventions: plain in-memory DB query mocks (no network, no real
 database), one `describe` block per exported function, and tests that assert
 current behavior.
 
@@ -61,7 +61,7 @@ Size is a rough guess: S ≈ an hour, M ≈ an afternoon.
 - [ ] `lib/chat/prompts.ts` — pure prompt builders; assert key instructions and
       interpolated values appear in the output strings. (S)
 - [ ] `lib/userSettings.ts` — title/tabular model resolution from which API
-      keys a user has; reuse the Supabase mock pattern from
+      keys a user has; reuse the DB mock pattern from
       `userLookup.test.ts`. (S)
 - [ ] `lib/upload.ts` — multer wrapper: assert LIMIT_FILE_SIZE maps to a 413
       with the right message and other errors pass through. (S)
@@ -70,7 +70,7 @@ Size is a rough guess: S ≈ an hour, M ≈ an afternoon.
 - [ ] `lib/chat/tools/toolSchemas.ts` — assert every tool schema has a name,
       description, and well-formed parameters (guards against schema drift). (S)
 - [ ] `lib/userApiKeys.ts` (rest) — encrypt/decrypt round-trip and DB
-      load/store paths with a mocked Supabase client. (M)
+      load/store paths with a mocked SQLite facade. (M)
 - [ ] `lib/storage.ts` (rest) — S3 upload/download/list/delete wrappers with a
       mocked AWS SDK client. (M)
 - [ ] `lib/userDataExport.ts` — export assembly: given seeded mock tables,
@@ -102,9 +102,8 @@ Size is a rough guess: S ≈ an hour, M ≈ an afternoon.
       loops and provider adapters; hardest to unit test, consider extracting
       pure chunk-parsing helpers first. (M)
 
-Not worth unit testing directly: `lib/supabase.ts` and `lib/convert.ts` are
-thin wrappers around external services (Supabase auth, LibreOffice); they are
-better exercised by the e2e suite.
+Not worth unit testing directly: `lib/convert.ts` is a thin wrapper around
+LibreOffice and is better exercised by the e2e suite.
 
 ## Ratchet policy
 

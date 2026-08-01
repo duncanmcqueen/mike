@@ -14,6 +14,11 @@ import { userRouter } from "./routes/user";
 import { downloadsRouter } from "./routes/downloads";
 import { caseLawRouter } from "./routes/caseLaw";
 import { ironcladRouter } from "./routes/ironclad";
+import { legalMonitorsRouter } from "./routes/legalMonitors";
+import { promptsRouter } from "./routes/prompts";
+import { playbooksRouter } from "./routes/playbooks";
+import { gmailRouter } from "./routes/gmail";
+import { requireDeploymentModule } from "./lib/deploymentModules";
 
 export const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -131,6 +136,12 @@ app.post("/user/auth/signup", authLimiter);
 app.post("/user/auth/login", authLimiter);
 app.post("/users/auth/signup", authLimiter);
 app.post("/users/auth/login", authLimiter);
+// TOTP codes are 6 digits — keep verification behind the strict auth
+// limiter so codes cannot be brute-forced at the general request rate.
+app.post("/user/mfa/verify", authLimiter);
+app.post("/users/mfa/verify", authLimiter);
+app.post("/user/mfa/challenge", authLimiter);
+app.post("/users/mfa/challenge", authLimiter);
 
 app.post("/chat", chatLimiter);
 app.post("/projects/:projectId/chat", chatLimiter);
@@ -147,6 +158,10 @@ app.put(
 );
 app.post("/projects/:projectId/documents", uploadLimiter);
 app.post("/integrations/ironclad/import", uploadLimiter);
+app.post("/integrations/gmail/import", uploadLimiter);
+app.post("/legal-monitors/:monitorId/run", chatLimiter);
+app.post("/playbooks/import", uploadLimiter);
+app.post("/playbooks/:playbookId/review", chatLimiter);
 app.get("/user/export", exportLimiter);
 app.get("/user/chats/export", exportLimiter);
 app.get("/user/tabular-reviews/export", exportLimiter);
@@ -170,7 +185,31 @@ app.use("/user", userRouter);
 app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
 app.use("/case-law", caseLawRouter);
-app.use("/integrations/ironclad", ironcladRouter);
+app.use(
+  "/integrations/ironclad",
+  requireDeploymentModule("ironclad"),
+  ironcladRouter,
+);
+app.use(
+  "/integrations/gmail",
+  requireDeploymentModule("gmail"),
+  gmailRouter,
+);
+app.use(
+  "/legal-monitors",
+  requireDeploymentModule("legalMonitors"),
+  legalMonitorsRouter,
+);
+app.use(
+  "/prompts",
+  requireDeploymentModule("promptLibrary"),
+  promptsRouter,
+);
+app.use(
+  "/playbooks",
+  requireDeploymentModule("playbooks"),
+  playbooksRouter,
+);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -181,14 +220,15 @@ app.use(
     res: express.Response,
     _next: express.NextFunction,
   ) => {
-    const detail =
-      err instanceof Error && err.message ? err.message : "Internal server error";
     console.error("[express] unhandled route error", {
       path: _req.path,
-      error: detail,
+      error:
+        err instanceof Error && err.message ? err.message : String(err),
     });
+    // Never echo raw error messages from unhandled exceptions — they can
+    // carry internal details (paths, connection strings, stack fragments).
     if (!res.headersSent) {
-      res.status(500).json({ detail });
+      res.status(500).json({ detail: "Internal server error" });
     }
   },
 );

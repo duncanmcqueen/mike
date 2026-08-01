@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSQLite } from "../lib/sqlite";
+import { requireUserFeature } from "../lib/userFeatures";
+import { createServerDatabase } from "../lib/database";
 import { checkProjectAccess } from "../lib/access";
 import { createDocumentFromBytes } from "../lib/documentIngest";
 import {
@@ -13,6 +14,7 @@ import {
 } from "../lib/ironclad";
 
 export const ironcladRouter = Router();
+ironcladRouter.use(requireAuth, requireUserFeature("ironclad"));
 
 function requireConfigured(res: import("express").Response): boolean {
     if (isIroncladConfigured()) return true;
@@ -44,12 +46,12 @@ function handleIroncladError(
 }
 
 // GET /integrations/ironclad/status
-ironcladRouter.get("/status", requireAuth, (_req, res) => {
+ironcladRouter.get("/status", (_req, res) => {
     res.json({ configured: isIroncladConfigured() });
 });
 
 // GET /integrations/ironclad/records?search=&page=&pageSize=&sortField=&sortDirection=
-ironcladRouter.get("/records", requireAuth, async (req, res) => {
+ironcladRouter.get("/records", async (req, res) => {
     if (!requireConfigured(res)) return;
     const sortField = ["agreementDate", "name", "lastUpdated"].includes(
         String(req.query.sortField),
@@ -78,7 +80,7 @@ ironcladRouter.get("/records", requireAuth, async (req, res) => {
 });
 
 // GET /integrations/ironclad/records/:recordId
-ironcladRouter.get("/records/:recordId", requireAuth, async (req, res) => {
+ironcladRouter.get("/records/:recordId", async (req, res) => {
     if (!requireConfigured(res)) return;
     try {
         const record = await getIroncladRecord({
@@ -94,7 +96,7 @@ ironcladRouter.get("/records/:recordId", requireAuth, async (req, res) => {
 // POST /integrations/ironclad/import
 // Downloads the chosen attachment server-to-server and ingests it through the
 // shared document pipeline (source: "ironclad").
-ironcladRouter.post("/import", requireAuth, async (req, res) => {
+ironcladRouter.post("/import", async (req, res) => {
     if (!requireConfigured(res)) return;
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
@@ -109,7 +111,7 @@ ironcladRouter.post("/import", requireAuth, async (req, res) => {
             .json({ detail: "recordId and attachmentKey are required" });
     }
 
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     let targetProjectId: string | null = null;
     if (projectId) {
         const access = await checkProjectAccess(projectId, userId, userEmail, db);

@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 
-const { runLLMStream, checkProjectAccess } = vi.hoisted(() => ({
+const { runLLMStream, checkProjectAccess, buildAssistantPlaybookContext } = vi.hoisted(() => ({
     runLLMStream: vi.fn(),
     checkProjectAccess: vi.fn(),
+    buildAssistantPlaybookContext: vi.fn(),
 }));
 
 function makeQuery() {
@@ -25,7 +26,7 @@ function makeQuery() {
     return q;
 }
 
-function mockSupabase() {
+function mockDb() {
     return {
         from: vi.fn(() => makeQuery()),
         rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
@@ -36,11 +37,12 @@ function mockSupabase() {
     };
 }
 
-vi.mock("../../lib/supabase", () => ({
-    createServerSupabase: vi.fn(() => mockSupabase()),
+vi.mock("../../lib/sqlite", () => ({
+    createServerSQLite: vi.fn(() => mockDb()),
 }));
 
 vi.mock("../../middleware/auth", () => ({
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },
@@ -80,6 +82,15 @@ vi.mock("../../lib/userSettings", () => ({
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
+vi.mock("../../lib/playbooks", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../lib/playbooks")>();
+    return {
+        ...actual,
+        buildAssistantPlaybookContext: (...args: unknown[]) =>
+            buildAssistantPlaybookContext(...args),
+    };
+});
+
 vi.mock("../../lib/access", () => ({
     checkProjectAccess: (...args: unknown[]) => checkProjectAccess(...args),
     ensureDocAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
@@ -105,6 +116,12 @@ describe("POST /projects/:projectId/chat", () => {
             isOwner: true,
             project: { id: "p1", user_id: "u1", shared_with: null },
         });
+        buildAssistantPlaybookContext.mockResolvedValue(
+            {
+                prompt: "ACTIVE PUBLISHED PLAYBOOK: project test",
+                selection: { id: "playbook-1", title: "Test", version: 1, versionId: "version-1" },
+            },
+        );
     });
 
     it("returns 404 and never streams when project access is denied", async () => {
@@ -144,5 +161,25 @@ describe("POST /projects/:projectId/chat", () => {
         expect(res.status).toBe(200);
         expect(res.text).toContain('"type":"error"');
         expect(res.text).toContain("[DONE]");
+    });
+
+    it("loads a selected playbook inside a project chat", async () => {
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({
+                ...VALID_BODY,
+                playbook_id: "playbook-1",
+                playbook_version_id: "version-1",
+            });
+
+        expect(res.status).toBe(200);
+        expect(buildAssistantPlaybookContext).toHaveBeenCalledWith(
+            "u1",
+            "playbook-1",
+            expect.anything(),
+            "version-1",
+        );
+        expect(runLLMStream).toHaveBeenCalledTimes(1);
     });
 });

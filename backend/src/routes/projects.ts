@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSQLite } from "../lib/sqlite";
+import { createServerDatabase } from "../lib/database";
 import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
@@ -15,6 +15,7 @@ import {
 import { docxToPdf, convertedPdfKey } from "../lib/convert";
 import { checkProjectAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
+import { sendServerError } from "../lib/safeError";
 import { deleteUserProjects } from "../lib/userDataCleanup";
 import {
   ALLOWED_DOCUMENT_TYPES,
@@ -45,7 +46,7 @@ function normalizeDocumentFilename(nextName: unknown, currentName: string) {
 }
 
 async function deleteProjectDocumentsAndVersionFiles(
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   projectId: string,
   documentIds: string[],
 ) {
@@ -76,7 +77,7 @@ async function deleteProjectDocumentsAndVersionFiles(
 }
 
 async function attachDocumentOwnerLabels(
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   docs: { user_id?: string | null }[],
 ) {
   const ownerIds = docs
@@ -115,7 +116,7 @@ async function attachDocumentOwnerLabels(
 }
 
 async function attachChatCreatorLabels(
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   chats: { user_id?: string | null }[],
 ) {
   const creatorIds = chats
@@ -156,19 +157,19 @@ async function attachChatCreatorLabels(
 // same response. The directory pickers (useDirectoryData) previously fanned
 // out one GET /projects/:id per project to obtain those documents; with N
 // projects that burst — auth check plus several DB queries per request —
-// could overwhelm the Supabase gateway. Batching keeps it at one request
+// could overwhelm the storage layer. Batching keeps it at one request
 // and a fixed number of queries regardless of project count.
 projectsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const includeDocuments = req.query.include === "documents";
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const { data, error } = await db.rpc("get_projects_overview", {
     p_user_id: userId,
     p_user_email: userEmail ?? null,
   });
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
 
   const projects = (data ?? []) as { id: string }[];
   if (!includeDocuments || projects.length === 0) {
@@ -184,7 +185,7 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
     )
     .order("created_at", { ascending: true });
   if (docsError)
-    return void res.status(500).json({ detail: docsError.message });
+    return void sendServerError(res, docsError);
 
   const docsTyped = (docs ?? []) as unknown as {
     id: string;
@@ -241,7 +242,7 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
     }
   }
 
-  const db = createServerSQLite();
+  const db = createServerDatabase();
   const missingSharedUsers = await findMissingUserEmails(db, cleanedSharedWith);
   if (missingSharedUsers.length > 0) {
     return void res.status(400).json({
@@ -260,7 +261,7 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
     })
     .select("*")
     .single();
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
   res.status(201).json({ ...data, documents: [] });
 });
 
@@ -269,7 +270,7 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string;
   const { projectId } = req.params;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const { data: project, error } = await db
     .from("projects")
@@ -315,7 +316,7 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const { data: project } = await db
     .from("projects")
@@ -389,7 +390,7 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
     updates.shared_with = cleaned;
   }
 
-  const db = createServerSQLite();
+  const db = createServerDatabase();
   if (Array.isArray(updates.shared_with)) {
     const missingSharedUsers = await findMissingUserEmails(
       db,
@@ -430,15 +431,14 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
 projectsRouter.delete("/:projectId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const { projectId } = req.params;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
   try {
     const deletedCount = await deleteUserProjects(db, userId, [projectId]);
     if (deletedCount === 0)
       return void res.status(404).json({ detail: "Project not found" });
     res.status(204).send();
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ detail });
+    sendServerError(res, err, "Failed to delete project");
   }
 });
 
@@ -447,7 +447,7 @@ projectsRouter.get("/:projectId/documents", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok)
@@ -474,7 +474,7 @@ projectsRouter.post(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId, documentId } = req.params;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
 
     const access = await checkProjectAccess(projectId, userId, userEmail, db);
     if (!access.ok)
@@ -655,7 +655,7 @@ projectsRouter.patch("/:projectId/documents/:documentId", requireAuth, async (re
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId, documentId } = req.params;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok)
@@ -722,7 +722,7 @@ projectsRouter.post(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId } = req.params;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
 
     const access = await checkProjectAccess(projectId, userId, userEmail, db);
     if (!access.ok)
@@ -741,7 +741,7 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok)
@@ -752,7 +752,7 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
     .select("*")
     .eq("project_id", projectId)
     .order("created_at", { ascending: false });
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
   const chats = data ?? [];
   await attachChatCreatorLabels(db, chats);
   res.json(chats);
@@ -768,7 +768,7 @@ projectsRouter.post("/:projectId/folders", requireAuth, async (req, res) => {
   const { name, parent_folder_id } = req.body as { name: string; parent_folder_id?: string | null };
   if (!name?.trim()) return void res.status(400).json({ detail: "name is required" });
 
-  const db = createServerSQLite();
+  const db = createServerDatabase();
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok) return void res.status(404).json({ detail: "Project not found" });
 
@@ -784,7 +784,7 @@ projectsRouter.post("/:projectId/folders", requireAuth, async (req, res) => {
     name: name.trim(),
     parent_folder_id: parent_folder_id ?? null,
   }).select("*").single();
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
   res.status(201).json(data);
 });
 
@@ -795,7 +795,7 @@ projectsRouter.patch("/:projectId/folders/:folderId", requireAuth, async (req, r
   const { projectId, folderId } = req.params;
   const body = req.body as { name?: string; parent_folder_id?: string | null };
 
-  const db = createServerSQLite();
+  const db = createServerDatabase();
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok) return void res.status(404).json({ detail: "Project not found" });
   if (!access.isOwner)
@@ -833,7 +833,7 @@ projectsRouter.delete("/:projectId/folders/:folderId", requireAuth, async (req, 
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId, folderId } = req.params;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok) return void res.status(404).json({ detail: "Project not found" });
@@ -845,7 +845,7 @@ projectsRouter.delete("/:projectId/folders/:folderId", requireAuth, async (req, 
     .select("id, parent_folder_id")
     .eq("project_id", projectId);
   if (foldersError)
-    return void res.status(500).json({ detail: foldersError.message });
+    return void sendServerError(res, foldersError);
   if (!(allFolders ?? []).some((f) => f.id === folderId))
     return void res.status(404).json({ detail: "Folder not found" });
 
@@ -872,7 +872,7 @@ projectsRouter.delete("/:projectId/folders/:folderId", requireAuth, async (req, 
     .select("id")
     .eq("project_id", projectId)
     .in("folder_id", [...folderIds]);
-  if (docsError) return void res.status(500).json({ detail: docsError.message });
+  if (docsError) return void sendServerError(res, docsError);
 
   const docIds = (docs ?? []).map((d) => d.id as string);
   const deleteDocsError = await deleteProjectDocumentsAndVersionFiles(
@@ -881,11 +881,11 @@ projectsRouter.delete("/:projectId/folders/:folderId", requireAuth, async (req, 
     docIds,
   );
   if (deleteDocsError)
-    return void res.status(500).json({ detail: deleteDocsError.message });
+    return void sendServerError(res, deleteDocsError);
 
   const { error } = await db.from("project_subfolders")
     .delete().in("id", [...folderIds]).eq("project_id", projectId);
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
   res.status(204).send();
 });
 
@@ -896,7 +896,7 @@ projectsRouter.patch("/:projectId/documents/:documentId/folder", requireAuth, as
   const { projectId, documentId } = req.params;
   const { folder_id } = req.body as { folder_id: string | null };
 
-  const db = createServerSQLite();
+  const db = createServerDatabase();
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok) return void res.status(404).json({ detail: "Project not found" });
 
@@ -914,7 +914,7 @@ projectsRouter.patch("/:projectId/documents/:documentId/folder", requireAuth, as
 });
 
 async function loadProjectFolder(
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   projectId: string,
   folderId: string,
 ): Promise<{ id: string; parent_folder_id: string | null } | null> {
@@ -932,7 +932,7 @@ export async function handleDocumentUpload(
   res: import("express").Response,
   userId: string,
   projectId: string | null,
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
 ) {
   const file = req.file;
   if (!file) return void res.status(400).json({ detail: "file is required" });
@@ -1060,9 +1060,7 @@ export async function handleDocumentUpload(
     return void res.status(201).json(responseDoc);
   } catch (e) {
     await db.from("documents").update({ status: "error" }).eq("id", doc.id);
-    return void res
-      .status(500)
-      .json({ detail: `Document processing failed: ${String(e)}` });
+    return void sendServerError(res, e, "Document processing failed");
   }
 }
 

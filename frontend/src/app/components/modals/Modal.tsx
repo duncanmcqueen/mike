@@ -83,6 +83,8 @@ export function Modal({
             onClick={onClose}
         >
             <div
+                role="dialog"
+                aria-modal="true"
                 className={cn(
                     "w-full rounded-3xl flex h-[600px] flex-col",
                     sizeClassName[size],

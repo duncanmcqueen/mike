@@ -39,6 +39,11 @@ describe("providerForModel", () => {
         }
     });
 
+    it("maps built-in Kimi ids to the openai-compatible provider", () => {
+        expect(providerForModel("kimi-k3")).toBe("openai-compatible");
+        expect(providerForModel("kimi-k3-256k")).toBe("openai-compatible");
+    });
+
     it("throws on an unknown model id", () => {
         expect(() => providerForModel("llama-3")).toThrow(/Unknown model id/);
         expect(() => providerForModel("")).toThrow(/Unknown model id/);
@@ -64,6 +69,7 @@ describe("resolveModel", () => {
         expect(resolveModel("gpt-5.4-lite", DEFAULT_TITLE_MODEL)).toBe(
             "gpt-5.4-lite",
         );
+        expect(resolveModel("kimi-k3", DEFAULT_MAIN_MODEL)).toBe("kimi-k3");
     });
 
     it("falls back for unknown model ids", () => {

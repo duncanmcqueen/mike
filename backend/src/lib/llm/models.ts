@@ -45,6 +45,10 @@ const ALL_MODELS = new Set<string>([
     ...OPENAI_LOW_MODELS,
 ]);
 
+export function builtInModelIds(): string[] {
+    return [...ALL_MODELS];
+}
+
 // ---------------------------------------------------------------------------
 // Provider inference
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { createServerSQLite } from "../sqlite";
+import { createServerDatabase } from "../database";
 import {
   attachActiveVersionPaths,
 } from "../documentVersions";
@@ -20,7 +20,7 @@ import type { AssistantEvent } from "./streaming";
 export async function enrichWithPriorEvents(
   messages: ChatMessage[],
   chatId: string | null | undefined,
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   docIndex: DocIndex,
 ): Promise<ChatMessage[]> {
   if (!chatId) return messages;
@@ -133,9 +133,13 @@ export function buildMessages(
   systemPromptExtra?: string,
   docIndex?: DocIndex,
   includeResearchTools = true,
+  includeIroncladTools = true,
 ) {
   const formatted: unknown[] = [];
-  let systemContent = buildSystemPrompt(includeResearchTools);
+  let systemContent = buildSystemPrompt(
+    includeResearchTools,
+    includeIroncladTools,
+  );
 
   if (systemPromptExtra) {
     systemContent += `\n\n${systemPromptExtra.trim()}`;
@@ -255,7 +259,7 @@ export function parseAskInputsResponsePayload(
 }
 
 export async function appendAskInputsResponseToLastAssistantMessage(
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   chatId: string,
   response: AskInputsResponseRequest,
 ) {
@@ -268,7 +272,7 @@ export async function appendAskInputsResponseToLastAssistantMessage(
 }
 
 export async function appendAssistantEventsToLastAssistantMessage(
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   chatId: string,
   events: AssistantEvent[],
   citations?: unknown[],
@@ -349,7 +353,7 @@ export function buildCancelledAssistantMessage(args: {
 export async function buildDocContext(
   messages: ChatMessage[],
   userId: string,
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   chatId?: string | null,
 ): Promise<{ docIndex: DocIndex; docStore: DocStore }> {
   const docIndex: DocIndex = {};
@@ -439,7 +443,7 @@ export async function buildDocContext(
 export async function buildProjectDocContext(
   projectId: string,
   _userId: string,
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
 ): Promise<{
   docIndex: DocIndex;
   docStore: DocStore;
@@ -532,7 +536,7 @@ export async function buildProjectDocContext(
 export async function buildWorkflowStore(
   userId: string,
   userEmail: string | null | undefined,
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
 ): Promise<WorkflowStore> {
   const { SYSTEM_ASSISTANT_WORKFLOWS } = await import("../systemWorkflows");
   const store: WorkflowStore = new Map();

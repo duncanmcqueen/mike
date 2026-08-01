@@ -268,6 +268,72 @@ export async function importIroncladRecord(payload: {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Gmail
+// ---------------------------------------------------------------------------
+
+export type GmailStatus = {
+    available: boolean;
+    enabled: boolean;
+    connected: boolean;
+    email: string | null;
+};
+
+export type GmailMessageSummary = {
+    id: string;
+    threadId: string;
+    subject: string;
+    from: string;
+    to: string;
+    date: string | null;
+    snippet: string;
+    hasAttachments: boolean;
+};
+
+export type GmailMessageDetail = GmailMessageSummary & {
+    cc: string;
+    body: string;
+    attachments: Array<{ filename: string; mimeType: string; size: number }>;
+};
+
+export async function getGmailStatus(): Promise<GmailStatus> {
+    return apiRequest<GmailStatus>("/integrations/gmail/status");
+}
+
+export async function startGmailOAuth(): Promise<{ authorizationUrl: string }> {
+    return apiRequest("/integrations/gmail/oauth/start", { method: "POST" });
+}
+
+export async function disconnectGmail(): Promise<void> {
+    return apiRequest<void>("/integrations/gmail/connection", { method: "DELETE" });
+}
+
+export async function searchGmailMessages(params: {
+    query?: string;
+    maxResults?: number;
+}): Promise<{ messages: GmailMessageSummary[]; resultSizeEstimate: number }> {
+    const query = new URLSearchParams();
+    if (params.query?.trim()) query.set("q", params.query.trim());
+    if (params.maxResults) query.set("maxResults", String(params.maxResults));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return apiRequest(`/integrations/gmail/messages${suffix}`);
+}
+
+export async function getGmailMessage(messageId: string): Promise<GmailMessageDetail> {
+    return apiRequest(`/integrations/gmail/messages/${encodeURIComponent(messageId)}`);
+}
+
+export async function importGmailMessage(payload: {
+    messageId: string;
+    projectId?: string | null;
+}): Promise<Document> {
+    return apiRequest<Document>("/integrations/gmail/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
 export async function deleteAllChats(): Promise<void> {
     return apiRequest<void>("/user/chats", { method: "DELETE" });
 }
@@ -312,6 +378,10 @@ export interface UserProfile {
     tabularModel: string;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
+    emailIntegrationEnabled: boolean;
+    darkMode: boolean;
+    featureFlags: import("./featureFlags").UserFeatureFlags;
+    deploymentModules: import("./featureFlags").DeploymentModules;
     apiKeyStatus: ApiKeyStatus;
 }
 
@@ -339,6 +409,9 @@ export async function updateUserProfile(payload: {
     titleModel?: string;
     tabularModel?: string;
     legalResearchUs?: boolean;
+    emailIntegrationEnabled?: boolean;
+    darkMode?: boolean;
+    featureFlags?: import("./featureFlags").UserFeatureFlags;
 }): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile", {
         method: "PATCH",
@@ -373,6 +446,7 @@ export async function getConfiguredModels(): Promise<ConfiguredModelSummary[]> {
 
 export type ApiKeyProvider =
     | "claude"
+    | "kimi"
     | "gemini"
     | "openai"
     | "openrouter"
@@ -421,7 +495,8 @@ export interface McpToolSummary {
 export interface McpConnectorSummary {
     id: string;
     name: string;
-    transport: "streamable_http";
+    transport: "streamable_http" | "stdio";
+    managed: boolean;
     serverUrl: string;
     authType: "none" | "bearer" | "oauth";
     enabled: boolean;
@@ -447,6 +522,354 @@ export async function getMcpConnector(
     );
 }
 
+// ---------------------------------------------------------------------------
+// Legal monitors
+// ---------------------------------------------------------------------------
+
+export type LegalMonitorSourceType = "case_law" | "statutes";
+export type LegalMonitorSourceKind = "rss" | "web";
+export type LegalMonitorConnectorConfig =
+    | { mode: "agent" }
+    | {
+          mode: "trademark_prefix";
+          prefix: string;
+          status: "all" | "live" | "dead";
+          internationalClass: string | null;
+      };
+
+export interface LegalMonitorSourceInput {
+    id?: string;
+    kind: LegalMonitorSourceKind;
+    name: string;
+    url: string;
+    category?: string | null;
+    enabled: boolean;
+}
+
+export interface LegalMonitorSource extends LegalMonitorSourceInput {
+    id: string;
+    monitorId: string;
+    category: string | null;
+    lastCheckedAt: string | null;
+    lastSuccessAt: string | null;
+    lastError: string | null;
+    itemCount: number;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface LegalMonitor {
+    id: string;
+    userId: string;
+    name: string;
+    topic: string;
+    jurisdiction: string;
+    sourceTypes: LegalMonitorSourceType[];
+    connectorId: string | null;
+    connectorName: string | null;
+    connectorConfig: LegalMonitorConnectorConfig;
+    sources: LegalMonitorSource[];
+    referenceDocuments: LegalMonitorReferenceDocument[];
+    model: string;
+    intervalHours: number;
+    lookbackDays: number;
+    maxItemsPerRun: number;
+    alertEmail: string | null;
+    emailEnabled: boolean;
+    enabled: boolean;
+    nextRunAt: string | null;
+    lastRunAt: string | null;
+    lastStatus: "running" | "completed" | "failed" | null;
+    lastError: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface LegalMonitorReferenceDocument {
+    id: string;
+    filename: string;
+    fileType: string | null;
+    sizeBytes: number | null;
+    versionNumber: number | null;
+    status: string;
+    updatedAt: string | null;
+}
+
+export interface LegalMonitorDevelopment {
+    title: string;
+    type: "case_law" | "statute" | "regulatory" | "cybersecurity" | "industry" | "other";
+    date: string | null;
+    url: string | null;
+    citation: string | null;
+    sourceName: string | null;
+    whyItMatters: string;
+}
+
+export interface LegalMonitorRun {
+    id: string;
+    monitorId: string;
+    userId: string;
+    status: "running" | "completed" | "failed";
+    summary: string | null;
+    report: string | null;
+    developments: LegalMonitorDevelopment[];
+    hasMaterialUpdates: boolean;
+    toolCalls: number;
+    sourceItemCount: number;
+    sourceErrors: string[];
+    emailStatus: "not_requested" | "skipped_no_updates" | "sent" | "failed";
+    emailError: string | null;
+    error: string | null;
+    startedAt: string;
+    completedAt: string | null;
+}
+
+export interface LegalMonitorInput {
+    name: string;
+    topic: string;
+    jurisdiction: string;
+    sourceTypes: LegalMonitorSourceType[];
+    connectorId: string | null;
+    connectorConfig: LegalMonitorConnectorConfig;
+    sources: LegalMonitorSourceInput[];
+    documentIds: string[];
+    model: string;
+    intervalHours: number;
+    lookbackDays: number;
+    maxItemsPerRun: number;
+    alertEmail: string | null;
+    emailEnabled: boolean;
+    enabled: boolean;
+}
+
+export interface LegalMonitorConfiguration {
+    connectors: McpConnectorSummary[];
+    configuredModels: ConfiguredModelSummary[];
+    intervals: number[];
+    emailAvailable: boolean;
+    defaultEmail: string;
+    presets: LegalMonitorPreset[];
+}
+
+export interface LegalMonitorPreset {
+    id: string;
+    name: string;
+    description: string;
+    requiredToolName?: string;
+    monitor: Pick<LegalMonitorInput, "name" | "topic" | "jurisdiction" | "sourceTypes" | "intervalHours" | "lookbackDays" | "maxItemsPerRun"> & Partial<Pick<LegalMonitorInput, "connectorConfig">>;
+    sources: LegalMonitorSourceInput[];
+}
+
+export async function getLegalMonitorConfiguration(): Promise<LegalMonitorConfiguration> {
+    return apiRequest<LegalMonitorConfiguration>("/legal-monitors/configuration");
+}
+
+export async function parseLegalMonitorOpml(opml: string): Promise<LegalMonitorSourceInput[]> {
+    const result = await apiRequest<{ sources: LegalMonitorSourceInput[] }>("/legal-monitors/parse-opml", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opml }),
+    });
+    return result.sources;
+}
+
+export async function listLegalMonitors(): Promise<LegalMonitor[]> {
+    return apiRequest<LegalMonitor[]>("/legal-monitors");
+}
+
+export async function createLegalMonitor(payload: LegalMonitorInput): Promise<LegalMonitor> {
+    return apiRequest<LegalMonitor>("/legal-monitors", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function updateLegalMonitor(monitorId: string, payload: LegalMonitorInput): Promise<LegalMonitor> {
+    return apiRequest<LegalMonitor>(`/legal-monitors/${monitorId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function deleteLegalMonitor(monitorId: string): Promise<void> {
+    return apiRequest<void>(`/legal-monitors/${monitorId}`, { method: "DELETE" });
+}
+
+export async function listLegalMonitorRuns(monitorId: string): Promise<LegalMonitorRun[]> {
+    return apiRequest<LegalMonitorRun[]>(`/legal-monitors/${monitorId}/runs`);
+}
+
+export async function runLegalMonitorNow(monitorId: string): Promise<LegalMonitorRun> {
+    return apiRequest<LegalMonitorRun>(`/legal-monitors/${monitorId}/run`, { method: "POST" });
+}
+
+// ---------------------------------------------------------------------------
+// Playbooks
+// ---------------------------------------------------------------------------
+
+export type PlaybookClauseUsage = "illustrative" | "preferred" | "verbatim" | "accepted" | "unacceptable";
+export interface PlaybookClause { text: string; usage: PlaybookClauseUsage; sourceRefs: string[]; }
+export interface PlaybookPosition { name: string; criteria: string; sampleClauses: PlaybookClause[]; }
+export interface PlaybookRule {
+    id: string;
+    name: string;
+    concept: string;
+    scope: "clause" | "agreement";
+    required: boolean;
+    guidance: string;
+    standard: PlaybookPosition | null;
+    fallbacks: PlaybookPosition[];
+    unacceptable: PlaybookPosition[];
+    conditions: string[];
+    actions: Array<{ scenario: string; instruction: string }>;
+    sourceRefs: string[];
+}
+export interface PlaybookTopic { id: string; name: string; rules: PlaybookRule[]; }
+export interface PlaybookContent {
+    name: string;
+    description: string;
+    globalGuidance: string;
+    representedParty: string;
+    documentTypes: string[];
+    jurisdictions: string[];
+    topics: PlaybookTopic[];
+}
+export interface Playbook {
+    id: string;
+    userId: string;
+    name: string;
+    description: string;
+    status: "draft" | "published";
+    draft: PlaybookContent;
+    publishedVersionId: string | null;
+    publishedVersionNumber: number | null;
+    publishedName: string | null;
+    sourceFilename: string | null;
+    importModel: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+export type PlaybookFindingStatus = "not_applicable" | "acceptable" | "needs_review" | "unacceptable" | "missing_required" | "outside_scope";
+export interface PlaybookFinding {
+    id: string;
+    topicId: string | null;
+    ruleId: string | null;
+    ruleName: string;
+    status: PlaybookFindingStatus;
+    quote: string;
+    location: string;
+    analysis: string;
+    suggestedText: string;
+}
+export interface PlaybookRun {
+    id: string;
+    playbookId: string;
+    versionId: string;
+    model: string;
+    documentName: string | null;
+    reviewMode: "strict" | "permissive";
+    status: "running" | "completed" | "failed";
+    summary: string | null;
+    findings: PlaybookFinding[];
+    error: string | null;
+    startedAt: string;
+    completedAt: string | null;
+}
+
+export interface PlaybookConfiguration {
+    configuredModels: ConfiguredModelSummary[];
+    availableModelIds: string[];
+    defaultModel: string | null;
+}
+
+export async function getPlaybookConfiguration(): Promise<PlaybookConfiguration> {
+    return apiRequest("/playbooks/configuration");
+}
+export async function listPlaybooks(): Promise<Playbook[]> { return apiRequest("/playbooks"); }
+export async function getPlaybook(playbookId: string): Promise<Playbook> { return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}`); }
+export async function importPlaybook(file: File, model: string, name?: string): Promise<Playbook> {
+    const headers = await getAuthHeader();
+    const form = new FormData();
+    form.append("file", file);
+    form.append("model", model);
+    if (name?.trim()) form.append("name", name.trim());
+    const response = await fetch(`${API_BASE}/playbooks/import`, { method: "POST", headers, body: form });
+    if (!response.ok) throw await toApiError(response, "/playbooks/import");
+    return response.json() as Promise<Playbook>;
+}
+export async function updatePlaybook(playbookId: string, draft: PlaybookContent): Promise<Playbook> {
+    return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ draft }) });
+}
+export async function publishPlaybook(playbookId: string): Promise<Playbook> {
+    return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}/publish`, { method: "POST" });
+}
+export async function reviewDocumentWithPlaybook(playbookId: string, payload: { documentText: string; documentName?: string; model: string; reviewMode: "strict" | "permissive" }): Promise<PlaybookRun> {
+    return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+}
+export async function listPlaybookRuns(playbookId: string): Promise<PlaybookRun[]> { return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}/runs`); }
+export async function deletePlaybook(playbookId: string): Promise<void> { return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}`, { method: "DELETE" }); }
+
+// ---------------------------------------------------------------------------
+// Prompt library
+// ---------------------------------------------------------------------------
+
+export interface PromptLibraryItem {
+    id: string;
+    userId: string | null;
+    source: "built_in" | "user";
+    name: string;
+    prompt: string;
+    description: string | null;
+    promptType: string | null;
+    categories: string[];
+    practiceAreas: string[];
+    sourceRequirements: string[];
+    originalCreator: string | null;
+    originalCreatedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface PromptLibraryInput {
+    name: string;
+    prompt: string;
+    description?: string | null;
+    promptType?: string | null;
+    categories?: string[];
+    practiceAreas?: string[];
+    sourceRequirements?: string[];
+}
+
+export async function listPromptLibrary(): Promise<PromptLibraryItem[]> {
+    return apiRequest<PromptLibraryItem[]>("/prompts");
+}
+
+export async function getPromptLibraryItem(promptId: string): Promise<PromptLibraryItem> {
+    return apiRequest<PromptLibraryItem>(`/prompts/${encodeURIComponent(promptId)}`);
+}
+
+export async function createPromptLibraryItem(payload: PromptLibraryInput): Promise<PromptLibraryItem> {
+    return apiRequest<PromptLibraryItem>("/prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function updatePromptLibraryItem(promptId: string, payload: PromptLibraryInput): Promise<PromptLibraryItem> {
+    return apiRequest<PromptLibraryItem>(`/prompts/${encodeURIComponent(promptId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function deletePromptLibraryItem(promptId: string): Promise<void> {
+    return apiRequest<void>(`/prompts/${encodeURIComponent(promptId)}`, { method: "DELETE" });
+}
+
 export async function createMcpConnector(payload: {
     name: string;
     serverUrl: string;
@@ -457,6 +880,12 @@ export async function createMcpConnector(payload: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+    });
+}
+
+export async function provisionPatentMcpConnector(): Promise<McpConnectorSummary> {
+    return apiRequest<McpConnectorSummary>("/user/mcp-connectors/presets/patent", {
+        method: "POST",
     });
 }
 
@@ -1052,10 +1481,13 @@ export async function streamChat(payload: {
         content: string;
         files?: { filename: string; document_id?: string }[];
         workflow?: { id: string; title: string };
+        playbook?: { id: string; title: string; version: number; versionId: string };
     }[];
     chat_id?: string;
     project_id?: string;
     model?: string;
+    playbook_id?: string;
+    playbook_version_id?: string;
     ask_inputs_response?: {
         responses: (
             | {
@@ -1094,6 +1526,7 @@ type StreamChatMessage = {
     content: string;
     files?: { filename: string; document_id?: string }[];
     workflow?: { id: string; title: string };
+    playbook?: { id: string; title: string; version: number; versionId: string };
 };
 
 export async function streamProjectChat(payload: {
@@ -1101,6 +1534,8 @@ export async function streamProjectChat(payload: {
     messages: StreamChatMessage[];
     chat_id?: string;
     model?: string;
+    playbook_id?: string;
+    playbook_version_id?: string;
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
     ask_inputs_response?: {

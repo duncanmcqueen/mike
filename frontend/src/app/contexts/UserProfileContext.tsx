@@ -19,6 +19,14 @@ import {
     updateUserMfaOnLogin,
     updateUserProfile,
 } from "@/app/lib/mikeApi";
+import {
+    DEFAULT_USER_FEATURE_FLAGS,
+    DEFAULT_DEPLOYMENT_MODULES,
+    type DeploymentModules,
+    type UserFeatureFlags,
+    type UserFeatureKey,
+} from "@/app/lib/featureFlags";
+import { applyDarkMode } from "@/app/lib/theme";
 
 interface UserProfile {
     displayName: string | null;
@@ -31,6 +39,10 @@ interface UserProfile {
     tabularModel: string;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
+    emailIntegrationEnabled: boolean;
+    darkMode: boolean;
+    featureFlags: UserFeatureFlags;
+    deploymentModules: DeploymentModules;
     apiKeys: ApiKeyState;
 }
 
@@ -45,6 +57,12 @@ interface UserProfileContextType {
     ) => Promise<boolean>;
     updateMfaOnLogin: (enabled: boolean) => Promise<boolean>;
     updateLegalResearchUs: (enabled: boolean) => Promise<boolean>;
+    updateEmailIntegration: (enabled: boolean) => Promise<boolean>;
+    updateDarkMode: (enabled: boolean) => Promise<void>;
+    updateFeatureFlag: (
+        key: UserFeatureKey,
+        enabled: boolean,
+    ) => Promise<boolean>;
     updateApiKey: (
         provider: ApiKeyProvider,
         value: string | null,
@@ -59,6 +77,7 @@ const UserProfileContext = createContext<UserProfileContextType | undefined>(
 
 const API_KEY_PROVIDERS: ApiKeyProvider[] = [
     "claude",
+    "kimi",
     "gemini",
     "openai",
     "openrouter",
@@ -68,6 +87,7 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
 function emptyApiKeys(): ApiKeyState {
     return {
         claude: { configured: false, source: null },
+        kimi: { configured: false, source: null },
         gemini: { configured: false, source: null },
         openai: { configured: false, source: null },
         openrouter: { configured: false, source: null },
@@ -90,6 +110,14 @@ function toProfile(data: ApiUserProfile): UserProfile {
     return {
         ...profile,
         mfaOnLogin: profile.mfaOnLogin === true,
+        featureFlags: {
+            ...DEFAULT_USER_FEATURE_FLAGS,
+            ...profile.featureFlags,
+        },
+        deploymentModules: {
+            ...DEFAULT_DEPLOYMENT_MODULES,
+            ...profile.deploymentModules,
+        },
         apiKeys,
     };
 }
@@ -121,6 +149,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 tabularModel: "gemini-3-flash-preview",
                 mfaOnLogin: false,
                 legalResearchUs: true,
+                emailIntegrationEnabled: false,
+                darkMode: false,
+                featureFlags: { ...DEFAULT_USER_FEATURE_FLAGS },
+                deploymentModules: { ...DEFAULT_DEPLOYMENT_MODULES },
                 apiKeys: emptyApiKeys(),
             });
         } finally {
@@ -137,6 +169,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             setLoading(false);
         }
     }, [isAuthenticated, userId, loadProfile]);
+
+    useEffect(() => {
+        applyDarkMode(profile?.darkMode === true);
+    }, [profile?.darkMode]);
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
@@ -168,7 +204,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return true;
             } catch (error) {
                 if (isMfaRequiredError(error)) throw error;
-                return false;
+                throw error;
             }
         },
         [user],
@@ -228,6 +264,56 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             }
         },
         [user],
+    );
+
+    const updateEmailIntegration = useCallback(
+        async (enabled: boolean): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const updated = await updateUserProfile({
+                    emailIntegrationEnabled: enabled,
+                });
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const updateDarkMode = useCallback(
+        async (enabled: boolean): Promise<void> => {
+            if (!user) throw new Error("Sign in to update Dark Mode.");
+            const updated = await updateUserProfile({ darkMode: enabled });
+            setProfile((prev) =>
+                prev ? { ...prev, ...toProfile(updated) } : null,
+            );
+        },
+        [user],
+    );
+
+    const updateFeatureFlag = useCallback(
+        async (key: UserFeatureKey, enabled: boolean): Promise<boolean> => {
+            if (!user || !profile) return false;
+            const featureFlags = {
+                ...DEFAULT_USER_FEATURE_FLAGS,
+                ...profile.featureFlags,
+                [key]: enabled,
+            };
+            try {
+                const updated = await updateUserProfile({ featureFlags });
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user, profile],
     );
 
     const updateApiKey = useCallback(
@@ -291,6 +377,9 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateModelPreference,
                 updateMfaOnLogin,
                 updateLegalResearchUs,
+                updateEmailIntegration,
+                updateDarkMode,
+                updateFeatureFlag,
                 updateApiKey,
                 reloadProfile,
                 incrementMessageCredits,

@@ -39,21 +39,23 @@ const {
 }));
 
 // ---------------------------------------------------------------------------
-// Configurable Supabase stub. The only route in this suite that reaches the
+// Configurable SQLite facade stub. The only route in this suite that reaches the
 // DB directly is GET /user/profile (via loadProfile → selectProfile). Tests
-// seed `supabaseState.tables.user_profiles`; terminal query ops resolve to the
+// seed `dbState.tables.user_profiles`; terminal query ops resolve to the
 // per-table result and auth.admin methods are stubbed where routes call them.
 // ---------------------------------------------------------------------------
 type QueryResult = { data: unknown; error: unknown };
 
-let supabaseState: {
+let dbState: {
     tables: Record<string, QueryResult>;
     adminGetUserById: QueryResult;
     adminDeleteUser: { error: unknown };
 };
+let lastDbUpdate: unknown = null;
 
-function resetSupabaseState() {
-    supabaseState = {
+function resetDbState() {
+    lastDbUpdate = null;
+    dbState = {
         tables: {},
         adminGetUserById: {
             data: { user: { id: "u1", factors: [] } },
@@ -62,10 +64,10 @@ function resetSupabaseState() {
         adminDeleteUser: { error: null },
     };
 }
-resetSupabaseState();
+resetDbState();
 
 function resultForTable(table: string): QueryResult {
-    return supabaseState.tables[table] ?? { data: null, error: null };
+    return dbState.tables[table] ?? { data: null, error: null };
 }
 
 function makeQuery(table: string) {
@@ -76,6 +78,10 @@ function makeQuery(table: string) {
         "filter", "order", "limit", "range", "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
+    q.update = vi.fn((value: unknown) => {
+        lastDbUpdate = value;
+        return q;
+    });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
     q.maybeSingle = vi.fn(() => Promise.resolve(resultForTable(table)));
     q.then = (
@@ -85,7 +91,7 @@ function makeQuery(table: string) {
     return q;
 }
 
-function mockSupabase() {
+function mockDb() {
     return {
         from: vi.fn((table: string) => makeQuery(table)),
         rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
@@ -94,24 +100,29 @@ function mockSupabase() {
                 Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
             admin: {
                 getUserById: vi.fn(() =>
-                    Promise.resolve(supabaseState.adminGetUserById),
+                    Promise.resolve(dbState.adminGetUserById),
                 ),
                 deleteUser: vi.fn(() =>
-                    Promise.resolve(supabaseState.adminDeleteUser),
+                    Promise.resolve(dbState.adminDeleteUser),
                 ),
             },
         },
     };
 }
 
-vi.mock("../../lib/supabase", () => ({
-    createServerSupabase: vi.fn(() => mockSupabase()),
-}));
+vi.mock("../../lib/sqlite", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../lib/sqlite")>();
+    return {
+        ...actual,
+        createServerSQLite: vi.fn(() => mockDb()),
+    };
+});
 
 // requireAuth always authenticates u1. requireMfaIfEnrolled is a reconfigurable
 // guard so we can drive both the satisfied (next()) and rejected
 // (403 mfa_verification_required) paths.
 vi.mock("../../middleware/auth", () => ({
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },
@@ -159,6 +170,7 @@ vi.mock("../../lib/userDataExport", () => ({
 }));
 
 import { app } from "../../app";
+import { getSqliteDb } from "../../lib/sqlite";
 
 const AUTH = ["Authorization", "Bearer test"] as const;
 
@@ -175,6 +187,8 @@ function profileRow(overrides: Record<string, unknown> = {}) {
         tabular_model: "gemini-3-flash-preview",
         mfa_on_login: false,
         legal_research_us: true,
+        email_integration_enabled: false,
+        dark_mode: false,
         ...overrides,
     };
 }
@@ -193,7 +207,23 @@ function rejectMfa(_req: unknown, res: any) {
 describe("user.routes", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        resetSupabaseState();
+        resetDbState();
+        getSqliteDb().exec(`
+            create table if not exists user_mfa_factors (
+                id text primary key,
+                user_id text not null,
+                friendly_name text,
+                encrypted_secret text not null,
+                secret_iv text not null,
+                secret_tag text not null,
+                status text not null default 'pending',
+                created_at text not null default (datetime('now')),
+                updated_at text not null default (datetime('now'))
+            );
+        `);
+        getSqliteDb()
+            .prepare("delete from user_mfa_factors where user_id = ?")
+            .run("u1");
         // Default: MFA satisfied (guard passes through).
         requireMfaIfEnrolled.mockImplementation(
             (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -216,7 +246,7 @@ describe("user.routes", () => {
     // ── GET /user/profile (MFA bootstrap path) ────────────────────────────
     describe("GET /user/profile", () => {
         it("returns the serialized profile plus apiKeyStatus", async () => {
-            supabaseState.tables.user_profiles = {
+            dbState.tables.user_profiles = {
                 data: profileRow(),
                 error: null,
             };
@@ -230,7 +260,15 @@ describe("user.routes", () => {
                 messageCreditsUsed: 3,
                 tier: "Pro",
                 legalResearchUs: true,
+                emailIntegrationEnabled: false,
+                darkMode: false,
                 mfaOnLogin: false,
+                deploymentModules: expect.objectContaining({
+                    promptLibrary: true,
+                    legalMonitors: true,
+                    playbooks: true,
+                    gmail: true,
+                }),
                 apiKeyStatus: STATUS,
             });
             // Presence-only key status — never plaintext.
@@ -241,7 +279,7 @@ describe("user.routes", () => {
             // Even if the MFA factor were unsatisfied, profile must remain
             // reachable so the client can render the verification gate.
             requireMfaIfEnrolled.mockImplementation(rejectMfa);
-            supabaseState.tables.user_profiles = {
+            dbState.tables.user_profiles = {
                 data: profileRow(),
                 error: null,
             };
@@ -252,8 +290,8 @@ describe("user.routes", () => {
             expect(requireMfaIfEnrolled).not.toHaveBeenCalled();
         });
 
-        it("returns 500 with detail when the profile load errors", async () => {
-            supabaseState.tables.user_profiles = {
+        it("returns a sanitized 500 when the profile load errors", async () => {
+            dbState.tables.user_profiles = {
                 data: null,
                 error: { message: "db down" },
             };
@@ -261,7 +299,38 @@ describe("user.routes", () => {
             const res = await request(app).get("/user/profile").set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("db down");
+            expect(res.body.detail).toBe("Internal server error");
+            expect(JSON.stringify(res.body)).not.toContain("db down");
+        });
+    });
+
+    describe("PATCH /user/profile appearance", () => {
+        it("persists and returns the dark mode preference", async () => {
+            dbState.tables.user_profiles = {
+                data: profileRow({ dark_mode: true }),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ darkMode: true });
+
+            expect(res.status).toBe(200);
+            expect(res.body.darkMode).toBe(true);
+            expect(lastDbUpdate).toMatchObject({
+                dark_mode: true,
+            });
+        });
+
+        it("rejects a non-boolean dark mode preference", async () => {
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ darkMode: "system" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe("darkMode must be a boolean");
         });
     });
 
@@ -357,7 +426,8 @@ describe("user.routes", () => {
                 .send({ api_key: "sk-x" });
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("kms unavailable");
+            expect(res.body.detail).toBe("Failed to save API key");
+            expect(JSON.stringify(res.body)).not.toContain("kms unavailable");
         });
 
         it("is rejected with 403 mfa_verification_required when MFA is unsatisfied", async () => {
@@ -429,7 +499,8 @@ describe("user.routes", () => {
             const res = await request(app).get("/user/export").set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("export boom");
+            expect(res.body.detail).toBe("Failed to export account data");
+            expect(JSON.stringify(res.body)).not.toContain("export boom");
         });
 
         it("GET /user/export is rejected when MFA is unsatisfied", async () => {
@@ -492,12 +563,13 @@ describe("user.routes", () => {
         });
 
         it("DELETE /user/account returns 500 when the auth-user delete errors", async () => {
-            supabaseState.adminDeleteUser = { error: { message: "auth boom" } };
+            dbState.adminDeleteUser = { error: { message: "auth boom" } };
 
             const res = await request(app).delete("/user/account").set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("auth boom");
+            expect(res.body.detail).toBe("Failed to delete account");
+            expect(JSON.stringify(res.body)).not.toContain("auth boom");
         });
 
         it("DELETE /user/chats returns 500 when cleanup throws", async () => {
@@ -506,7 +578,8 @@ describe("user.routes", () => {
             const res = await request(app).delete("/user/chats").set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("cascade failed");
+            expect(res.body.detail).toBe("Failed to delete chats");
+            expect(JSON.stringify(res.body)).not.toContain("cascade failed");
         });
 
         it("DELETE /user/account is rejected when MFA is unsatisfied (no cleanup)", async () => {
@@ -523,7 +596,7 @@ describe("user.routes", () => {
     // ── PATCH /user/security/mfa-login (factor-gated, MFA-guarded) ────────
     describe("PATCH /user/security/mfa-login", () => {
         it("returns 400 when enabling without a verified TOTP factor", async () => {
-            supabaseState.adminGetUserById = {
+            dbState.adminGetUserById = {
                 data: { user: { id: "u1", factors: [] } },
                 error: null,
             };
@@ -538,18 +611,22 @@ describe("user.routes", () => {
         });
 
         it("enables MFA-on-login when a verified TOTP factor exists", async () => {
-            supabaseState.adminGetUserById = {
-                data: {
-                    user: {
-                        id: "u1",
-                        factors: [
-                            { factor_type: "totp", status: "verified" },
-                        ],
-                    },
-                },
-                error: null,
-            };
-            supabaseState.tables.user_profiles = {
+            getSqliteDb()
+                .prepare(
+                    `insert into user_mfa_factors
+                     (id, user_id, friendly_name, encrypted_secret, secret_iv, secret_tag, status)
+                     values (?, ?, ?, ?, ?, ?, ?)`,
+                )
+                .run(
+                    "factor-1",
+                    "u1",
+                    "Authenticator",
+                    "secret",
+                    "iv",
+                    "tag",
+                    "verified",
+                );
+            dbState.tables.user_profiles = {
                 data: profileRow({ mfa_on_login: true }),
                 error: null,
             };

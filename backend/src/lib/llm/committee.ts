@@ -22,6 +22,7 @@ export async function completeCommitteeText(params: {
   maxTokens?: number;
   apiKeys?: UserApiKeys;
   committeeStack?: string[];
+  requestTimeoutMs?: number;
 }): Promise<string> {
   const committee = getCommitteeModel(params.model);
   if (!committee) throw new Error(`Unknown committee model: ${params.model}`);
@@ -61,6 +62,7 @@ export async function completeCommitteeText(params: {
         maxTokens: params.maxTokens,
         apiKeys: params.apiKeys,
         committeeStack: nextStack,
+        requestTimeoutMs: params.requestTimeoutMs,
       }),
     });
   }
@@ -82,6 +84,7 @@ export async function completeCommitteeText(params: {
     maxTokens: params.maxTokens,
     apiKeys: params.apiKeys,
     committeeStack: nextStack,
+    requestTimeoutMs: params.requestTimeoutMs,
   });
 }
 
@@ -121,6 +124,7 @@ export async function streamCommitteeChat(
     user: latestUser ? conversation : conversation || "",
     maxTokens: 4096,
     apiKeys: params.apiKeys,
+    requestTimeoutMs: params.requestTimeoutMs,
   });
   params.callbacks?.onContentDelta?.(fullText);
   return { fullText };

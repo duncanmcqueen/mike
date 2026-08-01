@@ -792,6 +792,43 @@ export function AssistantMessage({
                 />
             );
         }
+        if (event.type === "gmail_search_messages") {
+            const count = event.result_count ?? 0;
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={event.isStreaming ? "Searching Gmail" : event.error ? "Gmail search failed" : "Searched Gmail"}
+                    detail={event.error || (event.isStreaming ? event.query : `${count} ${count === 1 ? "email" : "emails"}${event.query ? ` for \"${event.query}\"` : ""}`)}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "gmail_get_message") {
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={event.isStreaming ? "Reading Gmail message" : event.error ? "Gmail message lookup failed" : "Read Gmail message"}
+                    detail={event.error || event.subject}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                />
+            );
+        }
+        if (event.type === "gmail_import_message") {
+            return (
+                <CourtListenerBlock
+                    key={globalIdx}
+                    label={event.isStreaming ? "Importing Gmail message" : event.error ? "Gmail import failed" : "Imported Gmail message"}
+                    detail={event.error || event.filename}
+                    isStreaming={!!event.isStreaming}
+                    hasError={!!event.error}
+                    showConnector={showConnector}
+                />
+            );
+        }
         return null;
     };
 

@@ -224,7 +224,6 @@ export function CaseLawPanel({
     if (prevTab !== tab) {
         setPrevTab(tab);
         if (tab.opinions?.length) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect -- sync path of an async fetch effect: serve prop/cache data without a loading flash
             setOpinions(tab.opinions);
             setLoading(false);
             setError(null);

@@ -129,6 +129,8 @@ export function DocumentSidePanel({
     const panelRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const replaceFileInputRef = useRef<HTMLInputElement>(null);
+    const onLoadVersionsRef = useRef(onLoadVersions);
+    onLoadVersionsRef.current = onLoadVersions;
     const dragStartX = useRef(0);
     const dragStartDataWidth = useRef(DEFAULT_DATA_COLUMN_WIDTH);
     const dragStartPanelWidth = useRef(
@@ -149,9 +151,9 @@ export function DocumentSidePanel({
     }, [dataColumnWidth, mounted]);
 
     useEffect(() => {
-        if (!doc) return;
+        if (!doc?.id) return;
         setUploadError(null);
-        void onLoadVersions(doc.id);
+        void onLoadVersionsRef.current(doc.id);
     }, [doc?.id]);
 
     useEffect(() => {

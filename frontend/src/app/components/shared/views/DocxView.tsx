@@ -169,17 +169,13 @@ async function tagWIdsOnRenderedDom(
             container.querySelectorAll("ins, del"),
         ) as HTMLElement[];
         const ids = data.ids ?? [];
-        let tagged = 0;
-        let mismatched = 0;
         for (let i = 0; i < Math.min(domEls.length, ids.length); i++) {
             const el = domEls[i];
             const info = ids[i];
             if (el.tagName.toLowerCase() !== info.kind) {
-                mismatched++;
                 continue;
             }
             el.setAttribute("data-w-id", info.w_id);
-            tagged++;
         }
     } catch (e) {
         console.warn("[DocxView] tagWIdsOnRenderedDom failed", e);
@@ -415,7 +411,7 @@ export function DocxView({
         return () => {
             cancelled = true;
         };
-    }, [bytes]);
+    }, [bytes, documentId, versionId]);
 
     // Re-scroll/highlight if the target edit changes without a re-render
     // (e.g. same doc, different edit clicked).

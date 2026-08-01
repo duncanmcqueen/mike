@@ -1,10 +1,11 @@
 import {
+  deleteFile,
   downloadFile,
   generatedDocKey,
   uploadFile,
 } from "../../storage";
 import { convertedPdfKey, docxToPdf } from "../../convert";
-import { createServerSQLite } from "../../sqlite";
+import { createServerDatabase } from "../../database";
 import {
   applyTrackedEdits,
   extractDocxBodyText,
@@ -28,7 +29,6 @@ import {
 } from "../../documentTypes";
 import { extractPresentationText } from "../../officeText";
 import { spreadsheetToLLMText } from "../../spreadsheet";
-
 
 export function citationReminder(docLabel: string, filename: string): string {
   const isSpreadsheet = isSpreadsheetDocumentType(
@@ -84,8 +84,12 @@ export async function generateDocx(
   title: string,
   sections: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSQLite>,
-  options?: { landscape?: boolean; projectId?: string | null },
+  db: ReturnType<typeof createServerDatabase>,
+  options?: {
+    landscape?: boolean;
+    numberSections?: boolean;
+    projectId?: string | null;
+  },
 ) {
   try {
     const {
@@ -108,6 +112,7 @@ export async function generateDocx(
 
     const FONT = "Times New Roman";
     const SIZE = 22; // 11pt in half-points
+    const numberSections = options?.numberSections === true;
 
     type DocChild = InstanceType<typeof Paragraph> | InstanceType<typeof Table>;
     const children: DocChild[] = [];
@@ -322,17 +327,23 @@ export async function generateDocx(
         children.push(new Paragraph({ children: [new PageBreak()] }));
       }
       if (section.heading) {
-        const stripped = stripManualNumbering(section.heading);
+        const stripped = numberSections
+          ? stripManualNumbering(section.heading)
+          : { text: section.heading.trim(), levelFromPrefix: null };
         const isUnnumbered = isUnnumberedHeading(stripped.text, sectionIndex);
         const skipHeading = isTitleLikeFirstHeading(
           stripped.text,
           sectionIndex,
         );
-        const idx = Math.min(
-          stripped.levelFromPrefix ?? (section.level ?? 1) - 1,
-          3,
+        const requestedLevel = Number.isInteger(section.level)
+          ? Number(section.level)
+          : 1;
+        const idx = Math.max(
+          0,
+          Math.min(stripped.levelFromPrefix ?? requestedLevel - 1, 3),
         );
-        currentClauseLevel = isUnnumbered || skipHeading ? null : idx;
+        currentClauseLevel =
+          !numberSections || isUnnumbered || skipHeading ? null : idx;
         const headingText =
           idx === 0 && !isUnnumbered
             ? stripped.text.toUpperCase()
@@ -341,7 +352,10 @@ export async function generateDocx(
           children.push(
             new Paragraph({
               heading: headingLevels[idx],
-              numbering: isUnnumbered ? undefined : legalNumbering(idx),
+              numbering:
+                numberSections && !isUnnumbered
+                  ? legalNumbering(idx)
+                  : undefined,
               spacing: { after: 160 },
               children: [
                 new TextRun({
@@ -422,7 +436,6 @@ export async function generateDocx(
         children.push(new Paragraph({ text: "" }));
       }
       if (section.content) {
-        let numberedBodyParagraphs = 0;
         const contentIsSignatureBlock =
           section.heading &&
           normalizeHeadingText(section.heading).includes("signature")
@@ -435,30 +448,33 @@ export async function generateDocx(
           const rawText = bulletMatch ? bulletMatch[1].trim() : trimmed;
           const manualList = parseManualListMarker(rawText);
           const numeric = stripManualNumbering(rawText);
-          const text = bulletMatch
-            ? rawText
-            : manualList.levelOffset !== null
-              ? manualList.text
-              : numeric.text;
           const inferredLevel =
             currentClauseLevel === null || contentIsSignatureBlock
               ? undefined
               : bulletMatch
-                ? currentClauseLevel + 2
+                ? undefined
                 : manualList.levelOffset !== null
                   ? currentClauseLevel + manualList.levelOffset
                   : numeric.levelFromPrefix !== null
                     ? numeric.levelFromPrefix
-                    : numberedBodyParagraphs === 0
-                      ? currentClauseLevel + 1
-                      : currentClauseLevel + 2;
-          if (currentClauseLevel !== null) numberedBodyParagraphs++;
+                    : undefined;
+          // Strip typed list markers only when Word numbering will replace
+          // them. This preserves intentional text such as "1. Final notice"
+          // in an otherwise unnumbered letter or signature block.
+          const text = bulletMatch
+            ? rawText
+            : inferredLevel === undefined
+              ? rawText
+              : manualList.levelOffset !== null
+                ? manualList.text
+                : numeric.text;
           children.push(
             new Paragraph({
               numbering:
                 inferredLevel === undefined
                   ? undefined
                   : legalNumbering(inferredLevel),
+              bullet: bulletMatch ? { level: 0 } : undefined,
               spacing: { after: 120 },
               children: [
                 new TextRun({
@@ -478,14 +494,16 @@ export async function generateDocx(
       : {};
 
     const doc = new Document({
-      numbering: {
-        config: [
-          {
-            reference: LEGAL_NUMBERING_REF,
-            levels: legalNumberingLevels,
-          },
-        ],
-      },
+      numbering: numberSections
+        ? {
+            config: [
+              {
+                reference: LEGAL_NUMBERING_REF,
+                levels: legalNumberingLevels,
+              },
+            ],
+          }
+        : undefined,
       sections: [{ properties: pageSetup, children }],
     });
     const buf = await Packer.toBuffer(doc);
@@ -510,13 +528,24 @@ export async function generateDocx(
         .slice(0, 64) || "document";
     const filename = `${safeTitle}.docx`;
     const key = generatedDocKey(userId, docId, filename);
+    // Validate signing configuration before persisting bytes. Otherwise a
+    // missing secret leaves an unreachable file in SQLite storage.
+    const downloadUrl = buildDownloadUrl(key, filename);
 
     await uploadFile(
       key,
-      buf.buffer as ArrayBuffer,
+      buf,
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
-    const downloadUrl = buildDownloadUrl(key, filename);
+    const discardFile = async () => {
+      try {
+        await deleteFile(key);
+      } catch (cleanupError) {
+        devLog(
+          `[generate_docx] failed to discard ${key}: ${String(cleanupError)}`,
+        );
+      }
+    };
 
     // Persist to DB so generated docs are first-class documents:
     // openable in the DocPanel and editable via edit_document. In
@@ -533,6 +562,7 @@ export async function generateDocx(
       .select("id")
       .single();
     if (docErr || !docRow) {
+      await discardFile();
       return {
         error: `Failed to record generated document: ${docErr?.message ?? "unknown"}`,
       };
@@ -554,18 +584,40 @@ export async function generateDocx(
       .select("id")
       .single();
     if (verErr || !versionRow) {
+      await db
+        .from("documents")
+        .delete()
+        .eq("id", documentId)
+        .eq("user_id", userId);
+      await discardFile();
       return {
         error: `Failed to record generated document version: ${verErr?.message ?? "unknown"}`,
       };
     }
     const versionId = versionRow.id as string;
 
-    await db
+    const { error: currentVersionError } = await db
       .from("documents")
       .update({
         current_version_id: versionId,
       })
       .eq("id", documentId);
+    if (currentVersionError) {
+      await db
+        .from("document_versions")
+        .delete()
+        .eq("id", versionId)
+        .eq("document_id", documentId);
+      await db
+        .from("documents")
+        .delete()
+        .eq("id", documentId)
+        .eq("user_id", userId);
+      await discardFile();
+      return {
+        error: `Failed to activate generated document version: ${currentVersionError.message}`,
+      };
+    }
 
     return {
       filename,
@@ -612,8 +664,14 @@ function excelColumnName(index: number) {
 }
 
 function normalizeSheetName(value: unknown, fallback: string) {
-  const raw = typeof value === "string" && value.trim() ? value.trim() : fallback;
-  return raw.replace(/[:\\/?*[\]]/g, " ").trim().slice(0, 31) || fallback;
+  const raw =
+    typeof value === "string" && value.trim() ? value.trim() : fallback;
+  return (
+    raw
+      .replace(/[:\\/?*[\]]/g, " ")
+      .trim()
+      .slice(0, 31) || fallback
+  );
 }
 
 function normalizeRows(rows: unknown, colCount: number) {
@@ -630,7 +688,9 @@ function normalizeRows(rows: unknown, colCount: number) {
 async function buildXlsxWorkbook(title: string, sheetsInput: unknown[]) {
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
-  const sheets = sheetsInput.length ? sheetsInput : [{ name: title, columns: [], rows: [] }];
+  const sheets = sheetsInput.length
+    ? sheetsInput
+    : [{ name: title, columns: [], rows: [] }];
 
   const normalizedSheets = sheets.map((sheet, index) => {
     const raw = (sheet && typeof sheet === "object" ? sheet : {}) as {
@@ -753,15 +813,24 @@ function pptTextParagraphs(lines: string[], opts: { title?: boolean } = {}) {
     .map((line, index) => {
       const escaped = xmlEscape(line);
       const titleAttrs = opts.title ? ' sz="3200" b="1"' : ' sz="2000"';
-      const bullet = !opts.title && index >= 0
-        ? '<a:pPr marL="342900" indent="-171450"><a:buChar char="&#8226;"/></a:pPr>'
-        : "";
+      const bullet =
+        !opts.title && index >= 0
+          ? '<a:pPr marL="342900" indent="-171450"><a:buChar char="&#8226;"/></a:pPr>'
+          : "";
       return `<a:p>${bullet}<a:r><a:rPr lang="en-US"${titleAttrs}/><a:t>${escaped}</a:t></a:r></a:p>`;
     })
     .join("");
 }
 
-function pptShape(id: number, name: string, x: number, y: number, cx: number, cy: number, body: string) {
+function pptShape(
+  id: number,
+  name: string,
+  x: number,
+  y: number,
+  cx: number,
+  cy: number,
+  body: string,
+) {
   return `<p:sp>
   <p:nvSpPr><p:cNvPr id="${id}" name="${xmlEscape(name)}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
   <p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr>
@@ -937,7 +1006,7 @@ async function persistGeneratedFile(params: {
   extension: "xlsx" | "pptx";
   buffer: Buffer;
   userId: string;
-  db: ReturnType<typeof createServerSQLite>;
+  db: ReturnType<typeof createServerDatabase>;
   projectId?: string | null;
 }) {
   const { title, extension, buffer, userId, db, projectId } = params;
@@ -1031,7 +1100,7 @@ export async function generateExcel(
   title: string,
   sheets: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   options?: { projectId?: string | null },
 ) {
   try {
@@ -1057,7 +1126,7 @@ export async function generatePpt(
   title: string,
   slides: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   options?: { projectId?: string | null },
 ) {
   try {
@@ -1089,7 +1158,7 @@ export async function generatePpt(
  */
 export async function loadCurrentVersionBytes(
   documentId: string,
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
 ): Promise<{ bytes: Buffer; storage_path: string } | null> {
   const active = await loadActiveVersion(documentId, db);
   if (!active) return null;
@@ -1107,7 +1176,7 @@ export async function runEditDocument(params: {
   documentId: string;
   userId: string;
   edits: EditInput[];
-  db: ReturnType<typeof createServerSQLite>;
+  db: ReturnType<typeof createServerDatabase>;
   /**
    * If provided, append these edits to the existing turn-scoped version
    * (overwrites the file at storagePath and reuses the document_versions
@@ -1142,8 +1211,7 @@ export async function runEditDocument(params: {
   if (!doc) return { ok: false, error: "Document not found." };
 
   const activeVersion = await loadActiveVersion(documentId, db);
-  let versionFilename =
-    activeVersion?.filename?.trim() || "Untitled document";
+  let versionFilename = activeVersion?.filename?.trim() || "Untitled document";
 
   const current = await loadCurrentVersionBytes(documentId, db);
   if (!current) return { ok: false, error: "Could not load document bytes." };
@@ -1208,7 +1276,11 @@ export async function runEditDocument(params: {
       .select("version_number")
       .eq("document_id", documentId)
       .in("source", ["upload", "user_upload", "assistant_edit"])
-      .order("version_number", { ascending: false, nullsFirst: false, numeric: true })
+      .order("version_number", {
+        ascending: false,
+        nullsFirst: false,
+        numeric: true,
+      })
       .limit(1)
       .maybeSingle();
     nextVersionNumber = (Number(maxRow?.version_number ?? 1) || 1) + 1;
@@ -1333,7 +1405,7 @@ export async function getTurnReadIdentity(params: {
   docLabel: string;
   docStore: DocStore;
   docIndex?: DocIndex;
-  db?: ReturnType<typeof createServerSQLite>;
+  db?: ReturnType<typeof createServerDatabase>;
 }): Promise<{
   key: string;
   docLabel: string;
@@ -1406,7 +1478,7 @@ export async function readDocumentContent(
   docStore: DocStore,
   write: (s: string) => void,
   docIndex?: DocIndex,
-  db?: ReturnType<typeof createServerSQLite>,
+  db?: ReturnType<typeof createServerDatabase>,
   opts?: { emitEvents?: boolean },
 ): Promise<string> {
   const emitEvents = opts?.emitEvents ?? true;
@@ -1671,7 +1743,7 @@ export async function findInDocumentContent(params: {
   docStore: DocStore;
   write: (s: string) => void;
   docIndex?: DocIndex;
-  db?: ReturnType<typeof createServerSQLite>;
+  db?: ReturnType<typeof createServerDatabase>;
 }): Promise<string> {
   const {
     docLabel,

@@ -1,5 +1,5 @@
 // @ts-nocheck
-type Db = ReturnType<typeof import("./sqlite").createServerSQLite>;
+type Db = ReturnType<typeof import("./database").createServerDatabase>;
 
 export type ProfileUserInfo = {
     id: string;

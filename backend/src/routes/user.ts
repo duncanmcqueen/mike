@@ -1,10 +1,13 @@
 // @ts-nocheck
 import crypto from "crypto";
 import { Router } from "express";
-import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
+import {
+    localAuthOnly,
+    requireAuth,
+    requireMfaIfEnrolled,
+} from "../middleware/auth";
 import {
     createLocalUser,
-    createServerSQLite,
     createSession,
     deleteSession,
     findLocalUserByEmail,
@@ -14,6 +17,10 @@ import {
     updateLocalUserEmail,
     verifyPassword,
 } from "../lib/sqlite";
+import {
+    createServerDatabase,
+    type ServerDatabase,
+} from "../lib/database";
 import {
     createMfaChallenge,
     createMfaFactor,
@@ -43,6 +50,7 @@ import {
     deleteUserMcpConnector,
     getUserMcpConnector,
     listUserMcpConnectors,
+    provisionPatentMcpConnector,
     McpOAuthRequiredError,
     refreshUserMcpConnectorTools,
     setUserMcpToolEnabled,
@@ -62,6 +70,15 @@ import {
     userExportFilename,
 } from "../lib/userDataExport";
 import { findProfileUserByEmail } from "../lib/userLookup";
+import {
+    getUserFeatures,
+    normalizeUserFeatures,
+    requireUserFeature,
+    USER_FEATURE_KEYS,
+    type UserFeatures,
+} from "../lib/userFeatures";
+import { resolveDeploymentModules } from "../lib/deploymentModules";
+import { sendServerError } from "../lib/safeError";
 
 export const userRouter = Router();
 
@@ -82,7 +99,7 @@ function isValidEmail(email: string): boolean {
     return email.length <= 254 && EMAIL_PATTERN.test(email);
 }
 
-userRouter.post("/auth/signup", async (req, res) => {
+userRouter.post("/auth/signup", localAuthOnly, async (req, res) => {
     const email = typeof req.body?.email === "string" ? req.body.email : "";
     const password =
         typeof req.body?.password === "string" ? req.body.password : "";
@@ -100,7 +117,7 @@ userRouter.post("/auth/signup", async (req, res) => {
 });
 
 function profileMfaOnLogin(userId: string): boolean {
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     return db
         .from("user_profiles")
         .select("mfa_on_login")
@@ -114,7 +131,7 @@ function profileMfaOnLogin(userId: string): boolean {
         .catch(() => false);
 }
 
-userRouter.post("/auth/login", async (req, res) => {
+userRouter.post("/auth/login", localAuthOnly, async (req, res) => {
     const email = typeof req.body?.email === "string" ? req.body.email : "";
     const password =
         typeof req.body?.password === "string" ? req.body.password : "";
@@ -135,7 +152,7 @@ userRouter.post("/auth/login", async (req, res) => {
     res.json({ token, user: publicUser(row), mfaRequired });
 });
 
-userRouter.get("/auth/session", async (req, res) => {
+userRouter.get("/auth/session", localAuthOnly, async (req, res) => {
     const session = findSession(bearerToken(req));
     if (!session) return void res.json({ user: null });
     const user = findLocalUserById(session.userId) as
@@ -144,13 +161,13 @@ userRouter.get("/auth/session", async (req, res) => {
     res.json({ user: user ? publicUser(user) : null });
 });
 
-userRouter.post("/auth/logout", async (req, res) => {
+userRouter.post("/auth/logout", localAuthOnly, async (req, res) => {
     const token = bearerToken(req);
     if (token) deleteSession(token);
     res.status(204).send();
 });
 
-userRouter.patch("/auth/email", requireAuth, async (req, res) => {
+userRouter.patch("/auth/email", localAuthOnly, requireAuth, async (req, res) => {
     const email = typeof req.body?.email === "string" ? req.body.email : "";
     if (!isValidEmail(email.trim())) {
         return void res.status(400).json({ detail: "A valid email is required" });
@@ -178,8 +195,9 @@ userRouter.post("/support", requireAuth, async (req, res) => {
     }
     const userId = res.locals.userId as string;
     const userEmail = (res.locals.userEmail as string) ?? "";
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     const { error } = await db.from("support_feedback").insert({
+        id: crypto.randomUUID(),
         user_id: userId,
         email: userEmail,
         type,
@@ -223,10 +241,13 @@ type UserProfileRow = {
     tabular_model: string;
     mfa_on_login: boolean | null;
     legal_research_us: boolean | null;
+    email_integration_enabled: boolean | null;
+    dark_mode: boolean | null;
+    feature_flags?: unknown;
 };
 
 // GET /user/mfa/status — factors plus authenticator assurance levels.
-userRouter.get("/mfa/status", requireAuth, async (_req, res) => {
+userRouter.get("/mfa/status", localAuthOnly, requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
     const factors = listMfaFactors(userId).map((factor) => ({
         id: factor.id,
@@ -246,7 +267,7 @@ userRouter.get("/mfa/status", requireAuth, async (_req, res) => {
 });
 
 // POST /user/mfa/enroll — create a pending TOTP factor.
-userRouter.post("/mfa/enroll", requireAuth, async (req, res) => {
+userRouter.post("/mfa/enroll", localAuthOnly, requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = (res.locals.userEmail as string) ?? "";
     const friendlyName =
@@ -263,13 +284,13 @@ userRouter.post("/mfa/enroll", requireAuth, async (req, res) => {
             totp: { qr_code: result.qrCode, secret: result.secret, uri: result.uri },
         });
     } catch (err) {
-        res.status(500).json({ detail: errorMessage(err) });
+        sendServerError(res, err);
     }
 });
 
 // POST /user/mfa/challenge — TOTP challenges are stateless; the client must
 // present the returned challenge id when verifying.
-userRouter.post("/mfa/challenge", requireAuth, async (req, res) => {
+userRouter.post("/mfa/challenge", localAuthOnly, requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const factorId = typeof req.body?.factorId === "string" ? req.body.factorId : "";
     if (!factorId) {
@@ -282,13 +303,13 @@ userRouter.post("/mfa/challenge", requireAuth, async (req, res) => {
         }
         res.json(challenge);
     } catch (err) {
-        res.status(500).json({ detail: errorMessage(err) });
+        sendServerError(res, err);
     }
 });
 
 // POST /user/mfa/verify — verify a TOTP code; confirms pending factors and
 // elevates the current session to aal2.
-userRouter.post("/mfa/verify", requireAuth, async (req, res) => {
+userRouter.post("/mfa/verify", localAuthOnly, requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const factorId = typeof req.body?.factorId === "string" ? req.body.factorId : "";
     const challengeId =
@@ -305,13 +326,13 @@ userRouter.post("/mfa/verify", requireAuth, async (req, res) => {
         markSessionMfaVerified(res.locals.token as string);
         res.status(204).send();
     } catch (err) {
-        res.status(500).json({ detail: errorMessage(err) });
+        sendServerError(res, err);
     }
 });
 
 // POST /user/mfa/unenroll — requires an MFA-verified (aal2) session so a
 // password-only session cannot disable MFA.
-userRouter.post("/mfa/unenroll", requireAuth, async (req, res) => {
+userRouter.post("/mfa/unenroll", localAuthOnly, requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const factorId = typeof req.body?.factorId === "string" ? req.body.factorId : "";
     if (!factorId) {
@@ -325,7 +346,7 @@ userRouter.post("/mfa/unenroll", requireAuth, async (req, res) => {
     }
     unenrollMfaFactor(factorId, userId);
     if (!hasVerifiedTotpFactor(userId)) {
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         await db
             .from("user_profiles")
             .update({ mfa_on_login: false })
@@ -387,10 +408,13 @@ function mcpOAuthPopupHtml(payload: {
 }, nonce: string) {
     const targetOrigin = new URL(frontendUrl()).origin;
     const targetUrl = frontendUrl();
+    // Escape "<" so attacker-influenced payload fields (e.g. the OAuth
+    // ?error= query param echoed into `detail`) cannot break out of the
+    // inline <script> block with a "</script>" sequence.
     const message = JSON.stringify({
         type: "mcp_oauth_result",
         ...payload,
-    });
+    }).replace(/</g, "\\u003c");
     return `<!doctype html>
 <html>
   <head>
@@ -437,7 +461,13 @@ function mcpOAuthPopupCsp(nonce: string) {
 }
 
 const PROFILE_SELECT =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us";
+    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, email_integration_enabled, dark_mode, feature_flags";
+const PROFILE_SELECT_NO_DARK_MODE =
+    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, email_integration_enabled, feature_flags";
+const PROFILE_SELECT_NO_FEATURE_FLAGS =
+    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, email_integration_enabled";
+const PROFILE_SELECT_NO_EMAIL =
+    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, feature_flags";
 const PROFILE_SELECT_NO_LEGAL =
     "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login";
 const LEGACY_PROFILE_SELECT =
@@ -454,12 +484,10 @@ function isMissingProfileColumn(error: unknown, column: string): boolean {
     return record.code === "42703" && message.includes(column);
 }
 
-// Loads a profile while tolerating older databases that lack the
-// legal_research_us column. Tries the full select first, then falls back to
-// the legacy cascade (which also handles missing title_model / mfa_on_login)
-// and defaults the feature flag to enabled.
+// Loads a profile while tolerating databases created before feature columns
+// were introduced.
 async function selectProfile(
-    db: ReturnType<typeof createServerSQLite>,
+    db: ServerDatabase,
     userId: string,
     mode: "maybe" | "single",
 ) {
@@ -473,18 +501,69 @@ async function selectProfile(
             : await fullQuery.maybeSingle();
     if (!full.error) return full;
 
+    if (isMissingProfileColumn(full.error, "dark_mode")) {
+        const noDarkQuery = db
+            .from("user_profiles")
+            .select(PROFILE_SELECT_NO_DARK_MODE)
+            .eq("user_id", userId);
+        const noDark = mode === "single"
+            ? await noDarkQuery.single()
+            : await noDarkQuery.maybeSingle();
+        if (!noDark.error) {
+            if (noDark.data && typeof noDark.data === "object") {
+                Object.assign(noDark.data as Record<string, unknown>, {
+                    dark_mode: false,
+                });
+            }
+            return noDark;
+        }
+    }
+
+    const noFlagsQuery = db
+        .from("user_profiles")
+        .select(PROFILE_SELECT_NO_FEATURE_FLAGS)
+        .eq("user_id", userId);
+    const noFlags = mode === "single"
+        ? await noFlagsQuery.single()
+        : await noFlagsQuery.maybeSingle();
+    if (!noFlags.error) {
+        if (noFlags.data && typeof noFlags.data === "object") {
+            Object.assign(noFlags.data as Record<string, unknown>, {
+                feature_flags: {},
+            });
+        }
+        return noFlags;
+    }
+
+    const noEmailQuery = db
+        .from("user_profiles")
+        .select(PROFILE_SELECT_NO_EMAIL)
+        .eq("user_id", userId);
+    const noEmail = mode === "single"
+        ? await noEmailQuery.single()
+        : await noEmailQuery.maybeSingle();
+    if (!noEmail.error) {
+        if (noEmail.data && typeof noEmail.data === "object") {
+            Object.assign(noEmail.data as Record<string, unknown>, {
+                email_integration_enabled: false,
+            });
+        }
+        return noEmail;
+    }
+
     const legacy = await selectProfileLegacy(db, userId, mode);
     if (legacy.data && typeof legacy.data === "object") {
         const row = legacy.data as Record<string, unknown>;
         if (!("legal_research_us" in row)) {
             Object.assign(row, { legal_research_us: true });
         }
+        Object.assign(row, { email_integration_enabled: false });
     }
     return legacy;
 }
 
 async function selectProfileLegacy(
-    db: ReturnType<typeof createServerSQLite>,
+    db: ServerDatabase,
     userId: string,
     mode: "maybe" | "single",
 ) {
@@ -570,6 +649,10 @@ function serializeProfile(row: UserProfileRow, apiKeyStatus?: ApiKeyStatus) {
         tabularModel: resolveModel(row.tabular_model, DEFAULT_TABULAR_MODEL),
         mfaOnLogin: row.mfa_on_login === true,
         legalResearchUs: row.legal_research_us !== false,
+        emailIntegrationEnabled: row.email_integration_enabled === true,
+        darkMode: row.dark_mode === true,
+        featureFlags: normalizeUserFeatures(row.feature_flags),
+        deploymentModules: resolveDeploymentModules(),
         ...(apiKeyStatus ? { apiKeyStatus } : {}),
     };
 }
@@ -583,6 +666,9 @@ function validateProfilePayload(body: unknown):
               title_model?: string;
               tabular_model?: string;
               legal_research_us?: boolean;
+              email_integration_enabled?: boolean;
+              dark_mode?: boolean;
+              feature_flags?: UserFeatures;
               updated_at: string;
           };
       }
@@ -598,6 +684,9 @@ function validateProfilePayload(body: unknown):
         "titleModel",
         "tabularModel",
         "legalResearchUs",
+        "emailIntegrationEnabled",
+        "darkMode",
+        "featureFlags",
     ]);
     const invalidField = Object.keys(raw).find(
         (key) => !allowedFields.has(key),
@@ -615,6 +704,9 @@ function validateProfilePayload(body: unknown):
         title_model?: string;
         tabular_model?: string;
         legal_research_us?: boolean;
+        email_integration_enabled?: boolean;
+        dark_mode?: boolean;
+        feature_flags?: UserFeatures;
         updated_at: string;
     } = { updated_at: new Date().toISOString() };
 
@@ -670,6 +762,62 @@ function validateProfilePayload(body: unknown):
         update.legal_research_us = raw.legalResearchUs;
     }
 
+    if ("emailIntegrationEnabled" in raw) {
+        if (typeof raw.emailIntegrationEnabled !== "boolean") {
+            return {
+                ok: false,
+                detail: "emailIntegrationEnabled must be a boolean",
+            };
+        }
+        update.email_integration_enabled = raw.emailIntegrationEnabled;
+    }
+
+    if ("darkMode" in raw) {
+        if (typeof raw.darkMode !== "boolean") {
+            return {
+                ok: false,
+                detail: "darkMode must be a boolean",
+            };
+        }
+        update.dark_mode = raw.darkMode;
+    }
+
+    if ("featureFlags" in raw) {
+        if (
+            !raw.featureFlags ||
+            typeof raw.featureFlags !== "object" ||
+            Array.isArray(raw.featureFlags)
+        ) {
+            return {
+                ok: false,
+                detail: "featureFlags must be an object",
+            };
+        }
+        const flags = raw.featureFlags as Record<string, unknown>;
+        const invalidFeature = Object.keys(flags).find(
+            (key) =>
+                !USER_FEATURE_KEYS.includes(
+                    key as (typeof USER_FEATURE_KEYS)[number],
+                ),
+        );
+        if (invalidFeature) {
+            return {
+                ok: false,
+                detail: `Unsupported feature flag: ${invalidFeature}`,
+            };
+        }
+        const nonBooleanFeature = Object.entries(flags).find(
+            ([, value]) => typeof value !== "boolean",
+        );
+        if (nonBooleanFeature) {
+            return {
+                ok: false,
+                detail: `featureFlags.${nonBooleanFeature[0]} must be a boolean`,
+            };
+        }
+        update.feature_flags = normalizeUserFeatures(flags);
+    }
+
     return { ok: true, update };
 }
 
@@ -694,7 +842,7 @@ function readBooleanBodyField(
 }
 
 async function userHasVerifiedTotpFactor(
-    db: ReturnType<typeof createServerSQLite>,
+    db: ServerDatabase,
     userId: string,
 ) {
     void db;
@@ -705,20 +853,20 @@ async function userHasVerifiedTotpFactor(
 }
 
 async function ensureProfileRow(
-    db: ReturnType<typeof createServerSQLite>,
+    db: ServerDatabase,
     userId: string,
 ) {
     const { error } = await db
         .from("user_profiles")
         .upsert(
-            { user_id: userId },
+            { user_id: userId, email_integration_enabled: false },
             { onConflict: "user_id", ignoreDuplicates: true },
         );
     return error;
 }
 
 async function loadProfile(
-    db: ReturnType<typeof createServerSQLite>,
+    db: ServerDatabase,
     userId: string,
     options: { repairMissing?: boolean; apiKeyStatus?: ApiKeyStatus } = {},
 ) {
@@ -770,9 +918,9 @@ async function loadProfile(
 // POST /user/profile
 userRouter.post("/profile", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     const error = await ensureProfileRow(db, userId);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendServerError(res, error);
     res.json({ ok: true });
 });
 
@@ -783,7 +931,7 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
         return void res.status(400).json({ detail: "email is required" });
     }
 
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     const user = await findProfileUserByEmail(db, email);
     res.json({
         exists: !!user,
@@ -795,19 +943,27 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 // GET /user/profile
 userRouter.get("/profile", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);
     const { data, error } = await loadProfile(db, userId, {
         repairMissing: true,
         apiKeyStatus,
     });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendServerError(res, error);
     res.json({ ...data, apiKeyStatus });
 });
 
 // GET /user/models
 userRouter.get("/models", requireAuth, async (_req, res) => {
-    res.json({ configured: configuredModelSummaries() });
+    const db = createServerDatabase();
+    const features = await getUserFeatures(res.locals.userId as string, db);
+    res.json({
+        configured: configuredModelSummaries().filter(
+            (model) =>
+                (model.location !== "local" || features.localModels) &&
+                (model.location !== "committee" || features.committeeModels),
+        ),
+    });
 });
 
 // PATCH /user/profile
@@ -816,21 +972,21 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     const parsed = validateProfilePayload(req.body);
     if (!parsed.ok) return void res.status(400).json({ detail: parsed.detail });
 
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     const ensureError = await ensureProfileRow(db, userId);
     if (ensureError)
-        return void res.status(500).json({ detail: ensureError.message });
+        return void sendServerError(res, ensureError);
 
     const { error: updateError } = await db
         .from("user_profiles")
         .update(parsed.update)
         .eq("user_id", userId);
     if (updateError)
-        return void res.status(500).json({ detail: updateError.message });
+        return void sendServerError(res, updateError);
 
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);
     const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendServerError(res, error);
     res.json({ ...data, apiKeyStatus });
 });
 
@@ -845,13 +1001,11 @@ userRouter.patch(
         if (!parsed.ok)
             return void res.status(400).json({ detail: parsed.detail });
 
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         if (parsed.value) {
             const factorCheck = await userHasVerifiedTotpFactor(db, userId);
             if (!factorCheck.ok) {
-                return void res.status(500).json({
-                    detail: factorCheck.error.message,
-                });
+                return void sendServerError(res, factorCheck.error);
             }
             if (!factorCheck.hasVerifiedTotp) {
                 return void res.status(400).json({
@@ -862,7 +1016,7 @@ userRouter.patch(
 
         const ensureError = await ensureProfileRow(db, userId);
         if (ensureError)
-            return void res.status(500).json({ detail: ensureError.message });
+            return void sendServerError(res, ensureError);
 
         const { error: updateError } = await db
             .from("user_profiles")
@@ -872,11 +1026,11 @@ userRouter.patch(
             })
             .eq("user_id", userId);
         if (updateError)
-            return void res.status(500).json({ detail: updateError.message });
+            return void sendServerError(res, updateError);
 
         const apiKeyStatus = await getUserApiKeyStatus(userId, db);
         const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
-        if (error) return void res.status(500).json({ detail: error.message });
+        if (error) return void sendServerError(res, error);
         res.json({ ...data, apiKeyStatus });
     },
 );
@@ -884,7 +1038,7 @@ userRouter.patch(
 // GET /user/api-keys
 userRouter.get("/api-keys", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     const status = await getUserApiKeyStatus(userId, db);
     res.json(status);
 });
@@ -904,7 +1058,7 @@ userRouter.put(
 
         const apiKey =
             typeof req.body?.api_key === "string" ? req.body.api_key : null;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             if (hasEnvApiKey(provider)) {
                 return void res.status(409).json({
@@ -920,7 +1074,7 @@ userRouter.put(
                 provider,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            res.status(500).json({ detail: "Failed to save API key" });
         }
     },
 );
@@ -928,7 +1082,7 @@ userRouter.put(
 // GET /user/mcp-connectors
 userRouter.get("/mcp-connectors", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     try {
         res.json(
             await listUserMcpConnectors(userId, db, { includeTools: false }),
@@ -939,7 +1093,7 @@ userRouter.get("/mcp-connectors", requireAuth, async (_req, res) => {
             userId,
             error: detail,
         });
-        res.status(500).json({ detail });
+        res.status(500).json({ detail: "Failed to list connectors" });
     }
 });
 
@@ -949,7 +1103,7 @@ userRouter.get(
     requireAuth,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             res.json(
                 await getUserMcpConnector(userId, req.params.connectorId, db),
@@ -986,7 +1140,7 @@ userRouter.post(
             !Array.isArray(req.body.headers)
                 ? (req.body.headers as Record<string, unknown>)
                 : undefined;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             const connector = await createUserMcpConnector(
                 userId,
@@ -1005,6 +1159,31 @@ userRouter.post(
     },
 );
 
+// POST /user/mcp-connectors/presets/patent
+userRouter.post(
+    "/mcp-connectors/presets/patent",
+    requireAuth,
+    requireUserFeature("patentConnector"),
+    requireMfaIfEnrolled,
+    async (_req, res) => {
+        const userId = res.locals.userId as string;
+        const db = createServerDatabase();
+        try {
+            const connector = await provisionPatentMcpConnector(userId, db);
+            res.status(201).json(
+                await refreshUserMcpConnectorTools(userId, connector.id, db),
+            );
+        } catch (err) {
+            const detail = errorMessage(err);
+            console.error("[user/mcp-connectors] patent preset failed", {
+                userId,
+                error: detail,
+            });
+            res.status(400).json({ detail });
+        }
+    },
+);
+
 // PATCH /user/mcp-connectors/:connectorId
 userRouter.patch(
     "/mcp-connectors/:connectorId",
@@ -1012,7 +1191,7 @@ userRouter.patch(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         const body = req.body ?? {};
         try {
             const connector = await updateUserMcpConnector(
@@ -1072,7 +1251,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             await deleteUserMcpConnector(userId, req.params.connectorId, db);
             res.status(204).send();
@@ -1083,7 +1262,7 @@ userRouter.delete(
                 connectorId: req.params.connectorId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            res.status(500).json({ detail: "Failed to delete connector" });
         }
     },
 );
@@ -1095,7 +1274,7 @@ userRouter.post(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             const redirectUri = `${backendPublicUrl(req)}/user/mcp-connectors/oauth/callback`;
             const result = await startUserMcpConnectorOAuth(
@@ -1124,7 +1303,7 @@ userRouter.get("/mcp-connectors/oauth/callback", async (req, res) => {
     const code = typeof req.query.code === "string" ? req.query.code : "";
     const error =
         typeof req.query.error === "string" ? req.query.error : undefined;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     try {
         if (error) throw new Error(error);
         if (!state || !code)
@@ -1169,7 +1348,7 @@ userRouter.post(
     requireMfaIfEnrolled,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             const connector = await refreshUserMcpConnectorTools(
                 userId,
@@ -1206,7 +1385,7 @@ userRouter.patch(
         if (!parsed.ok)
             return void res.status(400).json({ detail: parsed.detail });
 
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             const connector = await setUserMcpToolEnabled(
                 userId,
@@ -1237,12 +1416,12 @@ userRouter.delete(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             await deleteUserAccountData(db, userId, userEmail);
             const { error } = await db.auth.admin.deleteUser(userId);
             if (error)
-                return void res.status(500).json({ detail: error.message });
+                return void sendServerError(res, error, "Failed to delete account");
             res.status(204).send();
         } catch (err) {
             const detail = errorMessage(err);
@@ -1250,7 +1429,7 @@ userRouter.delete(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            res.status(500).json({ detail: "Failed to delete account" });
         }
     },
 );
@@ -1262,7 +1441,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (_req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             await deleteAllUserChats(db, userId);
             res.status(204).send();
@@ -1272,7 +1451,7 @@ userRouter.delete(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            res.status(500).json({ detail: "Failed to delete chats" });
         }
     },
 );
@@ -1284,7 +1463,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (_req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             await deleteUserProjects(db, userId);
             res.status(204).send();
@@ -1294,7 +1473,7 @@ userRouter.delete(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            res.status(500).json({ detail: "Failed to delete projects" });
         }
     },
 );
@@ -1306,7 +1485,7 @@ userRouter.delete(
     requireMfaIfEnrolled,
     async (_req, res) => {
         const userId = res.locals.userId as string;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             await deleteAllUserTabularReviews(db, userId);
             res.status(204).send();
@@ -1316,7 +1495,7 @@ userRouter.delete(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            res.status(500).json({ detail: "Failed to delete tabular reviews" });
         }
     },
 );
@@ -1329,7 +1508,7 @@ userRouter.get(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             const data = await buildUserAccountExport(db, userId, userEmail);
             res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1341,7 +1520,7 @@ userRouter.get(
         } catch (err) {
             const detail = errorMessage(err);
             console.error("[user/export] failed", { userId, error: detail });
-            res.status(500).json({ detail });
+            res.status(500).json({ detail: "Failed to export account data" });
         }
     },
 );
@@ -1354,7 +1533,7 @@ userRouter.get(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             const data = await buildUserChatsExport(db, userId, userEmail);
             res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1369,7 +1548,7 @@ userRouter.get(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            res.status(500).json({ detail: "Failed to export chats" });
         }
     },
 );
@@ -1382,7 +1561,7 @@ userRouter.get(
     async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSQLite();
+        const db = createServerDatabase();
         try {
             const data = await buildUserTabularReviewsExport(
                 db,
@@ -1401,7 +1580,7 @@ userRouter.get(
                 userId,
                 error: detail,
             });
-            res.status(500).json({ detail });
+            res.status(500).json({ detail: "Failed to export tabular reviews" });
         }
     },
 );

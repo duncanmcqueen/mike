@@ -55,6 +55,7 @@ export type ChatMessage = {
   content: string | null;
   files?: { filename: string; document_id?: string }[];
   workflow?: { id: string; title: string };
+  playbook?: { id: string; title: string; version: number; versionId: string };
 };
 
 // ---------------------------------------------------------------------------

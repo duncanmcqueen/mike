@@ -1227,6 +1227,7 @@ function ProjectAssistantChatPageInner({
                                                 content={msg.content ?? ""}
                                                 files={msg.files}
                                                 workflow={msg.workflow}
+                                                playbook={msg.playbook}
                                             />
                                         </div>
                                     ) : (

@@ -1,26 +1,127 @@
-import { Request, Response, NextFunction } from "express";
+import type { NextFunction, Request, Response } from "express";
+import { resolveAuthProvider } from "../lib/authProvider";
 import {
   ensureLocalProfile,
   findLocalUserById,
   findSession,
 } from "../lib/sqlite";
+import { createServerSupabase } from "../lib/supabase";
+import { syncProfileEmail } from "../lib/userLookup";
 
-/**
- * Paths reachable with an aal1 (password-only, MFA not yet verified)
- * session. Everything else is rejected with 403 +
- * `mfa_verification_required` until the session is elevated via
- * POST /user/mfa/verify. Paths are router-relative; `/mfa/` only exists
- * in the user router, which is what needs it.
- */
 const AAL1_ALLOWED_PREFIXES = ["/mfa/"];
 const AAL1_ALLOWED_PATHS = new Set(["/profile", "/security/mfa-status"]);
 
-function isAal1Allowed(req: Request): boolean {
-  const path = req.path;
-  if (AAL1_ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+function isLocalAal1Allowed(req: Request): boolean {
+  if (AAL1_ALLOWED_PREFIXES.some((prefix) => req.path.startsWith(prefix))) {
     return true;
   }
-  return req.method === "GET" && AAL1_ALLOWED_PATHS.has(path);
+  return req.method === "GET" && AAL1_ALLOWED_PATHS.has(req.path);
+}
+
+function isSupabaseMfaBootstrapRoute(req: Request): boolean {
+  const path = req.originalUrl.split("?")[0];
+  return (
+    (req.method === "GET" || req.method === "POST") &&
+    (path === "/user/profile" || path === "/users/profile")
+  );
+}
+
+function bearerToken(req: Request): string | null {
+  const auth = req.headers.authorization ?? "";
+  if (!auth.startsWith("Bearer ")) return null;
+  const token = auth.slice(7).trim();
+  return token || null;
+}
+
+async function authenticateLocal(
+  req: Request,
+  res: Response,
+  token: string,
+): Promise<boolean> {
+  const session = findSession(token);
+  if (!session) {
+    res.status(401).json({ detail: "Invalid or expired token" });
+    return false;
+  }
+  const user = findLocalUserById(session.userId) as
+    | { id: string; email?: string }
+    | null;
+  if (!user) {
+    res.status(401).json({ detail: "Invalid or expired token" });
+    return false;
+  }
+  if (!session.mfaVerified && !isLocalAal1Allowed(req)) {
+    res.status(403).json({
+      detail: "MFA verification required",
+      code: "mfa_verification_required",
+    });
+    return false;
+  }
+
+  res.locals.userId = user.id;
+  res.locals.userEmail = user.email?.toLowerCase() ?? "";
+  res.locals.token = token;
+  res.locals.mfaVerified = session.mfaVerified;
+  await ensureLocalProfile(user.id, user.email ?? null);
+  return true;
+}
+
+async function authenticateSupabase(
+  req: Request,
+  res: Response,
+  token: string,
+): Promise<boolean> {
+  let admin;
+  try {
+    admin = createServerSupabase();
+  } catch {
+    res.status(500).json({ detail: "Server auth is not configured" });
+    return false;
+  }
+
+  const { data, error } = await admin.auth.getUser(token);
+  if (error || !data.user) {
+    res.status(401).json({ detail: "Invalid or expired token" });
+    return false;
+  }
+
+  res.locals.userId = data.user.id;
+  res.locals.userEmail = data.user.email?.toLowerCase() ?? "";
+  res.locals.token = token;
+  const syncError = await syncProfileEmail(admin, data.user.id, data.user.email);
+  if (syncError && process.env.NODE_ENV !== "production") {
+    console.warn("[auth/profile-email] sync failed", syncError.message);
+  }
+
+  if (isSupabaseMfaBootstrapRoute(req)) return true;
+  const { data: profile, error: profileError } = await admin
+    .from("user_profiles")
+    .select("mfa_on_login")
+    .eq("user_id", data.user.id)
+    .maybeSingle();
+  if (profileError && profileError.code !== "42703") {
+    res.status(500).json({ detail: profileError.message });
+    return false;
+  }
+  if ((profile as { mfa_on_login?: boolean } | null)?.mfa_on_login !== true) {
+    return true;
+  }
+
+  const { data: assurance, error: assuranceError } =
+    await admin.auth.mfa.getAuthenticatorAssuranceLevel(token);
+  if (assuranceError) {
+    res.status(401).json({ detail: assuranceError.message });
+    return false;
+  }
+  res.locals.mfaVerified = assurance.currentLevel === "aal2";
+  if (assurance.nextLevel === "aal2" && assurance.currentLevel !== "aal2") {
+    res.status(403).json({
+      code: "mfa_verification_required",
+      detail: "MFA verification required",
+    });
+    return false;
+  }
+  return true;
 }
 
 export async function requireAuth(
@@ -28,40 +129,28 @@ export async function requireAuth(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const auth = req.headers.authorization ?? "";
-  if (!auth.startsWith("Bearer ")) {
+  const token = bearerToken(req);
+  if (!token) {
     res.status(401).json({ detail: "Missing or invalid Authorization header" });
     return;
   }
 
-  const token = auth.slice(7).trim();
-  const session = findSession(token);
-  if (!session) {
-    res.status(401).json({ detail: "Invalid or expired token" });
+  const authenticated =
+    resolveAuthProvider() === "local"
+      ? await authenticateLocal(req, res, token)
+      : await authenticateSupabase(req, res, token);
+  if (authenticated) next();
+}
+
+export function localAuthOnly(
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (resolveAuthProvider() !== "local") {
+    res.status(404).json({ detail: "Local authentication is not enabled" });
     return;
   }
-
-  const user = findLocalUserById(session.userId) as
-    | { id: string; email?: string }
-    | null;
-  if (!user) {
-    res.status(401).json({ detail: "Invalid or expired token" });
-    return;
-  }
-
-  if (!session.mfaVerified && !isAal1Allowed(req)) {
-    res.status(403).json({
-      detail: "MFA verification required",
-      code: "mfa_verification_required",
-    });
-    return;
-  }
-
-  res.locals.userId = user.id;
-  res.locals.userEmail = user.email?.toLowerCase() ?? "";
-  res.locals.token = token;
-  res.locals.mfaVerified = session.mfaVerified;
-  ensureLocalProfile(user.id, user.email ?? null);
   next();
 }
 
@@ -70,10 +159,40 @@ export async function requireMfaIfEnrolled(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  if (res.locals.mfaVerified === false) {
+  if (resolveAuthProvider() === "local") {
+    if (res.locals.mfaVerified === false) {
+      res.status(403).json({
+        detail: "MFA verification required",
+        code: "mfa_verification_required",
+      });
+      return;
+    }
+    next();
+    return;
+  }
+
+  const token = typeof res.locals.token === "string" ? res.locals.token : "";
+  if (!token) {
+    res.status(401).json({ detail: "Missing auth session" });
+    return;
+  }
+  let admin;
+  try {
+    admin = createServerSupabase();
+  } catch {
+    res.status(500).json({ detail: "Server auth is not configured" });
+    return;
+  }
+  const { data, error } =
+    await admin.auth.mfa.getAuthenticatorAssuranceLevel(token);
+  if (error) {
+    res.status(401).json({ detail: error.message });
+    return;
+  }
+  if (data.nextLevel === "aal2" && data.currentLevel !== "aal2") {
     res.status(403).json({
-      detail: "MFA verification required",
       code: "mfa_verification_required",
+      detail: "MFA verification required",
     });
     return;
   }

@@ -327,6 +327,8 @@ export function useAssistantChat({
       }));
 
       const model = message.model;
+      const playbookId = message.playbook?.id;
+      const playbookVersionId = message.playbook?.versionId;
 
       const displayedDoc = opts?.displayedDoc ?? null;
 
@@ -348,6 +350,8 @@ export function useAssistantChat({
             messages: apiMessages,
             chat_id: chatId,
             model,
+            playbook_id: playbookId,
+            playbook_version_id: playbookVersionId,
             displayed_doc: displayedDoc
               ? {
                   filename: displayedDoc.filename,
@@ -363,6 +367,8 @@ export function useAssistantChat({
             messages: apiMessages,
             chat_id: chatId,
             model,
+            playbook_id: playbookId,
+            playbook_version_id: playbookVersionId,
             ask_inputs_response: opts?.askInputsResponse,
             signal: controller.signal,
           }));
@@ -775,6 +781,78 @@ export function useAssistantChat({
                     typeof data.error === "string"
                       ? (data.error as string)
                       : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
+            if (data.type === "gmail_search_messages_start") {
+              pushEvent({
+                type: "gmail_search_messages",
+                query: (data.query as string) ?? "",
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "gmail_search_messages") {
+              updateMatchingEvent(
+                (e) => e.type === "gmail_search_messages" && !!e.isStreaming,
+                () => ({
+                  type: "gmail_search_messages",
+                  query: (data.query as string) ?? "",
+                  result_count: typeof data.result_count === "number" ? data.result_count : 0,
+                  error: typeof data.error === "string" ? data.error : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
+            if (data.type === "gmail_get_message_start") {
+              pushEvent({
+                type: "gmail_get_message",
+                message_id: (data.message_id as string) ?? "",
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "gmail_get_message") {
+              updateMatchingEvent(
+                (e) => e.type === "gmail_get_message" && !!e.isStreaming,
+                () => ({
+                  type: "gmail_get_message",
+                  message_id: (data.message_id as string) ?? "",
+                  subject: typeof data.subject === "string" ? data.subject : undefined,
+                  error: typeof data.error === "string" ? data.error : undefined,
+                  isStreaming: false,
+                }),
+              );
+              pushThinkingPlaceholder();
+              continue;
+            }
+
+            if (data.type === "gmail_import_message_start") {
+              pushEvent({
+                type: "gmail_import_message",
+                message_id: (data.message_id as string) ?? "",
+                isStreaming: true,
+              });
+              continue;
+            }
+
+            if (data.type === "gmail_import_message") {
+              updateMatchingEvent(
+                (e) => e.type === "gmail_import_message" && !!e.isStreaming,
+                () => ({
+                  type: "gmail_import_message",
+                  message_id: (data.message_id as string) ?? "",
+                  filename: typeof data.filename === "string" ? data.filename : undefined,
+                  error: typeof data.error === "string" ? data.error : undefined,
                   isStreaming: false,
                 }),
               );

@@ -12,7 +12,7 @@ import {
   executeMcpToolCall,
   type McpToolEvent,
 } from "../../mcpConnectors";
-import { createServerSQLite } from "../../sqlite";
+import { createServerDatabase } from "../../database";
 import {
   type DocStore,
   type DocIndex,
@@ -44,6 +44,15 @@ import {
   IRONCLAD_TOOL_NAMES,
   type IroncladToolEvent,
 } from "./ironcladTools";
+import {
+  getGmailMessage,
+  importGmailMessage,
+  searchGmailMessages,
+} from "../../gmail";
+import {
+  GMAIL_TOOL_NAMES,
+  type GmailToolEvent,
+} from "./gmailTools";
 import { loadActiveVersion } from "../../documentVersions";
 import { type EditInput } from "../../docxTrackedChanges";
 import {
@@ -447,7 +456,7 @@ export async function runToolCalls(
   toolCalls: ToolCall[],
   docStore: DocStore,
   userId: string,
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   write: (s: string) => void,
   workflowStore?: WorkflowStore,
   tabularStore?: TabularCellStore,
@@ -471,6 +480,7 @@ export async function runToolCalls(
   caseCitationEvents: CaseCitationEvent[];
   mcpEvents: McpToolEvent[];
   ironcladEvents: IroncladToolEvent[];
+  gmailEvents: GmailToolEvent[];
 }> {
   const toolResults: unknown[] = [];
   const docsRead: { filename: string; document_id?: string }[] = [];
@@ -488,6 +498,7 @@ export async function runToolCalls(
   const caseCitationEvents: CaseCitationEvent[] = [];
   const mcpEvents: McpToolEvent[] = [];
   const ironcladEvents: IroncladToolEvent[] = [];
+  const gmailEvents: GmailToolEvent[] = [];
   const courtState: CourtlistenerTurnState =
     courtlistenerState ??
     {
@@ -1812,8 +1823,9 @@ export async function runToolCalls(
     } else if (tc.function.name === "generate_docx") {
       const title = args.title as string;
       const landscape = !!args.landscape;
+      const numberSections = args.numberSections === true;
       devLog(
-        `[generate_docx] title="${title}" landscape=${landscape} args.landscape=${args.landscape}`,
+        `[generate_docx] title="${title}" landscape=${landscape} numberSections=${numberSections}`,
       );
       const previewFilename = safeGeneratedFilename(title, "docx");
       write(
@@ -1824,7 +1836,7 @@ export async function runToolCalls(
         args.sections as unknown[],
         userId,
         db,
-        { landscape, projectId: projectId ?? null },
+        { landscape, numberSections, projectId: projectId ?? null },
       );
       registerGeneratedDocument(
         tc,
@@ -2032,6 +2044,127 @@ export async function runToolCalls(
           content: JSON.stringify({ error: message }),
         });
       }
+    } else if (tc.function.name === GMAIL_TOOL_NAMES.searchMessages) {
+      const query = typeof args.query === "string" ? args.query.trim() : "";
+      write(
+        `data: ${JSON.stringify({ type: "gmail_search_messages_start", query })}\n\n`,
+      );
+      try {
+        const limit = typeof args.limit === "number" && Number.isFinite(args.limit)
+          ? Math.min(25, Math.max(1, Math.floor(args.limit)))
+          : 10;
+        const result = await searchGmailMessages({
+          userId,
+          query,
+          maxResults: limit,
+          db,
+        });
+        const event: GmailToolEvent = {
+          type: "gmail_search_messages",
+          query,
+          result_count: result.messages.length,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ messages: result.messages }),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Gmail search failed.";
+        const event: GmailToolEvent = {
+          type: "gmail_search_messages",
+          query,
+          result_count: 0,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+        toolResults.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: message }) });
+      }
+    } else if (tc.function.name === GMAIL_TOOL_NAMES.getMessage) {
+      const messageId = typeof args.messageId === "string" ? args.messageId.trim() : "";
+      write(
+        `data: ${JSON.stringify({ type: "gmail_get_message_start", message_id: messageId })}\n\n`,
+      );
+      try {
+        if (!messageId) throw new Error("messageId is required.");
+        const message = await getGmailMessage(userId, messageId, db);
+        const event: GmailToolEvent = {
+          type: "gmail_get_message",
+          message_id: messageId,
+          subject: message.subject,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+        const body = message.body.slice(0, 100_000);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({
+            ...message,
+            body,
+            bodyTruncated: body.length < message.body.length,
+          }),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Gmail message lookup failed.";
+        const event: GmailToolEvent = {
+          type: "gmail_get_message",
+          message_id: messageId,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+        toolResults.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: message }) });
+      }
+    } else if (tc.function.name === GMAIL_TOOL_NAMES.importMessage) {
+      const messageId = typeof args.messageId === "string" ? args.messageId.trim() : "";
+      write(
+        `data: ${JSON.stringify({ type: "gmail_import_message_start", message_id: messageId })}\n\n`,
+      );
+      try {
+        if (!messageId) throw new Error("messageId is required.");
+        const imported = await importGmailMessage({
+          userId,
+          messageId,
+          projectId: projectId ?? null,
+          db,
+        });
+        if (!imported.ok) throw new Error(imported.detail);
+        const filename = (imported.document.filename as string) ?? "Gmail message.docx";
+        const result = {
+          document_id: String(imported.document.id),
+          version_id: imported.document.current_version_id ?? null,
+          version_number: 1,
+          filename,
+          storage_path: imported.document.storage_path ?? null,
+          download_url: buildDownloadUrl(
+            (imported.document.storage_path as string) ?? "",
+            filename,
+          ),
+          note: "Imported into Mike documents. Use the doc_id label from the tool activity to read it.",
+        };
+        registerGeneratedDocument(tc, result, filename, "docx");
+        const event: GmailToolEvent = {
+          type: "gmail_import_message",
+          message_id: messageId,
+          filename,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Gmail import failed.";
+        const event: GmailToolEvent = {
+          type: "gmail_import_message",
+          message_id: messageId,
+          error: message,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        gmailEvents.push(event);
+        toolResults.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: message }) });
+      }
     }
   }
 
@@ -2067,5 +2200,6 @@ export async function runToolCalls(
     caseCitationEvents,
     mcpEvents,
     ironcladEvents,
+    gmailEvents,
   };
 }

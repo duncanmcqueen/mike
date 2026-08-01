@@ -220,9 +220,10 @@ export function toConnectorSummary(
         id: connector.id,
         name: connector.name,
         transport: connector.transport,
+        managed: connector.transport === "stdio",
         serverUrl: connector.server_url,
         authType: connector.auth_type ?? "none",
-        enabled: connector.enabled,
+        enabled: sqliteTruthy(connector.enabled),
         hasAuthConfig: !!connector.encrypted_auth_config,
         customHeaderKeys: Object.keys(authConfig.headers ?? {}),
         oauthConnected: !!oauthToken?.encrypted_access_token,
@@ -437,6 +438,17 @@ export async function guardedFetch(
         const location = response.headers.get("location");
         if (!location) return response;
         const nextUrl = new URL(location, url).toString();
+
+        // Mirror the fetch spec: credentials must not follow the request to
+        // a different origin, or a redirecting server could exfiltrate the
+        // caller's Authorization header to a host of its choosing.
+        if (new URL(nextUrl).origin !== new URL(url).origin && currentInit?.headers) {
+            const headers = new Headers(currentInit.headers as HeadersInit);
+            headers.delete("authorization");
+            headers.delete("proxy-authorization");
+            headers.delete("cookie");
+            currentInit = { ...currentInit, headers };
+        }
 
         const method = currentInit?.method?.toUpperCase() ?? "GET";
         if (

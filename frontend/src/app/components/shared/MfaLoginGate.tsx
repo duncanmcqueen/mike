@@ -179,7 +179,6 @@ function MfaGateRedirector({
 
         if (gateState === "required" && !isVerifyPage) {
             if (hasRecentMfaVerification()) {
-                // eslint-disable-next-line react-hooks/set-state-in-effect -- clear gate when a recent MFA verification exists instead of redirecting
                 onVerified();
                 return;
             }

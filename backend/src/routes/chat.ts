@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSQLite } from "../lib/sqlite";
+import { createServerDatabase } from "../lib/database";
 import {
     buildDocContext,
     buildMessages,
@@ -22,11 +22,21 @@ import {
     getUserModelSettings,
 } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
-import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
+import {
+    safeErrorLog,
+    safeErrorMessage,
+    sendServerError,
+} from "../lib/safeError";
+import { buildContextSuffix } from "../lib/contextSuffix";
+import { buildAssistantPlaybookContext } from "../lib/playbooks";
+import {
+    featureForModel,
+    getUserFeatures,
+} from "../lib/userFeatures";
 
 export const chatRouter = Router();
 
-type Db = ReturnType<typeof createServerSQLite>;
+type Db = ReturnType<typeof createServerDatabase>;
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
@@ -108,6 +118,20 @@ function parseOptionalModel(value: unknown):
     return { ok: true, model: value.trim() };
 }
 
+function parseOptionalPlaybookId(value: unknown):
+    | { ok: true; playbookId: string | undefined }
+    | { ok: false; detail: string } {
+    if (value === undefined || value === null)
+        return { ok: true, playbookId: undefined };
+    if (typeof value !== "string" || !value.trim()) {
+        return {
+            ok: false,
+            detail: "playbook_id must be a non-empty string",
+        };
+    }
+    return { ok: true, playbookId: value.trim() };
+}
+
 async function validateAccessibleProjectId(
     projectId: string | null,
     userId: string,
@@ -158,7 +182,7 @@ async function getAccessibleChat(
 // listed per-project via GET /projects/:projectId/chats.
 chatRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     const requestedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
     const limit = Number.isFinite(requestedLimit)
         ? Math.min(Math.max(requestedLimit, 1), 100)
@@ -168,7 +192,7 @@ chatRouter.get("/", requireAuth, async (req, res) => {
         p_user_id: userId,
         p_limit: limit,
     });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendServerError(res, error);
     res.json(data ?? []);
 });
 
@@ -181,7 +205,7 @@ chatRouter.post("/create", requireAuth, async (req, res) => {
         return void res.status(400).json({ detail: parsedProjectId.detail });
     }
     const projectId = parsedProjectId.projectId;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     const projectAccess = await validateAccessibleProjectId(
         projectId,
         userId,
@@ -199,7 +223,7 @@ chatRouter.post("/create", requireAuth, async (req, res) => {
         .select("id")
         .single();
 
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendServerError(res, error);
     res.json({ id: data.id });
 });
 
@@ -208,7 +232,7 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
 
     const chat = await getAccessibleChat(chatId, userId, userEmail, db);
     if (!chat)
@@ -230,7 +254,7 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
 // we merge the current DB status in so EditCards render with the real state.
 async function hydrateEditStatuses(
     messages: Record<string, unknown>[],
-    db: ReturnType<typeof createServerSQLite>,
+    db: ReturnType<typeof createServerDatabase>,
 ): Promise<Record<string, unknown>[]> {
     const editIds = new Set<string>();
     const versionIds = new Set<string>();
@@ -347,7 +371,7 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     if (!title)
         return void res.status(400).json({ detail: "title is required" });
 
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     const { data, error } = await db
         .from("chats")
         .update({ title })
@@ -365,14 +389,14 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
 chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     const { data: chat, error: loadError } = await db
         .from("chats")
         .select("id")
         .eq("id", chatId)
         .eq("user_id", userId)
         .maybeSingle();
-    if (loadError) return void res.status(500).json({ detail: loadError.message });
+    if (loadError) return void sendServerError(res, loadError);
     if (!chat) return void res.status(404).json({ detail: "Chat not found" });
 
     const { error: messagesError } = await db
@@ -380,7 +404,7 @@ chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
         .delete()
         .eq("chat_id", chatId);
     if (messagesError)
-        return void res.status(500).json({ detail: messagesError.message });
+        return void sendServerError(res, messagesError);
 
     const { error } = await db
         .from("chats")
@@ -388,7 +412,7 @@ chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
         .eq("id", chatId)
         .eq("user_id", userId);
 
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendServerError(res, error);
     res.status(204).send();
 });
 
@@ -402,7 +426,7 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
     if (!message)
         return void res.status(400).json({ detail: "message is required" });
 
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     const chat = await getAccessibleChat(chatId, userId, userEmail, db);
     if (!chat)
         return void res.status(404).json({ detail: "Chat not found" });
@@ -455,6 +479,23 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     if (!parsedModel.ok) {
         return void res.status(400).json({ detail: parsedModel.detail });
     }
+    const parsedPlaybookId = parseOptionalPlaybookId(body.playbook_id);
+    if (!parsedPlaybookId.ok) {
+        return void res.status(400).json({ detail: parsedPlaybookId.detail });
+    }
+    const parsedPlaybookVersionId = parseOptionalPlaybookId(
+        body.playbook_version_id,
+    );
+    if (!parsedPlaybookVersionId.ok) {
+        return void res
+            .status(400)
+            .json({ detail: "playbook_version_id must be a non-empty string" });
+    }
+    if (parsedPlaybookVersionId.playbookId && !parsedPlaybookId.playbookId) {
+        return void res
+            .status(400)
+            .json({ detail: "playbook_id is required with playbook_version_id" });
+    }
     const askInputsResponse = parseAskInputsResponsePayload(
         body.ask_inputs_response,
     );
@@ -463,6 +504,23 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     const chat_id = parsedChatId.chatId;
     const project_id = parsedProjectId.projectId;
     const model = parsedModel.model;
+    const db = createServerDatabase();
+    const userFeatures = await getUserFeatures(userId, db);
+    const modelFeature = featureForModel(model);
+    if (modelFeature && !userFeatures[modelFeature]) {
+        return void res.status(403).json({
+            detail: "The selected model feature is disabled in Account > Features.",
+            code: "feature_disabled",
+            feature: modelFeature,
+        });
+    }
+    if (parsedPlaybookId.playbookId && !userFeatures.playbooks) {
+        return void res.status(403).json({
+            detail: "Playbooks are disabled in Account > Features.",
+            code: "feature_disabled",
+            feature: "playbooks",
+        });
+    }
 
     devLog("[chat/stream] incoming request", {
         userId,
@@ -473,7 +531,29 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     });
 
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSQLite();
+    let playbookContext = "";
+    let selectedPlaybook: {
+        id: string;
+        title: string;
+        version: number;
+        versionId: string;
+    } | null = null;
+    if (parsedPlaybookId.playbookId) {
+        try {
+            const loaded = await buildAssistantPlaybookContext(
+                userId,
+                parsedPlaybookId.playbookId,
+                db,
+                parsedPlaybookVersionId.playbookId,
+            );
+            playbookContext = loaded.prompt;
+            selectedPlaybook = loaded.selection;
+        } catch (error) {
+            const detail = safeErrorMessage(error, "Could not load playbook");
+            const status = /not found/i.test(detail) ? 404 : 400;
+            return void res.status(status).json({ detail });
+        }
+    }
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
     let resolvedProjectId: string | null = parsedProjectId.projectId;
@@ -541,6 +621,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             content: lastUser.content,
             files: lastUser.files ?? null,
             workflow: lastUser.workflow ?? null,
+            playbook: selectedPlaybook,
         });
     }
 
@@ -564,12 +645,21 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         api_keys: apiKeys,
         legal_research_us: legalResearchUs,
     } = await getUserModelSettings(userId, db);
+    const wordContext = buildContextSuffix({
+        editMode: body.editMode,
+        creationMode: body.creation_mode,
+        selection: body.selection,
+    });
+    const assistantContext = [wordContext, playbookContext]
+        .filter(Boolean)
+        .join("\n\n");
     const apiMessages = buildMessages(
         enrichedMessages,
         docAvailability,
-        undefined,
+        assistantContext,
         undefined,
         legalResearchUs,
+        userFeatures.ironclad,
     );
 
     const workflowStore = await buildWorkflowStore(userId, userEmail, db);
@@ -605,6 +695,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             write,
             workflowStore,
             includeResearchTools: legalResearchUs,
+            includeIroncladTools: userFeatures.ironclad,
             model,
             apiKeys,
             signal: streamAbort.signal,

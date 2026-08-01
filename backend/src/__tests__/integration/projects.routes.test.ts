@@ -10,30 +10,30 @@ const { checkProjectAccess, deleteUserProjects } = vi.hoisted(() => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Configurable Supabase stub. Each test seeds `supabaseState` in beforeEach;
+// Configurable SQLite facade stub. Each test seeds `dbState` in beforeEach;
 // terminal query operations (.single()/.maybeSingle()/thenable) resolve to the
 // per-table result, and rpc() resolves to a per-call result. Insert payloads
 // are recorded so tests can assert on normalisation (lowercasing / dedupe).
 // ---------------------------------------------------------------------------
 type QueryResult = { data: unknown; error: unknown };
 
-let supabaseState: {
+let dbState: {
     rpc: QueryResult;
     tables: Record<string, QueryResult>;
     inserts: { table: string; payload: unknown }[];
 };
 
-function resetSupabaseState() {
-    supabaseState = {
+function resetDbState() {
+    dbState = {
         rpc: { data: [], error: null },
         tables: {},
         inserts: [],
     };
 }
-resetSupabaseState();
+resetDbState();
 
 function resultForTable(table: string): QueryResult {
-    return supabaseState.tables[table] ?? { data: null, error: null };
+    return dbState.tables[table] ?? { data: null, error: null };
 }
 
 function makeQuery(table: string) {
@@ -45,7 +45,7 @@ function makeQuery(table: string) {
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
     q.insert = vi.fn((payload: unknown) => {
-        supabaseState.inserts.push({ table, payload });
+        dbState.inserts.push({ table, payload });
         return q;
     });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
@@ -55,10 +55,10 @@ function makeQuery(table: string) {
     return q;
 }
 
-function mockSupabase() {
+function mockDb() {
     return {
         from: vi.fn((table: string) => makeQuery(table)),
-        rpc: vi.fn(() => Promise.resolve(supabaseState.rpc)),
+        rpc: vi.fn(() => Promise.resolve(dbState.rpc)),
         auth: {
             getUser: () =>
                 Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
@@ -66,11 +66,12 @@ function mockSupabase() {
     };
 }
 
-vi.mock("../../lib/supabase", () => ({
-    createServerSupabase: vi.fn(() => mockSupabase()),
+vi.mock("../../lib/sqlite", () => ({
+    createServerSQLite: vi.fn(() => mockDb()),
 }));
 
 vi.mock("../../middleware/auth", () => ({
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },
@@ -117,7 +118,7 @@ const AUTH = ["Authorization", "Bearer test"] as const;
 describe("projects.routes", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        resetSupabaseState();
+        resetDbState();
         checkProjectAccess.mockResolvedValue({
             ok: true,
             isOwner: true,
@@ -129,7 +130,7 @@ describe("projects.routes", () => {
     // ── GET /projects (overview) ──────────────────────────────────────────
     describe("GET /projects", () => {
         it("returns the overview rows from the RPC", async () => {
-            supabaseState.rpc = {
+            dbState.rpc = {
                 data: [{ id: "p1", name: "Alpha" }],
                 error: null,
             };
@@ -140,13 +141,14 @@ describe("projects.routes", () => {
             expect(res.body).toEqual([{ id: "p1", name: "Alpha" }]);
         });
 
-        it("returns 500 with detail when the RPC errors", async () => {
-            supabaseState.rpc = { data: null, error: { message: "boom" } };
+        it("returns a sanitized 500 when the RPC errors", async () => {
+            dbState.rpc = { data: null, error: { message: "boom" } };
 
             const res = await request(app).get("/projects").set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("boom");
+            expect(res.body.detail).toBe("Internal server error");
+            expect(JSON.stringify(res.body)).not.toContain("boom");
         });
     });
 
@@ -180,11 +182,11 @@ describe("projects.routes", () => {
             // Sharing requires each recipient to have a mirrored user_profiles
             // row (findMissingUserEmails); seed both emails so validation
             // passes and the create path proceeds.
-            supabaseState.tables.user_profiles = {
+            dbState.tables.user_profiles = {
                 data: [{ email: "a@x.com" }, { email: "b@x.com" }],
                 error: null,
             };
-            supabaseState.tables.projects = {
+            dbState.tables.projects = {
                 data: {
                     id: "p9",
                     name: "Gamma",
@@ -207,7 +209,7 @@ describe("projects.routes", () => {
 
             // The insert payload should be lowercased, deduped, trimmed and
             // the name trimmed.
-            const insert = supabaseState.inserts.find(
+            const insert = dbState.inserts.find(
                 (i) => i.table === "projects",
             );
             expect(insert?.payload).toMatchObject({
@@ -229,12 +231,12 @@ describe("projects.routes", () => {
                 "ghost@x.com does not belong to a Mike user.",
             );
             expect(
-                supabaseState.inserts.find((i) => i.table === "projects"),
+                dbState.inserts.find((i) => i.table === "projects"),
             ).toBeUndefined();
         });
 
         it("returns 500 when the insert errors", async () => {
-            supabaseState.tables.projects = {
+            dbState.tables.projects = {
                 data: null,
                 error: { message: "insert failed" },
             };
@@ -245,14 +247,15 @@ describe("projects.routes", () => {
                 .send({ name: "Delta" });
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("insert failed");
+            expect(res.body.detail).toBe("Internal server error");
+            expect(JSON.stringify(res.body)).not.toContain("insert failed");
         });
     });
 
     // ── GET /projects/:projectId (detail, inline access) ──────────────────
     describe("GET /projects/:projectId", () => {
         it("returns 404 when the project does not exist", async () => {
-            supabaseState.tables.projects = { data: null, error: null };
+            dbState.tables.projects = { data: null, error: null };
 
             const res = await request(app).get("/projects/p1").set(...AUTH);
 
@@ -261,7 +264,7 @@ describe("projects.routes", () => {
         });
 
         it("returns 404 when the caller is neither owner nor shared", async () => {
-            supabaseState.tables.projects = {
+            dbState.tables.projects = {
                 data: {
                     id: "p1",
                     user_id: "someone-else",
@@ -277,7 +280,7 @@ describe("projects.routes", () => {
         });
 
         it("grants access to a shared member (is_owner false)", async () => {
-            supabaseState.tables.projects = {
+            dbState.tables.projects = {
                 data: {
                     id: "p1",
                     user_id: "someone-else",
@@ -285,8 +288,8 @@ describe("projects.routes", () => {
                 },
                 error: null,
             };
-            supabaseState.tables.documents = { data: [], error: null };
-            supabaseState.tables.project_subfolders = { data: [], error: null };
+            dbState.tables.documents = { data: [], error: null };
+            dbState.tables.project_subfolders = { data: [], error: null };
 
             const res = await request(app).get("/projects/p1").set(...AUTH);
 
@@ -295,15 +298,15 @@ describe("projects.routes", () => {
         });
 
         it("returns 200 with documents/folders/is_owner when owned", async () => {
-            supabaseState.tables.projects = {
+            dbState.tables.projects = {
                 data: { id: "p1", user_id: "u1", shared_with: null },
                 error: null,
             };
-            supabaseState.tables.documents = {
+            dbState.tables.documents = {
                 data: [{ id: "d1", user_id: "u1" }],
                 error: null,
             };
-            supabaseState.tables.project_subfolders = {
+            dbState.tables.project_subfolders = {
                 data: [{ id: "f1" }],
                 error: null,
             };
@@ -335,7 +338,7 @@ describe("projects.routes", () => {
         });
 
         it("returns 200 with documents when access is granted", async () => {
-            supabaseState.tables.documents = {
+            dbState.tables.documents = {
                 data: [{ id: "d1" }, { id: "d2" }],
                 error: null,
             };
@@ -365,7 +368,7 @@ describe("projects.routes", () => {
         });
 
         it("returns 404 when the update matches no owned project", async () => {
-            supabaseState.tables.projects = { data: null, error: null };
+            dbState.tables.projects = { data: null, error: null };
 
             const res = await request(app)
                 .patch("/projects/p1")
@@ -408,7 +411,8 @@ describe("projects.routes", () => {
             const res = await request(app).delete("/projects/p1").set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("cascade failed");
+            expect(res.body.detail).toBe("Failed to delete project");
+            expect(JSON.stringify(res.body)).not.toContain("cascade failed");
         });
     });
 });

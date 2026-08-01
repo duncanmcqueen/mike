@@ -1,168 +1,81 @@
-/**
- * SQLite-backed document byte storage.
- *
- * The rest of the backend stores opaque storage keys on document_versions.
- * This module maps those keys to BLOB rows in a local SQLite database so the
- * application no longer depends on remote object storage for files.
- */
-
-import fs from "node:fs";
 import path from "node:path";
-// node:sqlite is available in the Node 22 runtime used by this project, but
-// older @types/node releases may not expose declarations for it yet.
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import { DatabaseSync } from "node:sqlite";
-import { signDownload } from "./downloadTokens";
+import { r2StorageProvider } from "./storage/r2";
+import { sqliteStorageProvider } from "./storage/sqlite";
+import type { StorageProvider } from "./storage/types";
 
-type SqliteDatabase = {
-  exec(sql: string): void;
-  prepare(sql: string): {
-    run(...values: unknown[]): unknown;
-    get(...values: unknown[]): Record<string, unknown> | undefined;
-    all(...values: unknown[]): Record<string, unknown>[];
-  };
-};
+export {
+  buildContentDisposition,
+  encodeRFC5987,
+  normalizeDownloadFilename,
+  sanitizeDispositionFilename,
+} from "./storage/filenames";
 
-let cachedDb: SqliteDatabase | undefined;
+export const STORAGE_PROVIDERS = ["r2", "sqlite"] as const;
+export type StorageProviderName = (typeof STORAGE_PROVIDERS)[number];
 
-function storageDbPath(): string {
-  return (
-    process.env.SQLITE_STORAGE_PATH?.trim() ||
-    path.join(process.cwd(), "data", "mike-files.sqlite")
-  );
-}
-
-function getDb(): SqliteDatabase {
-  if (!cachedDb) {
-    const dbPath = storageDbPath();
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    cachedDb = new DatabaseSync(dbPath) as SqliteDatabase;
-    cachedDb.exec(`
-      create table if not exists file_storage (
-        key text primary key,
-        content blob not null,
-        content_type text not null,
-        size_bytes integer not null,
-        created_at text not null default (datetime('now')),
-        updated_at text not null default (datetime('now'))
-      );
-      create index if not exists idx_file_storage_key_prefix
-        on file_storage(key);
-    `);
+export function resolveStorageProvider(
+  env: NodeJS.ProcessEnv = process.env,
+): StorageProviderName {
+  const configured = env.MIKE_STORAGE_PROVIDER?.trim().toLowerCase();
+  if (configured) {
+    if (configured === "r2" || configured === "sqlite") return configured;
+    throw new Error(
+      `Unsupported MIKE_STORAGE_PROVIDER "${configured}". Expected one of: ${STORAGE_PROVIDERS.join(", ")}.`,
+    );
   }
-  return cachedDb;
+
+  // Preserve pre-provider local installations while keeping upstream R2 as
+  // the default for fresh deployments.
+  if (
+    env.SQLITE_STORAGE_PATH?.trim() &&
+    !env.R2_ENDPOINT_URL?.trim() &&
+    !env.R2_ACCESS_KEY_ID?.trim() &&
+    !env.R2_SECRET_ACCESS_KEY?.trim()
+  ) {
+    return "sqlite";
+  }
+  return "r2";
 }
 
-export const storageEnabled = true;
+export function createStorageProvider(): StorageProvider {
+  return resolveStorageProvider() === "sqlite"
+    ? sqliteStorageProvider
+    : r2StorageProvider;
+}
 
-// ---------------------------------------------------------------------------
-// Upload
-// ---------------------------------------------------------------------------
+function provider(): StorageProvider {
+  return createStorageProvider();
+}
+
+export const storageEnabled = provider().enabled;
 
 export async function uploadFile(
   key: string,
-  content: ArrayBuffer,
+  content: ArrayBuffer | ArrayBufferView,
   contentType: string,
 ): Promise<void> {
-  const buffer = Buffer.from(content);
-  getDb()
-    .prepare(
-      `
-      insert into file_storage (key, content, content_type, size_bytes, updated_at)
-      values (?, ?, ?, ?, datetime('now'))
-      on conflict(key) do update set
-        content = excluded.content,
-        content_type = excluded.content_type,
-        size_bytes = excluded.size_bytes,
-        updated_at = datetime('now')
-    `,
-    )
-    .run(key, buffer, contentType, buffer.byteLength);
+  return provider().uploadFile(key, content, contentType);
 }
 
-// ---------------------------------------------------------------------------
-// Download
-// ---------------------------------------------------------------------------
-
 export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
-  const row = getDb()
-    .prepare("select content from file_storage where key = ?")
-    .get(key);
-  const content = row?.content;
-  if (!content) return null;
-  const buffer = Buffer.isBuffer(content)
-    ? content
-    : Buffer.from(content as ArrayBuffer);
-  return buffer.buffer.slice(
-    buffer.byteOffset,
-    buffer.byteOffset + buffer.byteLength,
-  ) as ArrayBuffer;
+  return provider().downloadFile(key);
 }
 
 export async function listFiles(prefix: string): Promise<string[]> {
-  return getDb()
-    .prepare(
-      "select key from file_storage where key like ? escape '\\' order by key asc",
-    )
-    .all(`${escapeLike(prefix)}%`)
-    .map((row) => String(row.key));
+  return provider().listFiles(prefix);
 }
-
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
-}
-
-// ---------------------------------------------------------------------------
-// Delete
-// ---------------------------------------------------------------------------
 
 export async function deleteFile(key: string): Promise<void> {
-  getDb().prepare("delete from file_storage where key = ?").run(key);
+  return provider().deleteFile(key);
 }
-
-// ---------------------------------------------------------------------------
-// Download URL
-// ---------------------------------------------------------------------------
 
 export async function getSignedUrl(
   key: string,
   expiresIn = 3600,
   downloadFilename?: string,
 ): Promise<string | null> {
-  return `/download/${signDownload(key, downloadFilename || path.basename(key), expiresIn)}`;
+  return provider().getSignedUrl(key, expiresIn, downloadFilename);
 }
-
-export function normalizeDownloadFilename(name: string): string {
-  const trimmed = name.trim();
-  const base = trimmed || "download";
-  return base.replace(/[\x00-\x1F\x7F]/g, "_").replace(/[\\/]/g, "_");
-}
-
-export function sanitizeDispositionFilename(name: string): string {
-  return normalizeDownloadFilename(name)
-    .replace(/["\\]/g, "_")
-    .replace(/[^\x20-\x7E]/g, "_");
-}
-
-export function encodeRFC5987(str: string): string {
-  return encodeURIComponent(str).replace(
-    /['()*]/g,
-    (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase(),
-  );
-}
-
-export function buildContentDisposition(
-  kind: "inline" | "attachment",
-  filename: string,
-): string {
-  const normalized = normalizeDownloadFilename(filename);
-  return `${kind}; filename="${sanitizeDispositionFilename(normalized)}"; filename*=UTF-8''${encodeRFC5987(normalized)}`;
-}
-
-// ---------------------------------------------------------------------------
-// Storage key helpers
-// ---------------------------------------------------------------------------
 
 export function storageKey(
   userId: string,
@@ -198,8 +111,6 @@ export function versionStorageKey(
 }
 
 function storageExtension(filename: string, fallback: string): string {
-  const lastDot = filename.lastIndexOf(".");
-  if (lastDot < 0) return fallback;
-  const ext = filename.slice(lastDot).toLowerCase();
-  return /^\.[a-z0-9]{1,16}$/.test(ext) ? ext : fallback;
+  const extension = path.extname(filename).toLowerCase();
+  return /^\.[a-z0-9]{1,16}$/.test(extension) ? extension : fallback;
 }

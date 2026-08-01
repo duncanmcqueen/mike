@@ -1,6 +1,42 @@
+import { getBrowserSupabase } from "@/app/lib/supabase";
+
 const API_BASE =
     process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
 const TOKEN_KEY = "mike_auth_token";
+
+export type BrowserAuthProvider = "supabase" | "local";
+
+export function resolveBrowserAuthProvider(
+    env: Record<string, string | undefined> = process.env,
+): BrowserAuthProvider {
+    const configured = env.NEXT_PUBLIC_MIKE_AUTH_PROVIDER?.trim().toLowerCase();
+    if (configured) {
+        if (configured === "supabase" || configured === "local") {
+            return configured;
+        }
+        throw new Error(
+            `Unsupported NEXT_PUBLIC_MIKE_AUTH_PROVIDER "${configured}". Expected supabase or local.`,
+        );
+    }
+    // Compatibility for the local profile that predates provider selection.
+    if (
+        !env.NEXT_PUBLIC_SUPABASE_URL?.trim() &&
+        !env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY?.trim()
+    ) {
+        return "local";
+    }
+    return "supabase";
+}
+
+function usesSupabaseAuth(): boolean {
+    return resolveBrowserAuthProvider() === "supabase";
+}
+
+function dispatchAuthChange(): void {
+    if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("mike-auth-change"));
+    }
+}
 
 export type AuthUser = {
     id: string;
@@ -67,6 +103,23 @@ function storeSession(response: AuthResponse): AuthResponse {
 }
 
 export async function signInWithPassword(email: string, password: string) {
+    if (usesSupabaseAuth()) {
+        const { data, error } = await getBrowserSupabase().auth.signInWithPassword({
+            email,
+            password,
+        });
+        if (error) throw error;
+        if (!data.user || !data.session) throw new Error("Unable to sign in");
+        dispatchAuthChange();
+        return {
+            token: data.session.access_token,
+            user: {
+                id: data.user.id,
+                email: data.user.email ?? "",
+                new_email: data.user.new_email ?? null,
+            },
+        };
+    }
     return storeSession(
         await authRequest<AuthResponse>("/user/auth/login", {
             method: "POST",
@@ -77,6 +130,23 @@ export async function signInWithPassword(email: string, password: string) {
 }
 
 export async function signUpWithPassword(email: string, password: string) {
+    if (usesSupabaseAuth()) {
+        const { data, error } = await getBrowserSupabase().auth.signUp({
+            email,
+            password,
+        });
+        if (error) throw error;
+        if (!data.user) throw new Error("Unable to create account");
+        dispatchAuthChange();
+        return {
+            token: data.session?.access_token ?? "",
+            user: {
+                id: data.user.id,
+                email: data.user.email ?? email,
+                new_email: data.user.new_email ?? null,
+            },
+        };
+    }
     return storeSession(
         await authRequest<AuthResponse>("/user/auth/signup", {
             method: "POST",
@@ -87,6 +157,18 @@ export async function signUpWithPassword(email: string, password: string) {
 }
 
 export async function getCurrentUser(): Promise<AuthUser | null> {
+    if (usesSupabaseAuth()) {
+        const {
+            data: { session },
+            error,
+        } = await getBrowserSupabase().auth.getSession();
+        if (error || !session?.user) return null;
+        return {
+            id: session.user.id,
+            email: session.user.email ?? "",
+            new_email: session.user.new_email ?? null,
+        };
+    }
     if (!getStoredToken()) return null;
     try {
         const response = await authRequest<{ user: AuthUser | null }>(
@@ -108,6 +190,14 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 }
 
 export async function signOut() {
+    if (usesSupabaseAuth()) {
+        const { error } = await getBrowserSupabase().auth.signOut({
+            scope: "local",
+        });
+        if (error) throw error;
+        dispatchAuthChange();
+        return;
+    }
     await authRequest<void>("/user/auth/logout", { method: "POST" }).catch(
         () => undefined,
     );
@@ -115,6 +205,24 @@ export async function signOut() {
 }
 
 export async function updateEmail(email: string): Promise<AuthUser> {
+    if (usesSupabaseAuth()) {
+        const redirectTo =
+            typeof window === "undefined"
+                ? undefined
+                : `${window.location.origin}/account`;
+        const { data, error } = await getBrowserSupabase().auth.updateUser(
+            { email },
+            redirectTo ? { emailRedirectTo: redirectTo } : undefined,
+        );
+        if (error) throw error;
+        if (!data.user) throw new Error("Unable to update email");
+        dispatchAuthChange();
+        return {
+            id: data.user.id,
+            email: data.user.email ?? "",
+            new_email: data.user.new_email ?? null,
+        };
+    }
     const response = await authRequest<{ user: AuthUser }>("/user/auth/email", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -124,6 +232,12 @@ export async function updateEmail(email: string): Promise<AuthUser> {
 }
 
 export async function getAuthToken(): Promise<string | null> {
+    if (usesSupabaseAuth()) {
+        const {
+            data: { session },
+        } = await getBrowserSupabase().auth.getSession();
+        return session?.access_token ?? null;
+    }
     return getStoredToken();
 }
 
@@ -168,7 +282,7 @@ async function fetchMfaStatus(): Promise<MfaStatusResponse> {
     return authRequest<MfaStatusResponse>("/user/mfa/status");
 }
 
-export const localAuth = {
+const localAuthClient = {
     mfa: {
         async listFactors(): Promise<
             MfaResult<{ all: MfaFactor[]; totp: MfaFactor[] }>
@@ -262,11 +376,11 @@ export const localAuth = {
             factorId: string;
             code: string;
         }): Promise<MfaResult<null>> {
-            const challenge = await localAuth.mfa.challenge({
+            const challenge = await localAuthClient.mfa.challenge({
                 factorId: args?.factorId ?? "",
             });
             if (challenge.error) return { data: null, error: challenge.error };
-            return localAuth.mfa.verify({
+            return localAuthClient.mfa.verify({
                 factorId: args?.factorId ?? "",
                 challengeId: challenge.data.id,
                 code: args?.code ?? "",
@@ -284,3 +398,45 @@ export const localAuth = {
         },
     },
 };
+
+const supabaseAuthClient = {
+    mfa: {
+        listFactors: () => getBrowserSupabase().auth.mfa.listFactors(),
+        getAuthenticatorAssuranceLevel: () =>
+            getBrowserSupabase().auth.mfa.getAuthenticatorAssuranceLevel(),
+        enroll: (args?: { factorType?: string; friendlyName?: string }) =>
+            getBrowserSupabase().auth.mfa.enroll({
+                factorType: "totp",
+                friendlyName: args?.friendlyName,
+            }),
+        challenge: (args?: { factorId: string }) =>
+            getBrowserSupabase().auth.mfa.challenge({
+                factorId: args?.factorId ?? "",
+            }),
+        verify: (args?: {
+            factorId: string;
+            challengeId?: string;
+            code: string;
+        }) =>
+            getBrowserSupabase().auth.mfa.verify({
+                factorId: args?.factorId ?? "",
+                challengeId: args?.challengeId ?? "",
+                code: args?.code ?? "",
+            }),
+        challengeAndVerify: (args?: { factorId: string; code: string }) =>
+            getBrowserSupabase().auth.mfa.challengeAndVerify({
+                factorId: args?.factorId ?? "",
+                code: args?.code ?? "",
+            }),
+        unenroll: (args?: { factorId: string }) =>
+            getBrowserSupabase().auth.mfa.unenroll({
+                factorId: args?.factorId ?? "",
+            }),
+    },
+};
+
+// Retain the historical export name so existing feature UI stays unchanged;
+// the object now delegates to the configured auth provider.
+export const localAuth: typeof localAuthClient = (
+    usesSupabaseAuth() ? supabaseAuthClient : localAuthClient
+) as typeof localAuthClient;

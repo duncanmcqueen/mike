@@ -6,7 +6,7 @@ import {
   type OpenAIToolSchema,
 } from "../llm";
 import { safeErrorMessage } from "../safeError";
-import { createServerSQLite } from "../sqlite";
+import { createServerDatabase } from "../database";
 import {
   buildUserMcpTools,
   type McpToolEvent,
@@ -19,6 +19,14 @@ import {
 import { IRONCLAD_TOOLS } from "./tools/ironcladTools";
 import { isIroncladConfigured } from "../ironclad";
 import type { IroncladToolEvent } from "./tools/ironcladTools";
+import { getUserFeatures } from "../userFeatures";
+import { deploymentModuleEnabled } from "../deploymentModules";
+import {
+  GMAIL_SYSTEM_PROMPT,
+  GMAIL_TOOLS,
+  type GmailToolEvent,
+} from "./tools/gmailTools";
+import { getGmailStatus, isGmailConfigured } from "../gmail";
 import {
   type DocStore,
   type DocIndex,
@@ -45,6 +53,20 @@ import {
   type TurnReadState,
 } from "./tools/documentOps";
 
+function isDingDuffMcpTool(tool: OpenAIToolSchema): boolean {
+  const haystack = [
+    tool.function.name,
+    tool.function.description,
+    JSON.stringify(tool.function.parameters),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return (
+    haystack.includes("dingduff") ||
+    haystack.includes("ding-duff") ||
+    haystack.includes("ding duff")
+  );
+}
 
 export type AssistantEvent =
   | { type: "reasoning"; text: string }
@@ -102,6 +124,7 @@ export type AssistantEvent =
   | CourtlistenerToolEvent
   | McpToolEvent
   | IroncladToolEvent
+  | GmailToolEvent
   | { type: "case_opinions"; cluster_id: number; case: unknown }
   | { type: "content"; text: string }
   | { type: "error"; message: string };
@@ -153,10 +176,12 @@ export async function runLLMStream(params: {
   docIndex: DocIndex;
   userId: string;
   userEmail?: string | null;
-  db: ReturnType<typeof createServerSQLite>;
+  db: ReturnType<typeof createServerDatabase>;
   write: (s: string) => void;
   extraTools?: unknown[];
   includeResearchTools?: boolean;
+  includeGmailTools?: boolean;
+  includeIroncladTools?: boolean;
   workflowStore?: WorkflowStore;
   tabularStore?: TabularCellStore;
   buildCitations?: (fullText: string) => unknown[];
@@ -183,6 +208,8 @@ export async function runLLMStream(params: {
     write,
     extraTools,
     includeResearchTools = true,
+    includeGmailTools = true,
+    includeIroncladTools = true,
     workflowStore,
     tabularStore,
     buildCitations,
@@ -192,10 +219,26 @@ export async function runLLMStream(params: {
     projectId,
     userEmail,
   } = params;
-  const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
-  const ironcladTools = isIroncladConfigured() ? IRONCLAD_TOOLS : [];
-  const mcpTools = await buildUserMcpTools(userId, db);
-  const baseTools = [...TOOLS, ...researchTools, ...WORKFLOW_TOOLS, ...ironcladTools];
+  const userFeatures = await getUserFeatures(userId, db);
+  const ironcladTools =
+    includeIroncladTools && userFeatures.ironclad && isIroncladConfigured()
+      ? IRONCLAD_TOOLS
+      : [];
+  const gmailStatus = includeGmailTools &&
+    deploymentModuleEnabled("gmail") &&
+    isGmailConfigured()
+    ? await getGmailStatus(userId, db)
+    : { available: false, enabled: false, connected: false };
+  const gmailTools = gmailStatus.available && gmailStatus.enabled && gmailStatus.connected
+    ? GMAIL_TOOLS
+    : [];
+  const mcpTools = await buildUserMcpTools(userId, db, {
+    excludeManagedPatent: !userFeatures.patentConnector,
+  });
+  const hasDingDuffMcpTools = mcpTools.some(isDingDuffMcpTool);
+  const researchTools =
+    includeResearchTools && !hasDingDuffMcpTools ? COURTLISTENER_TOOLS : [];
+  const baseTools = [...TOOLS, ...researchTools, ...WORKFLOW_TOOLS, ...ironcladTools, ...gmailTools];
   const activeTools = extraTools?.length
     ? [...baseTools, ...mcpTools, ...extraTools]
     : [...baseTools, ...mcpTools];
@@ -203,8 +246,17 @@ export async function runLLMStream(params: {
   // Extract system prompt; pass remaining turns to the adapter as
   // plain user/assistant messages.
   const rawMsgs = apiMessages as { role: string; content: string | null }[];
-  const systemPrompt =
+  let systemPrompt =
     rawMsgs[0]?.role === "system" ? (rawMsgs[0].content ?? "") : "";
+  if (hasDingDuffMcpTools) {
+    systemPrompt = `${systemPrompt}
+
+DINGDUFF MCP CASE RETRIEVAL:
+Use the available DingDuff MCP tool(s) for case retrieval, case reading, and case-specific document lookup. Do not use CourtListener for case retrieval in this turn; the built-in CourtListener tools are intentionally unavailable when DingDuff MCP tools are present.`;
+  }
+  if (gmailTools.length > 0) {
+    systemPrompt = `${systemPrompt}\n\n${GMAIL_SYSTEM_PROMPT}`;
+  }
   const chatMessages: LlmMessage[] = rawMsgs
     .filter((m) => m.role !== "system")
     .map((m) => ({
@@ -408,6 +460,7 @@ export async function runLLMStream(params: {
           caseCitationEvents,
           mcpEvents,
           ironcladEvents,
+          gmailEvents,
         } = await runToolCalls(
           toolCalls,
           docStore,
@@ -487,6 +540,9 @@ export async function runLLMStream(params: {
           events.push(event);
         }
         for (const event of ironcladEvents) {
+          events.push(event);
+        }
+        for (const event of gmailEvents) {
           events.push(event);
         }
         for (const event of caseCitationEvents) {

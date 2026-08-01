@@ -65,6 +65,56 @@ GEMINI_API_KEY='...'
 OPENAI_API_KEY='...'
 ```
 
+## Configure Kimi K3
+
+Kimi Code's K3 models are available in the model dropdown under **Moonshot**.
+Provide a key in **Account > API Keys > Moonshot (Kimi) API Key**, or set
+`KIMI_API_KEY` in the backend environment for the whole instance:
+
+```bash
+KIMI_API_KEY='...'
+```
+
+Mike includes these built-in Kimi entries:
+
+- `kimi-k3` → Kimi Code model ID `k3`, up to 1M context where your Kimi plan
+  allows it.
+- `kimi-k3-256k` → Kimi Code model ID `k3-256k`, the practical default for
+  most coding and document-review work within 256k context.
+
+Both use Kimi Code's OpenAI-compatible endpoint:
+
+```text
+https://api.kimi.com/coding/v1
+```
+
+Mike sends `reasoning_effort: "high"` by default for these built-in Kimi
+entries. To change that, override the entries in `MIKE_MODEL_CONFIG_JSON`:
+
+```bash
+MIKE_MODEL_CONFIG_JSON='{
+  "models": [
+    {
+      "id": "kimi-k3",
+      "label": "Kimi K3 Max Reasoning",
+      "provider": "openai-compatible",
+      "location": "cloud",
+      "apiModel": "k3",
+      "baseUrl": "https://api.kimi.com/coding/v1",
+      "apiKeyEnv": "KIMI_API_KEY",
+      "apiKeyProvider": "kimi",
+      "extraBody": {
+        "reasoning_effort": "max"
+      }
+    }
+  ]
+}'
+```
+
+Use Kimi's model IDs (`k3`, `k3-256k`, `kimi-for-coding`,
+`kimi-for-coding-highspeed`) as `apiModel` values. Do not use display names like
+`Kimi K3`.
+
 You can also add labeled cloud entries:
 
 ```bash

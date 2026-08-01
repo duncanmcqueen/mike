@@ -73,7 +73,6 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
     if (prevUser !== user) {
         setPrevUser(user);
         if (!user) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect -- clear chat state on logout inside the effect that loads chats
             setChats([]);
             setChatLimit(INITIAL_CHAT_LIMIT);
             setHasMoreChats(false);

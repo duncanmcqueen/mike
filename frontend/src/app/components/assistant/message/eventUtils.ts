@@ -34,6 +34,9 @@ export function toolCallLabel(name: string): string {
         return "Loading Ironclad record...";
     if (name === "ironclad_import_contract")
         return "Importing Ironclad contract...";
+    if (name === "gmail_search_messages") return "Searching Gmail...";
+    if (name === "gmail_get_message") return "Reading Gmail message...";
+    if (name === "gmail_import_message") return "Importing Gmail message...";
     if (name.startsWith("mcp_")) return "Using connector...";
     return name ? `Running ${name}...` : "Working...";
 }

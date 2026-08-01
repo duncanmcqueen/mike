@@ -49,7 +49,7 @@ async function loadTemplates() {
 async function loadProjects() {
     // One batched request. Fanning out getProject(id) per project caused an
     // N+1 burst on every directory-modal open that could overwhelm the
-    // Supabase gateway once an account had accumulated projects.
+    // storage layer once an account had accumulated projects.
     const projects = await listProjects({ includeDocuments: true });
     return projects.map((project) => ({
         ...project,

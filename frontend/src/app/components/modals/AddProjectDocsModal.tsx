@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2, Upload, X } from "lucide-react";
+import { Check, Loader2, Upload } from "lucide-react";
 import { SearchBar } from "@/app/components/ui/search-bar";
 import { getProject, uploadProjectDocument } from "@/app/lib/mikeApi";
 import type { Document } from "../shared/types";
@@ -83,7 +83,8 @@ export function AddProjectDocsModal({
         }
         setSelectedIds((prev) => {
             const next = new Set(prev);
-            next.has(id) ? next.delete(id) : next.add(id);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
             return next;
         });
     }

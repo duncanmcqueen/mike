@@ -129,7 +129,7 @@ export function DocPanel({
             quote: selectedQuote.quote,
             quotes: [selectedQuote],
         });
-    }, [activeCitationQuoteId, citationQuoteId, mode]);
+    }, [activeCitationQuoteId, mode]);
 
     // Cell locator(s) for the selected quote, used to highlight the cited cell
     // when the document is a spreadsheet.

@@ -6,6 +6,9 @@ import {
     User,
     ChevronsUpDown,
     ChevronDown,
+    BookOpenText,
+    Radar,
+    ListChecks,
 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
@@ -31,13 +34,40 @@ import {
     APP_SURFACE_ACTIVE_CLASS,
     APP_SURFACE_HOVER_CLASS,
 } from "@/app/components/ui/liquid-surface";
+import {
+    featureEnabled,
+    type UserFeatureKey,
+} from "@/app/lib/featureFlags";
 
-const NAV_ITEMS = [
+const NAV_ITEMS: Array<{
+    href: string;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    feature?: UserFeatureKey;
+}> = [
     { href: "/assistant", label: "Assistant", icon: ChatSkeuoIcon },
     { href: "/projects", label: "Projects", icon: FolderSkeuoIcon },
     { href: "/library", label: "Library", icon: LibrarySkeuoIcon },
     { href: "/tabular-reviews", label: "Tabular Review", icon: TabularReviewSkeuoIcon },
     { href: "/workflows", label: "Workflows", icon: WorkflowSkeuoIcon },
+    {
+        href: "/prompts",
+        label: "Prompts",
+        icon: BookOpenText,
+        feature: "promptLibrary",
+    },
+    {
+        href: "/legal-monitors",
+        label: "Monitors",
+        icon: Radar,
+        feature: "legalMonitors",
+    },
+    {
+        href: "/playbooks",
+        label: "Playbooks",
+        icon: ListChecks,
+        feature: "playbooks",
+    },
 ];
 
 interface AppSidebarProps {
@@ -148,7 +178,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 className={cn(
                     isOpen
                         ? "w-64 h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)] bg-app-surface"
-                        : "max-md:hidden w-14 md:h-[calc(100dvh-1.5rem)] md:bg-app-surface h-auto bg-transparent pointer-events-none md:pointer-events-auto",
+                        : "max-md:!hidden w-14 md:h-[calc(100dvh-1.5rem)] md:bg-app-surface h-auto bg-transparent pointer-events-none md:pointer-events-auto",
                     "my-2 ml-2 mr-0 md:my-3 md:ml-3 md:mr-0 rounded-2xl border border-white/70 shadow-[0_-1px_6px_rgba(15,23,42,0.034),0_4px_9px_rgba(15,23,42,0.074),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-2xl overflow-visible",
                     "flex flex-col transition-all duration-300 absolute md:relative z-[99]",
                 )}
@@ -190,7 +220,15 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 </div>
 
                 {/* Nav items */}
-                {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+                {NAV_ITEMS.filter(
+                    (item) =>
+                        !item.feature ||
+                        featureEnabled(
+                            profile?.featureFlags,
+                            item.feature,
+                            profile?.deploymentModules,
+                        ),
+                ).map(({ href, label, icon: Icon }) => {
                     const isActive =
                         href === "/assistant"
                             ? pathname === href

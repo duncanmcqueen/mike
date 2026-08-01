@@ -10,7 +10,7 @@ import type {
     OAuthProtectedResourceMetadata,
     OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { createServerSQLite } from "../sqlite";
+import { createServerDatabase } from "../database";
 import {
     authConfigPatch,
     base64Url,
@@ -659,7 +659,7 @@ export async function startUserMcpConnectorOAuth(
     userId: string,
     connectorId: string,
     redirectUri: string,
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
 ): Promise<{ authorizationUrl: string | null; alreadyAuthorized: boolean }> {
     const connector = await loadConnector(userId, connectorId, db);
     const provider = new DbMcpOAuthProvider(
@@ -690,7 +690,7 @@ export async function startUserMcpConnectorOAuth(
 export async function completeMcpConnectorOAuthAuthorization(
     state: string,
     code: string,
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
 ): Promise<{ userId: string; connectorId: string }> {
     const { data, error } = await db
         .from("user_mcp_oauth_states")

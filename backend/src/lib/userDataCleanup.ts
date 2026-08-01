@@ -1,8 +1,8 @@
 // @ts-nocheck
-import { createServerSQLite } from "./sqlite";
+import { createServerDatabase } from "./database";
 import { deleteFile, listFiles } from "./storage";
 
-type Db = ReturnType<typeof createServerSQLite>;
+type Db = ReturnType<typeof createServerDatabase>;
 
 const DELETE_BATCH_SIZE = 500;
 
@@ -108,8 +108,11 @@ async function deleteDocumentVersionFiles(db: Db, documentIds: string[]) {
 
 async function deleteUserStoragePrefix(userId: string) {
     try {
-        const paths = await listFiles(`documents/${userId}/`);
-        await Promise.all(paths.map((path) => deleteFile(path).catch(() => {})));
+        const paths = new Set([
+            ...(await listFiles(`documents/${userId}/`)),
+            ...(await listFiles(`playbooks/${userId}/`)),
+        ]);
+        await Promise.all([...paths].map((path) => deleteFile(path).catch(() => {})));
     } catch {
         // Version-linked objects are deleted above. Prefix cleanup is best-effort
         // for orphaned files left behind by interrupted uploads.
@@ -422,10 +425,23 @@ export async function deleteUserAccountData(
         db.from("workflows").delete().eq("user_id", userId),
         db.from("projects").delete().eq("user_id", userId),
         db.from("user_api_keys").delete().eq("user_id", userId),
+        db.from("gmail_oauth_states").delete().eq("user_id", userId),
+        db.from("gmail_connections").delete().eq("user_id", userId),
         db.from("user_mcp_oauth_states").delete().eq("user_id", userId),
         db.from("user_mcp_tool_audit_logs").delete().eq("user_id", userId),
         db.from("user_mcp_connectors").delete().eq("user_id", userId),
         db.from("support_feedback").delete().eq("user_id", userId),
+        db.from("legal_monitor_connector_items").delete().eq("user_id", userId),
+        db.from("legal_monitor_documents").delete().eq("user_id", userId),
+        db.from("legal_monitor_source_items").delete().eq("user_id", userId),
+        db.from("legal_monitor_sources").delete().eq("user_id", userId),
+        db.from("legal_monitor_runs").delete().eq("user_id", userId),
+        db.from("legal_monitors").delete().eq("user_id", userId),
+        db.from("saved_prompts").delete().eq("user_id", userId),
+        db.from("playbook_imports").delete().eq("user_id", userId),
+        db.from("playbook_runs").delete().eq("user_id", userId),
+        db.from("playbook_versions").delete().eq("user_id", userId),
+        db.from("playbooks").delete().eq("user_id", userId),
         db.from("user_profiles").delete().eq("user_id", userId),
     ];
 

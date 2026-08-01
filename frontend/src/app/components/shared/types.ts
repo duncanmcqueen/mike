@@ -291,6 +291,27 @@ export type AssistantEvent =
       isStreaming?: boolean;
     }
   | {
+      type: "gmail_search_messages";
+      query: string;
+      result_count?: number;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
+      type: "gmail_get_message";
+      message_id: string;
+      subject?: string;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
+      type: "gmail_import_message";
+      message_id: string;
+      filename?: string;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
       type: "case_citation";
       cluster_id: number | null;
       case_name: string | null;
@@ -336,6 +357,7 @@ export interface Message {
   content: string;
   files?: { filename: string; document_id?: string }[];
   workflow?: { id: string; title: string };
+  playbook?: { id: string; title: string; version: number; versionId: string };
   model?: string;
   citations?: Citation[];
   citationStatus?: "started" | "partial" | "final";

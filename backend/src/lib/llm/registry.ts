@@ -14,18 +14,22 @@ let cached: ModelRegistryConfig | undefined;
 
 export function loadModelRegistry(): ModelRegistryConfig {
   if (cached) return cached;
+  const defaultModels = defaultConfiguredModels();
   const raw = process.env.MIKE_MODEL_CONFIG_JSON?.trim();
   if (!raw) {
-    cached = DEFAULT_CONFIG;
+    cached = { ...DEFAULT_CONFIG, models: defaultModels };
     return cached;
   }
 
   try {
     const parsed = JSON.parse(raw) as ModelRegistryConfig;
     cached = {
-      models: Array.isArray(parsed.models)
-        ? parsed.models.filter(isConfiguredModel)
-        : [],
+      models: mergeConfiguredModels(
+        defaultModels,
+        Array.isArray(parsed.models)
+          ? parsed.models.filter(isConfiguredModel)
+          : [],
+      ),
       committees: Array.isArray(parsed.committees)
         ? parsed.committees.filter(isCommitteeModel)
         : [],
@@ -38,6 +42,43 @@ export function loadModelRegistry(): ModelRegistryConfig {
     );
   }
   return cached;
+}
+
+function defaultConfiguredModels(): ConfiguredModel[] {
+  return [
+    {
+      id: "kimi-k3",
+      label: "Kimi K3",
+      provider: "openai-compatible",
+      location: "cloud",
+      apiModel: "k3",
+      baseUrl: "https://api.kimi.com/coding/v1",
+      apiKeyEnv: "KIMI_API_KEY",
+      apiKeyProvider: "kimi",
+      extraBody: { reasoning_effort: "high" },
+    },
+    {
+      id: "kimi-k3-256k",
+      label: "Kimi K3 256K",
+      provider: "openai-compatible",
+      location: "cloud",
+      apiModel: "k3-256k",
+      baseUrl: "https://api.kimi.com/coding/v1",
+      apiKeyEnv: "KIMI_API_KEY",
+      apiKeyProvider: "kimi",
+      extraBody: { reasoning_effort: "high" },
+    },
+  ];
+}
+
+function mergeConfiguredModels(
+  defaults: ConfiguredModel[],
+  configured: ConfiguredModel[],
+): ConfiguredModel[] {
+  const byId = new Map<string, ConfiguredModel>();
+  for (const model of defaults) byId.set(model.id, model);
+  for (const model of configured) byId.set(model.id, model);
+  return [...byId.values()];
 }
 
 export function getConfiguredModel(id: string): ConfiguredModel | null {

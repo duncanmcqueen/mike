@@ -1,9 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-// node:sqlite ships with Node 22. The installed @types/node version may lag.
-// @ts-ignore
-import { DatabaseSync } from "node:sqlite";
 
 type SqlValue = string | number | null | Buffer;
 type Row = Record<string, unknown>;
@@ -20,6 +17,24 @@ type Database = {
   prepare(sql: string): Statement;
 };
 
+type DatabaseSyncConstructor = new (filename: string) => Database;
+
+function loadDatabaseSync(): DatabaseSyncConstructor {
+  try {
+    // Load the optional native driver only when the SQLite provider is used.
+    // This allows the upstream Supabase profile to keep running on Node 20.
+    const sqlite = require("node:sqlite") as {
+      DatabaseSync: DatabaseSyncConstructor;
+    };
+    return sqlite.DatabaseSync;
+  } catch (error) {
+    throw new Error(
+      "The SQLite database provider requires a Node runtime with node:sqlite support (Node 22 or newer).",
+      { cause: error },
+    );
+  }
+}
+
 let cachedDb: Database | undefined;
 
 export function sqlitePath(): string {
@@ -33,6 +48,7 @@ export function getSqliteDb(): Database {
   if (!cachedDb) {
     const dbPath = sqlitePath();
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const DatabaseSync = loadDatabaseSync();
     cachedDb = new DatabaseSync(dbPath) as Database;
     cachedDb.exec(`
       pragma journal_mode = WAL;
@@ -50,7 +66,179 @@ export function getSqliteDb(): Database {
         expires_at text not null,
         created_at text not null default (datetime('now'))
       );
+      create table if not exists gmail_connections (
+        user_id text primary key,
+        email text not null,
+        encrypted_refresh_token text not null,
+        iv text not null,
+        auth_tag text not null,
+        scopes text not null default '[]',
+        created_at text not null,
+        updated_at text not null
+      );
+      create table if not exists gmail_oauth_states (
+        id text primary key,
+        user_id text not null,
+        redirect_uri text not null,
+        expires_at text not null,
+        created_at text not null
+      );
+      create index if not exists idx_gmail_oauth_states_expiry
+        on gmail_oauth_states(expires_at);
+      create table if not exists legal_monitors (
+        id text primary key,
+        user_id text not null,
+        name text not null,
+        topic text not null,
+        jurisdiction text not null,
+        source_types text not null,
+        connector_id text not null,
+        connector_config text not null default '{"mode":"agent"}',
+        model text not null,
+        interval_hours integer not null,
+        lookback_days integer not null default 14,
+        max_items_per_run integer not null default 50,
+        alert_email text,
+        email_enabled integer not null default 0,
+        enabled integer not null default 1,
+        next_run_at text,
+        last_run_at text,
+        last_status text,
+        last_error text,
+        created_at text not null,
+        updated_at text not null
+      );
+      create index if not exists idx_legal_monitors_user_updated
+        on legal_monitors(user_id, updated_at desc);
+      create index if not exists idx_legal_monitors_due
+        on legal_monitors(enabled, next_run_at);
+      create table if not exists legal_monitor_documents (
+        id text primary key,
+        monitor_id text not null,
+        user_id text not null,
+        document_id text not null,
+        position integer not null default 0,
+        created_at text not null,
+        unique(monitor_id, document_id)
+      );
+      create index if not exists idx_legal_monitor_documents_monitor
+        on legal_monitor_documents(monitor_id, position);
+      create index if not exists idx_legal_monitor_documents_document
+        on legal_monitor_documents(document_id);
+      create index if not exists idx_legal_monitor_documents_user
+        on legal_monitor_documents(user_id);
+      create table if not exists legal_monitor_runs (
+        id text primary key,
+        monitor_id text not null,
+        user_id text not null,
+        status text not null,
+        summary text,
+        report text,
+        developments text,
+        has_material_updates integer not null default 0,
+        tool_calls integer not null default 0,
+        source_items_count integer not null default 0,
+        source_errors text,
+        email_status text not null default 'not_requested',
+        email_error text,
+        error text,
+        started_at text not null,
+        completed_at text,
+        created_at text not null,
+        updated_at text not null
+      );
+      create index if not exists idx_legal_monitor_runs_monitor_started
+        on legal_monitor_runs(monitor_id, started_at desc);
+      create index if not exists idx_legal_monitor_runs_user_started
+        on legal_monitor_runs(user_id, started_at desc);
+      create table if not exists legal_monitor_sources (
+        id text primary key,
+        monitor_id text not null,
+        user_id text not null,
+        kind text not null,
+        name text not null,
+        url text not null,
+        category text,
+        enabled integer not null default 1,
+        etag text,
+        last_modified text,
+        last_checked_at text,
+        last_success_at text,
+        last_error text,
+        item_count integer not null default 0,
+        created_at text not null,
+        updated_at text not null,
+        unique(monitor_id, kind, url)
+      );
+      create index if not exists idx_legal_monitor_sources_monitor
+        on legal_monitor_sources(monitor_id, created_at);
+      create index if not exists idx_legal_monitor_sources_user
+        on legal_monitor_sources(user_id, updated_at desc);
+      create table if not exists legal_monitor_source_items (
+        id text primary key,
+        monitor_id text not null,
+        source_id text not null,
+        user_id text not null,
+        external_id text not null,
+        canonical_url text,
+        title text not null,
+        published_at text,
+        summary text,
+        content text,
+        content_hash text not null,
+        first_seen_at text not null,
+        last_seen_at text not null,
+        processed_at text,
+        created_at text not null,
+        updated_at text not null,
+        unique(source_id, external_id)
+      );
+      create index if not exists idx_legal_monitor_source_items_pending
+        on legal_monitor_source_items(monitor_id, processed_at, first_seen_at);
+      create index if not exists idx_legal_monitor_source_items_source
+        on legal_monitor_source_items(source_id, published_at desc);
+      create table if not exists legal_monitor_connector_items (
+        id text primary key,
+        monitor_id text not null,
+        user_id text not null,
+        connector_id text not null,
+        tool_name text not null,
+        external_id text not null,
+        payload text not null,
+        first_seen_at text not null,
+        last_seen_at text not null,
+        processed_at text,
+        created_at text not null,
+        updated_at text not null,
+        unique(monitor_id, connector_id, tool_name, external_id)
+      );
+      create index if not exists idx_legal_monitor_connector_items_pending
+        on legal_monitor_connector_items(monitor_id, processed_at, first_seen_at);
+      create index if not exists idx_legal_monitor_connector_items_source
+        on legal_monitor_connector_items(connector_id, tool_name, last_seen_at desc);
+      create table if not exists saved_prompts (
+        id text primary key,
+        user_id text not null,
+        name text not null,
+        prompt text not null,
+        description text,
+        prompt_type text,
+        categories text not null default '[]',
+        practice_areas text not null default '[]',
+        source_requirements text not null default '[]',
+        created_at text not null,
+        updated_at text not null
+      );
+      create index if not exists idx_saved_prompts_user_updated
+        on saved_prompts(user_id, updated_at desc);
     `);
+    const monitorColumns = new Set(cachedDb.prepare(`pragma table_info("legal_monitors")`).all().map((row) => String(row.name)));
+    if (!monitorColumns.has("lookback_days")) cachedDb.exec(`alter table legal_monitors add column lookback_days integer not null default 14`);
+    if (!monitorColumns.has("max_items_per_run")) cachedDb.exec(`alter table legal_monitors add column max_items_per_run integer not null default 50`);
+    if (!monitorColumns.has("connector_config")) cachedDb.exec(`alter table legal_monitors add column connector_config text not null default '{"mode":"agent"}'`);
+    const monitorRunColumns = new Set(cachedDb.prepare(`pragma table_info("legal_monitor_runs")`).all().map((row) => String(row.name)));
+    if (!monitorRunColumns.has("source_items_count")) cachedDb.exec(`alter table legal_monitor_runs add column source_items_count integer not null default 0`);
+    if (!monitorRunColumns.has("source_errors")) cachedDb.exec(`alter table legal_monitor_runs add column source_errors text`);
     const sessionColumns = cachedDb
       .prepare(`pragma table_info("local_sessions")`)
       .all()
@@ -61,6 +249,7 @@ export function getSqliteDb(): Database {
       );
     }
     ensureTable("user_profiles");
+    ensureColumns("user_profiles", { feature_flags: "{}", dark_mode: false });
   }
   return cachedDb;
 }
@@ -127,7 +316,10 @@ function decode(value: unknown): unknown {
 function decodeColumn(key: string, value: unknown): unknown {
   const decoded = decode(value);
   if (
-    (key === "mfa_on_login" || key === "legal_research_us") &&
+    (key === "mfa_on_login" ||
+      key === "legal_research_us" ||
+      key === "email_integration_enabled" ||
+      key === "dark_mode") &&
     (decoded === 0 ||
       decoded === 1 ||
       decoded === "0" ||
@@ -229,6 +421,13 @@ class SqliteQueryBuilder implements PromiseLike<Result<any>> {
   gt(column: string, value: unknown) {
     ensureColumns(this.table, { [column]: null });
     this.filters.push(`${quoteIdent(column)} > ?`);
+    this.values.push(encode(value));
+    return this;
+  }
+
+  lt(column: string, value: unknown) {
+    ensureColumns(this.table, { [column]: null });
+    this.filters.push(`${quoteIdent(column)} < ?`);
     this.values.push(encode(value));
     return this;
   }
@@ -445,6 +644,12 @@ class SqliteQueryBuilder implements PromiseLike<Result<any>> {
   private executeInsert(): Result<any> {
     const rows = normalizeInsertRows(this.payload as Row | Row[]);
     for (const row of rows) {
+      // Supabase UUID primary keys commonly have a database default. Mirror
+      // that behavior for dynamically-created local tables so inserts that
+      // omit `id` do not accumulate nullable primary keys in SQLite.
+      if (row.id === undefined && columnsFor(this.table).has("id")) {
+        row.id = crypto.randomUUID();
+      }
       ensureColumns(this.table, row);
       const existing = this.findConflictRow(row);
       if (existing) {
@@ -852,6 +1057,7 @@ export function ensureLocalProfile(userId: string, email?: string | null) {
       tabular_model: "gemini-3-flash-preview",
       mfa_on_login: 0,
       legal_research_us: 1,
+      feature_flags: {},
       updated_at: now,
     })
     .then(() => undefined);

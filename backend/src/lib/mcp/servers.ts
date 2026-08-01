@@ -1,8 +1,14 @@
 // @ts-nocheck
+import fs from "node:fs";
+import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+    getDefaultEnvironment,
+    StdioClientTransport,
+} from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { OpenAIToolSchema } from "../llm";
-import { createServerSQLite } from "../sqlite";
+import { createServerDatabase } from "../database";
 import {
     authConfigPatch,
     decryptAuthConfig,
@@ -41,15 +47,104 @@ import {
 
 export { startUserMcpConnectorOAuth, validateRemoteMcpUrl };
 
+export const PATENT_MCP_SERVER_URI = "builtin://patent-mcp-server@0.9.5";
+const PATENT_MCP_PACKAGE = "patent-mcp-server==0.9.5";
+const PATENT_MCP_PYTHON = "3.13";
+const PATENT_MCP_SDK = "mcp[cli]>=1.28,<2";
+
+function patentMcpEnvironment(): Record<string, string> {
+    const env: Record<string, string> = { ...getDefaultEnvironment() };
+    for (const name of [
+        "USPTO_API_KEY",
+        "TSDR_API_KEY",
+        "TMSEARCH_WAF_TOKEN",
+        "LOG_LEVEL",
+        "REQUEST_TIMEOUT",
+        "MAX_RETRIES",
+        "RETRY_MIN_WAIT",
+        "RETRY_MAX_WAIT",
+        "SESSION_EXPIRY_MINUTES",
+        "ENABLE_CACHING",
+    ]) {
+        const value = process.env[name]?.trim();
+        if (value) env[name] = value;
+    }
+    const uvDataDirectory =
+        process.env.PATENT_MCP_UV_DATA_DIR?.trim() ||
+        path.join(process.cwd(), "data", "uv");
+    const uvDirectories = {
+        UV_CACHE_DIR: path.join(uvDataDirectory, "cache"),
+        UV_TOOL_DIR: path.join(uvDataDirectory, "tools"),
+        UV_PYTHON_INSTALL_DIR: path.join(uvDataDirectory, "python"),
+    };
+    for (const directory of Object.values(uvDirectories)) {
+        fs.mkdirSync(directory, { recursive: true });
+    }
+    Object.assign(env, uvDirectories);
+    return env;
+}
+
+function patentMcpTransport(): StdioClientTransport {
+    const directory = process.env.PATENT_MCP_DIRECTORY?.trim();
+    return new StdioClientTransport({
+        command: directory ? "uv" : "uvx",
+        args: directory
+            ? [
+                  "--directory",
+                  directory,
+                  "run",
+                  "--python",
+                  PATENT_MCP_PYTHON,
+                  "--with",
+                  PATENT_MCP_SDK,
+                  "patent-mcp-server",
+              ]
+            : [
+                  "--python",
+                  PATENT_MCP_PYTHON,
+                  "--from",
+                  PATENT_MCP_PACKAGE,
+                  "--with",
+                  PATENT_MCP_SDK,
+                  "patent-mcp-server",
+              ],
+        env: patentMcpEnvironment(),
+        stderr: "pipe",
+    });
+}
+
+function patentMcpFailureDetail(stderr: string): string | null {
+    const lines = stderr
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    const detail = [...lines]
+        .reverse()
+        .find((line) => /(?:error|exception|traceback|failed)/i.test(line));
+    return detail?.slice(0, 600) ?? null;
+}
+
 async function withMcpClient<T>(
     connector: ConnectorRow,
     callback: (client: Client) => Promise<T>,
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
 ): Promise<T> {
-    await validateRemoteMcpUrl(connector.server_url);
-    const authConfig = decryptAuthConfig(connector);
-    const authProvider =
-        connector.auth_type === "oauth"
+    let transport: StreamableHTTPClientTransport | StdioClientTransport;
+    let stdioStderr = "";
+    if (connector.transport === "stdio") {
+        if (connector.server_url !== PATENT_MCP_SERVER_URI) {
+            throw new Error("Unsupported managed stdio MCP connector.");
+        }
+        transport = patentMcpTransport();
+        transport.stderr?.on("data", (chunk: Buffer | string) => {
+            const text = String(chunk);
+            stdioStderr = `${stdioStderr}${text}`.slice(-8_000);
+            process.stderr.write(text);
+        });
+    } else {
+        await validateRemoteMcpUrl(connector.server_url);
+        const authConfig = decryptAuthConfig(connector);
+        const authProvider = connector.auth_type === "oauth"
             ? new DbMcpOAuthProvider(
                   db,
                   connector,
@@ -58,23 +153,29 @@ async function withMcpClient<T>(
                   mcpOAuthCallbackUrl(),
               )
             : undefined;
-    const transport = new StreamableHTTPClientTransport(
-        new URL(connector.server_url),
-        {
-            ...(authProvider ? { authProvider } : {}),
-            fetch: guardedFetch,
-            requestInit: {
-                headers: headersForAuth(authConfig),
-                redirect: "manual",
+        transport = new StreamableHTTPClientTransport(
+            new URL(connector.server_url),
+            {
+                ...(authProvider ? { authProvider } : {}),
+                fetch: guardedFetch,
+                requestInit: {
+                    headers: headersForAuth(authConfig),
+                    redirect: "manual",
+                },
             },
-        },
-    );
+        );
+    }
     const client = new Client(CLIENT_INFO, {
         capabilities: {},
         enforceStrictCapabilities: true,
     });
     try {
-        await client.connect(transport, { timeout: MCP_REQUEST_TIMEOUT_MS });
+        await client.connect(transport, {
+            timeout:
+                connector.transport === "stdio"
+                    ? 180_000
+                    : MCP_REQUEST_TIMEOUT_MS,
+        });
         return await callback(client);
     } catch (err) {
         if (err instanceof McpOAuthRequiredError) throw err;
@@ -82,7 +183,7 @@ async function withMcpClient<T>(
         // the auth provider, so probing here would convert *every* tool-call
         // error into a misleading "OAuth required" and hide the real cause.
         // Only probe for non-OAuth connectors that may actually need OAuth.
-        if (connector.auth_type !== "oauth") {
+        if (connector.transport === "streamable_http" && connector.auth_type !== "oauth") {
             try {
                 await discoverOAuthMetadata(connector.server_url);
                 throw new McpOAuthRequiredError();
@@ -91,15 +192,76 @@ async function withMcpClient<T>(
                     throw discoveryErr;
             }
         }
+        if (connector.transport === "stdio") {
+            const detail = patentMcpFailureDetail(stdioStderr);
+            if (detail) {
+                throw new Error(`Patent MCP server failed: ${detail}`);
+            }
+        }
         throw err;
     } finally {
         await client.close().catch(() => undefined);
     }
 }
 
+export async function provisionPatentMcpConnector(
+    userId: string,
+    db: Db = createServerDatabase(),
+): Promise<McpConnectorSummary> {
+    const { data: existing, error: findError } = await db
+        .from("user_mcp_connectors")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("server_url", PATENT_MCP_SERVER_URI)
+        .maybeSingle();
+    if (findError) throw findError;
+    if (existing) {
+        const { error: updateError } = await db
+            .from("user_mcp_connectors")
+            .update({
+                transport: "stdio",
+                auth_type: "none",
+                tool_policy: {
+                    managed: "patent_mcp_server",
+                    package: PATENT_MCP_PACKAGE,
+                    python: PATENT_MCP_PYTHON,
+                    mcp: PATENT_MCP_SDK,
+                    source: "https://github.com/riemannzeta/patent_mcp_server",
+                },
+                updated_at: new Date().toISOString(),
+            })
+            .eq("user_id", userId)
+            .eq("id", String(existing.id));
+        if (updateError) throw updateError;
+        return getUserMcpConnector(userId, String(existing.id), db);
+    }
+
+    const { data, error } = await db
+        .from("user_mcp_connectors")
+        .insert({
+            user_id: userId,
+            name: "USPTO Patent & Trademark",
+            transport: "stdio",
+            server_url: PATENT_MCP_SERVER_URI,
+            auth_type: "none",
+            enabled: true,
+            tool_policy: {
+                managed: "patent_mcp_server",
+                package: PATENT_MCP_PACKAGE,
+                python: PATENT_MCP_PYTHON,
+                mcp: PATENT_MCP_SDK,
+                source: "https://github.com/riemannzeta/patent_mcp_server",
+            },
+        })
+        .select("*")
+        .single();
+    if (error || !data) throw error ?? new Error("Failed to provision patent MCP connector.");
+    return toConnectorSummary(data as ConnectorRow);
+}
+
 export async function listUserMcpConnectors(
     userId: string,
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
     options: { includeTools?: boolean } = {},
 ): Promise<McpConnectorSummary[]> {
     const { data: connectors, error } = await db
@@ -186,7 +348,7 @@ export async function listUserMcpConnectors(
 export async function getUserMcpConnector(
     userId: string,
     connectorId: string,
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
 ): Promise<McpConnectorSummary> {
     const connector = await loadConnector(userId, connectorId, db);
     const { data: tools, error: toolsError } = await db
@@ -211,7 +373,7 @@ export async function createUserMcpConnector(
         bearerToken?: string | null;
         headers?: Record<string, unknown>;
     },
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
 ): Promise<McpConnectorSummary> {
     const name = input.name.trim().slice(0, 80);
     if (!name) throw new Error("Connector name is required.");
@@ -251,8 +413,17 @@ export async function updateUserMcpConnector(
         bearerToken?: string | null;
         headers?: Record<string, unknown>;
     },
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
 ): Promise<McpConnectorSummary> {
+    const currentConnector = await loadConnector(userId, connectorId, db);
+    if (
+        currentConnector.transport === "stdio" &&
+        (typeof input.serverUrl === "string" ||
+            "bearerToken" in input ||
+            "headers" in input)
+    ) {
+        throw new Error("Managed local connector settings cannot be changed.");
+    }
     const update: Record<string, unknown> = {
         updated_at: new Date().toISOString(),
     };
@@ -306,7 +477,7 @@ export async function updateUserMcpConnector(
 export async function completeUserMcpConnectorOAuth(
     state: string,
     code: string,
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
 ): Promise<{
     userId: string;
     connectorId: string;
@@ -328,8 +499,12 @@ export async function completeUserMcpConnectorOAuth(
 export async function deleteUserMcpConnector(
     userId: string,
     connectorId: string,
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
 ): Promise<void> {
+    const connector = await loadConnector(userId, connectorId, db);
+    if (connector.transport === "stdio") {
+        throw new Error("Managed local connectors cannot be deleted. Disable the connector instead.");
+    }
     const { error } = await db
         .from("user_mcp_connectors")
         .delete()
@@ -362,7 +537,7 @@ export async function deleteUserMcpConnector(
 export async function refreshUserMcpConnectorTools(
     userId: string,
     connectorId: string,
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
 ): Promise<McpConnectorSummary> {
     const connector = await loadConnector(userId, connectorId, db);
     const now = new Date().toISOString();
@@ -372,11 +547,24 @@ export async function refreshUserMcpConnectorTools(
         db,
     );
 
+    const { data: existing, error: existingError } = await db
+        .from("user_mcp_connector_tools")
+        .select("id, tool_name, enabled")
+        .eq("connector_id", connector.id);
+    if (existingError) throw existingError;
+    const existingEnabled = new Map(
+        (existing ?? []).map((row) => [
+            String(row.tool_name),
+            sqliteTruthy(row.enabled),
+        ]),
+    );
+
     const rows = result.tools.map((tool) => {
         const annotations =
             tool.annotations && typeof tool.annotations === "object"
                 ? (tool.annotations as Record<string, unknown>)
                 : {};
+        const requiresConfirmation = toolRequiresConfirmation(annotations);
         return {
             connector_id: connector.id,
             tool_name: tool.name,
@@ -386,7 +574,10 @@ export async function refreshUserMcpConnectorTools(
             input_schema: normalizeJsonSchema(tool.inputSchema),
             output_schema: tool.outputSchema ?? null,
             annotations,
-            requires_confirmation: toolRequiresConfirmation(annotations),
+            requires_confirmation: requiresConfirmation,
+            enabled: requiresConfirmation
+                ? false
+                : (existingEnabled.get(tool.name) ?? true),
             last_seen_at: now,
         };
     });
@@ -407,11 +598,6 @@ export async function refreshUserMcpConnectorTools(
     }
 
     const staleNames = new Set(rows.map((row) => row.tool_name));
-    const { data: existing, error: existingError } = await db
-        .from("user_mcp_connector_tools")
-        .select("id, tool_name")
-        .eq("connector_id", connector.id);
-    if (existingError) throw existingError;
     const staleIds = (existing ?? [])
         .filter((row) => !staleNames.has(String(row.tool_name)))
         .map((row) => String(row.id));
@@ -434,7 +620,7 @@ export async function setUserMcpToolEnabled(
     connectorId: string,
     toolId: string,
     enabled: boolean,
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
 ): Promise<McpConnectorSummary> {
     await loadConnector(userId, connectorId, db);
     if (enabled) {
@@ -473,7 +659,11 @@ export async function setUserMcpToolEnabled(
 
 export async function buildUserMcpTools(
     userId: string,
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
+    options: {
+        connectorIds?: string[];
+        excludeManagedPatent?: boolean;
+    } = {},
 ): Promise<OpenAIToolSchema[]> {
     const { data: connectors, error: connectorError } = await db
         .from("user_mcp_connectors")
@@ -486,8 +676,15 @@ export async function buildUserMcpTools(
         });
         return [];
     }
+    const connectorIdFilter = options.connectorIds?.length
+        ? new Set(options.connectorIds)
+        : null;
     const connectorRows = ((connectors ?? []) as ConnectorRow[]).filter(
-        (connector) => sqliteTruthy(connector.enabled),
+        (connector) =>
+            sqliteTruthy(connector.enabled) &&
+            (!options.excludeManagedPatent ||
+                connector.tool_policy?.managed !== "patent_mcp_server") &&
+            (!connectorIdFilter || connectorIdFilter.has(connector.id)),
     );
     if (!connectorRows.length) return [];
     const connectorById = new Map(
@@ -562,7 +759,7 @@ async function resolveCallableTool(
     return { connector, tool: row };
 }
 
-function stringifyMcpResult(result: unknown): string {
+export function stringifyMcpResult(result: unknown): string {
     const text = JSON.stringify(
         {
             result,
@@ -572,14 +769,24 @@ function stringifyMcpResult(result: unknown): string {
         2,
     );
     if (text.length <= MAX_MCP_RESULT_CHARS) return text;
-    return `${text.slice(0, MAX_MCP_RESULT_CHARS)}\n\n[Truncated MCP result to ${MAX_MCP_RESULT_CHARS} characters]`;
+    return JSON.stringify(
+        {
+            result: {
+                truncated: true,
+                preview: text.slice(0, Math.floor(MAX_MCP_RESULT_CHARS / 3)),
+            },
+            note: `External MCP tool result exceeded ${MAX_MCP_RESULT_CHARS} characters. The preview is incomplete; retry with narrower arguments or a smaller result limit.`,
+        },
+        null,
+        2,
+    );
 }
 
 export async function executeMcpToolCall(
     userId: string,
     openaiToolName: string,
     args: Record<string, unknown>,
-    db: Db = createServerSQLite(),
+    db: Db = createServerDatabase(),
 ): Promise<{
     content: string;
     event: McpToolEvent;

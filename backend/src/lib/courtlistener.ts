@@ -2,7 +2,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { downloadFile, listFiles } from "./storage";
-import { createServerSQLite } from "./sqlite";
+import { createServerDatabase } from "./database";
 
 const COURTLISTENER_BASE = "https://www.courtlistener.com/api/rest/v4";
 const COURTLISTENER_WEB_BASE = "https://www.courtlistener.com";
@@ -10,7 +10,7 @@ const COURTLISTENER_STORAGE_BASE = "https://storage.courtlistener.com";
 const COURTLISTENER_LOCAL_OPINIONS_PREFIX = "courtlistener/opinions/by-cluster";
 
 type JsonRecord = Record<string, unknown>;
-type ServerSQLite = ReturnType<typeof createServerSQLite>;
+type ServerSQLite = ReturnType<typeof createServerDatabase>;
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);

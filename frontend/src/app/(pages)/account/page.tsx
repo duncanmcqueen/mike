@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, Trash2 } from "lucide-react";
+import { LogOut, Moon, Trash2 } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -17,9 +17,9 @@ import { deleteAccount, isMfaRequiredError } from "@/app/lib/mikeApi";
 import {
     accountGlassDangerOutlineButtonClassName,
     accountGlassInputClassName,
-    accountGlassPrimaryButtonClassName,
 } from "./accountStyles";
 import { AccountSection } from "./AccountSection";
+import { AccountToggle } from "./AccountToggle";
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
@@ -29,7 +29,12 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 export default function AccountPage() {
     const router = useRouter();
     const { user, signOut, updateEmail } = useAuth();
-    const { profile, updateDisplayName, updateOrganisation } = useUserProfile();
+    const {
+        profile,
+        updateDisplayName,
+        updateOrganisation,
+        updateDarkMode,
+    } = useUserProfile();
     const [displayName, setDisplayName] = useState("");
     const [isSavingName, setIsSavingName] = useState(false);
     const [saved, setSaved] = useState(false);
@@ -45,6 +50,8 @@ export default function AccountPage() {
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [accountDeleteMfaOpen, setAccountDeleteMfaOpen] = useState(false);
+    const [themeSaving, setThemeSaving] = useState(false);
+    const [themeError, setThemeError] = useState<string | null>(null);
 
     useEffect(() => {
         if (profile?.displayName) {
@@ -164,10 +171,60 @@ export default function AccountPage() {
         }
     };
 
+    const handleDarkModeToggle = async (enabled: boolean) => {
+        if (themeSaving) return;
+        setThemeSaving(true);
+        setThemeError(null);
+        try {
+            await updateDarkMode(enabled);
+        } catch (error) {
+            setThemeError(
+                error instanceof Error
+                    ? error.message
+                    : "Could not update the appearance setting.",
+            );
+        } finally {
+            setThemeSaving(false);
+        }
+    };
+
     if (!user) return null;
 
     return (
         <div className="space-y-8">
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                    Appearance
+                </h2>
+                <AccountSection>
+                    <div className="flex items-center justify-between gap-4 px-4 py-5">
+                        <div className="flex min-w-0 items-start gap-3">
+                            <Moon className="mt-0.5 h-4 w-4 shrink-0 text-gray-500" />
+                            <div className="space-y-1">
+                                <p className="text-sm font-medium text-gray-900">
+                                    Dark Mode
+                                </p>
+                                <p className="text-sm text-gray-500">
+                                    Use a darker color palette throughout Mike.
+                                </p>
+                                {themeError && (
+                                    <p role="alert" className="text-xs text-red-600">
+                                        {themeError}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                        <AccountToggle
+                            checked={profile?.darkMode === true}
+                            disabled={!profile}
+                            loading={themeSaving}
+                            size="md"
+                            onChange={(checked) => void handleDarkModeToggle(checked)}
+                        />
+                    </div>
+                </AccountSection>
+            </section>
+
             {/* Profile Settings */}
             <section className="space-y-3">
                 <h2 className="text-2xl font-medium font-serif text-gray-900">

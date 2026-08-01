@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSQLite } from "../lib/sqlite";
+import { createServerDatabase } from "../lib/database";
 import {
   buildContentDisposition,
   downloadFile,
@@ -25,6 +25,7 @@ import {
 } from "../lib/documentVersions";
 import { ensureDocAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
+import { sendServerError } from "../lib/safeError";
 import {
   ALLOWED_DOCUMENT_TYPES,
   ALLOWED_DOCUMENT_TYPES_LABEL,
@@ -39,7 +40,7 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 };
 
 async function deleteDocumentAndVersionFiles(
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   documentId: string,
 ) {
   // Storage lives on document_versions — fan out and delete each version's
@@ -55,13 +56,17 @@ async function deleteDocumentAndVersionFiles(
         .map((p) => deleteFile(p).catch(() => {})),
     ),
   );
+  await db
+    .from("legal_monitor_documents")
+    .delete()
+    .eq("document_id", documentId);
   return db.from("documents").delete().eq("id", documentId);
 }
 
 // GET /single-documents
 documentsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
   const { data, error } = await db
     .from("documents")
     .select("*")
@@ -69,7 +74,7 @@ documentsRouter.get("/", requireAuth, async (req, res) => {
     .is("project_id", null)
     .or("library_kind.eq.file,library_kind.is.null")
     .order("created_at", { ascending: false });
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
   const docs = (data ?? []) as unknown as {
     id: string;
     current_version_id?: string | null;
@@ -86,7 +91,7 @@ documentsRouter.post(
   singleFileUpload("file"),
   async (req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
     await handleDocumentUpload(req, res, userId, null, db, {
       libraryKind: "file",
     });
@@ -97,7 +102,7 @@ documentsRouter.post(
 documentsRouter.delete("/:documentId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const { documentId } = req.params;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const { data: doc, error } = await db
     .from("documents")
@@ -121,7 +126,7 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
   const { documentId } = req.params;
   const versionIdParam =
     typeof req.query.version_id === "string" ? req.query.version_id : null;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const { data: doc } = await db
     .from("documents")
@@ -184,13 +189,13 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
   if (!Array.isArray(document_ids) || document_ids.length === 0)
     return void res.status(400).json({ detail: "document_ids is required" });
 
-  const db = createServerSQLite();
+  const db = createServerDatabase();
   const { data: rawDocs, error } = await db
     .from("documents")
     .select("id, current_version_id, user_id, project_id")
     .in("id", document_ids);
 
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
   // Filter to docs the user actually has access to (own + shared-project).
   const accessChecks = await Promise.all(
     (rawDocs ?? []).map(async (d) => ({
@@ -243,7 +248,7 @@ documentsRouter.get("/:documentId/url", requireAuth, async (req, res) => {
   const userEmail = res.locals.userEmail as string | undefined;
   const { documentId } = req.params;
   const versionIdParam = typeof req.query.version_id === "string" ? req.query.version_id : null;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const { data: doc, error } = await db
     .from("documents")
@@ -293,7 +298,7 @@ documentsRouter.get("/:documentId/docx", requireAuth, async (req, res) => {
   const userEmail = res.locals.userEmail as string | undefined;
   const { documentId } = req.params;
   const versionIdParam = typeof req.query.version_id === "string" ? req.query.version_id : null;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const { data: doc, error } = await db
     .from("documents")
@@ -354,7 +359,7 @@ documentsRouter.get("/:documentId/versions", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { documentId } = req.params;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   const { data: doc } = await db
     .from("documents")
@@ -395,7 +400,7 @@ documentsRouter.post(
       typeof req.body?.source_document_id === "string"
         ? req.body.source_document_id
         : "";
-    const db = createServerSQLite();
+    const db = createServerDatabase();
 
     if (!sourceDocumentId) {
       return void res
@@ -586,7 +591,7 @@ documentsRouter.post(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId } = req.params;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
 
     const file = req.file;
     if (!file)
@@ -742,7 +747,7 @@ documentsRouter.patch(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId, versionId } = req.params;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
 
     const { data: doc } = await db
       .from("documents")
@@ -787,7 +792,7 @@ documentsRouter.put(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId, versionId } = req.params;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
 
     const file = req.file;
     if (!file)
@@ -912,9 +917,7 @@ documentsRouter.put(
           .filter((path): path is string => !!path)
           .map((path) => deleteFile(path).catch(() => {})),
       );
-      return void res.status(500).json({
-        detail: updateErr?.message ?? "Failed to replace version.",
-      });
+      return void sendServerError(res, updateErr, "Failed to replace version.");
     }
 
     await Promise.all(
@@ -937,7 +940,7 @@ documentsRouter.delete(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId, versionId } = req.params;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
 
     const { data: doc } = await db
       .from("documents")
@@ -958,7 +961,7 @@ documentsRouter.delete(
       .eq("document_id", documentId)
       .is("deleted_at", null);
     if (versionsErr) {
-      return void res.status(500).json({ detail: versionsErr.message });
+      return void sendServerError(res, versionsErr);
     }
 
     const rows = (versions ?? []) as {
@@ -1004,7 +1007,7 @@ documentsRouter.delete(
         })
         .eq("id", documentId);
       if (updateErr) {
-        return void res.status(500).json({ detail: updateErr.message });
+        return void sendServerError(res, updateErr);
       }
     }
 
@@ -1020,7 +1023,7 @@ documentsRouter.delete(
       .eq("document_id", documentId)
       .is("deleted_at", null);
     if (deleteErr) {
-      return void res.status(500).json({ detail: deleteErr.message });
+      return void sendServerError(res, deleteErr);
     }
 
     await Promise.all(
@@ -1051,7 +1054,7 @@ documentsRouter.get(
     const { documentId } = req.params;
     const versionIdParam =
       typeof req.query.version_id === "string" ? req.query.version_id : null;
-    const db = createServerSQLite();
+    const db = createServerDatabase();
 
     const { data: doc } = await db
       .from("documents")
@@ -1089,7 +1092,7 @@ async function handleEditResolution(
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { documentId, editId } = req.params;
-  const db = createServerSQLite();
+  const db = createServerDatabase();
 
   devLog(`[edit-resolution] incoming ${mode}`, {
     userId,
@@ -1296,7 +1299,7 @@ export async function handleDocumentUpload(
   res: import("express").Response,
   userId: string,
   projectId: string | null,
-  db: ReturnType<typeof createServerSQLite>,
+  db: ReturnType<typeof createServerDatabase>,
   options: {
     libraryKind?: "file" | "template";
     libraryFolderId?: string | null;

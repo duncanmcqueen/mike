@@ -1,14 +1,27 @@
+import { jsonrepair } from "jsonrepair";
 import type {
   ConfiguredModel,
   LlmMessage,
   NormalizedToolCall,
   StreamChatParams,
   StreamChatResult,
+  UserApiKeys,
 } from "./types";
 import { apiKeyForConfiguredModel, getConfiguredModel } from "./registry";
 
 type ChatCompletionResponse = {
-  choices?: { message?: { content?: string } }[];
+  choices?: {
+    message?: {
+      content?: string | null;
+      reasoning_content?: string | null;
+      tool_calls?: {
+        id?: string;
+        type?: string;
+        function?: { name?: string; arguments?: string };
+      }[];
+    };
+    finish_reason?: string | null;
+  }[];
   error?: { message?: string };
 };
 
@@ -41,6 +54,14 @@ type StreamChunk = {
   error?: { message?: string };
 };
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+
+function requestTimeoutMs(value?: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : DEFAULT_REQUEST_TIMEOUT_MS;
+}
+
 const COURTLISTENER_CITATION_REMINDER_TOOL_NAMES = new Set([
   "courtlistener_find_in_case",
   "courtlistener_read_case",
@@ -63,7 +84,11 @@ function baseUrl(model: ConfiguredModel): string {
   return value.replace(/\/+$/, "");
 }
 
-function apiKey(model: ConfiguredModel): string {
+function apiKey(model: ConfiguredModel, userApiKeys?: UserApiKeys): string {
+  const providerKey = model.apiKeyProvider
+    ? userApiKeys?.[model.apiKeyProvider]?.trim()
+    : null;
+  if (providerKey) return providerKey;
   return apiKeyForConfiguredModel(model) || "not-needed";
 }
 
@@ -71,30 +96,44 @@ function apiModel(model: ConfiguredModel): string {
   return model.apiModel?.trim() || model.modelName?.trim() || model.id;
 }
 
+function requestBody(
+  model: ConfiguredModel,
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...(model.extraBody ?? {}),
+    ...body,
+  };
+}
+
 export async function completeOpenAICompatibleText(params: {
   model: ConfiguredModel;
   systemPrompt?: string;
   user: string;
   maxTokens?: number;
+  apiKeys?: UserApiKeys;
+  requestTimeoutMs?: number;
 }): Promise<string> {
   const response = await fetch(`${baseUrl(params.model)}/chat/completions`, {
     method: "POST",
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(requestTimeoutMs(params.requestTimeoutMs)),
     headers: {
-      Authorization: `Bearer ${apiKey(params.model)}`,
+      Authorization: `Bearer ${apiKey(params.model, params.apiKeys)}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: apiModel(params.model),
-      messages: [
-        ...(params.systemPrompt
-          ? [{ role: "system", content: params.systemPrompt }]
-          : []),
-        { role: "user", content: params.user },
-      ],
-      max_tokens: params.maxTokens ?? 512,
-      stream: false,
-    }),
+    body: JSON.stringify(
+      requestBody(params.model, {
+        model: apiModel(params.model),
+        messages: [
+          ...(params.systemPrompt
+            ? [{ role: "system", content: params.systemPrompt }]
+            : []),
+          { role: "user", content: params.user },
+        ],
+        max_tokens: params.maxTokens ?? 512,
+        stream: false,
+      }),
+    ),
   });
 
   const text = await response.text();
@@ -229,7 +268,10 @@ function toChatMessages(
     ...messages.map(
       (message): ChatMessage => ({
         role: message.role,
-        content: message.content,
+        content:
+          message.role === "assistant" && !message.content.trim()
+            ? "Assistant response omitted."
+            : message.content,
       }),
     ),
   ];
@@ -241,19 +283,265 @@ function configuredModelOrThrow(id: string): ConfiguredModel {
   return configured;
 }
 
-export async function streamOpenAICompatible(
+function parseToolInput(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string" || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function deduplicateToolCalls(calls: NormalizedToolCall[]): NormalizedToolCall[] {
+  const seen = new Set<string>();
+  return calls.filter((call) => {
+    const key = `${call.name}\n${JSON.stringify(call.input)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function parseTextToolCalls(
+  text: string,
+  iteration: number,
+): NormalizedToolCall[] {
+  if (!/<(?:tool_call|toolcall)\b|<\|tool_call(?:_start)?\|>|<function(?:=|\s+name=)|(?:^|\n)\s*(?:tool|function|name)\s*[:=]/i.test(text)) return [];
+  const bodies: string[] = [];
+  const tagPattern = /<(?:tool_call|toolcall)\b[^>]*>|<\|tool_call(?:_start)?\|>/gi;
+  const openTags = [...text.matchAll(tagPattern)];
+  for (const [index, openTag] of openTags.entries()) {
+    const start = (openTag.index ?? 0) + openTag[0].length;
+    const nextStart = openTags[index + 1]?.index ?? text.length;
+    const segment = text.slice(start, nextStart);
+    const closeIndex = segment.search(/<\/(?:tool_call|toolcall)>|<\|tool_call_end\|>/i);
+    bodies.push(closeIndex >= 0 ? segment.slice(0, closeIndex) : segment);
+  }
+
+  const calls = bodies.flatMap((body, bodyIndex): NormalizedToolCall[] => {
+    const xmlStyleCall = parseXmlStyleToolCall(body, iteration, bodyIndex);
+    if (xmlStyleCall) return [xmlStyleCall];
+    try {
+      const candidate = normalizeQwenToolMapSyntax(extractJsonCandidate(body));
+      const parsed = JSON.parse(jsonrepair(candidate)) as unknown;
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      const parsedCalls = rows.flatMap((row, rowIndex): NormalizedToolCall[] => {
+        if (!row || typeof row !== "object" || Array.isArray(row)) return [];
+        const record = row as Record<string, unknown>;
+        const functionRecord =
+          record.function &&
+          typeof record.function === "object" &&
+          !Array.isArray(record.function)
+            ? record.function as Record<string, unknown>
+            : null;
+        const entries = Object.entries(record);
+        const mapStyleCall =
+          record.name == null &&
+          functionRecord?.name == null &&
+          entries.length === 1 &&
+          entries[0][1] &&
+          typeof entries[0][1] === "object" &&
+          !Array.isArray(entries[0][1])
+            ? entries[0]
+            : null;
+        const rawName = record.name ?? functionRecord?.name ?? mapStyleCall?.[0];
+        const name = typeof rawName === "string" ? rawName.trim() : "";
+        if (!name) return [];
+        return [{
+          id:
+            typeof record.id === "string" && record.id
+              ? record.id
+              : `call_text_${iteration}_${bodyIndex}_${rowIndex}`,
+          name,
+          input: parseToolInput(
+            record.arguments ??
+            record.input ??
+              record.parameters ??
+              functionRecord?.arguments ??
+              mapStyleCall?.[1],
+          ),
+        }];
+      });
+      const looseCall = parseLooseTextToolCall(body, iteration, bodyIndex);
+      return parsedCalls.length ? parsedCalls : looseCall ? [looseCall] : [];
+    } catch (error) {
+      const looseCall = parseLooseTextToolCall(body, iteration, bodyIndex);
+      if (looseCall) return [looseCall];
+      if (process.env.DEBUG_LLM_TOOL_CALLS === "1") {
+        console.error("[openai-compatible] unrecoverable textual tool call", {
+          body: body.slice(0, 4_000),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      throw new Error(
+        "The local model returned a tool call that Mike could not recover. Retry the request or use the deterministic Trademark Monitor mode.",
+      );
+    }
+  });
+  if (!calls.length) {
+    throw new Error(
+      "The local model did not identify an executable tool. Retry the request or use the deterministic Trademark Monitor mode.",
+    );
+  }
+  return deduplicateToolCalls(calls);
+}
+
+function parseLooseTextToolCall(
+  value: string,
+  iteration: number,
+  bodyIndex: number,
+): NormalizedToolCall | null {
+  const nameMatch = value.match(
+    /(?:["']?name["']?|["']?(?:tool|function)["']?)\s*[:=]\s*["']?([^"'\s,}]+)["']?/i,
+  );
+  const name = nameMatch?.[1]?.trim();
+  if (!name) return null;
+
+  const input: Record<string, unknown> = {};
+  const argumentsMatch = value.match(
+    /["']?(?:arguments|input|parameters)["']?\s*[:=]\s*/i,
+  );
+  if (argumentsMatch && argumentsMatch.index != null) {
+    const candidate = value.slice(
+      argumentsMatch.index + argumentsMatch[0].length,
+    );
+    const repaired = normalizeQwenToolMapSyntax(extractJsonCandidate(candidate));
+    try {
+      const parsed = JSON.parse(jsonrepair(repaired));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        Object.assign(input, parsed);
+      }
+    } catch {
+      // A call with an unrecoverable argument payload is still returned so the
+      // connector can provide its normal validation error instead of hiding the
+      // model's tool name behind a generic parser failure.
+    }
+  }
+  return {
+    id: `call_text_${iteration}_${bodyIndex}_loose`,
+    name,
+    input,
+  };
+}
+
+function parseXmlStyleToolCall(
+  value: string,
+  iteration: number,
+  bodyIndex: number,
+): NormalizedToolCall | null {
+  const functionMatch = value.match(
+    /<function(?:=|\s+name=["'])([^>"'\s]+)["']?\s*>/i,
+  );
+  if (!functionMatch) return null;
+  const input: Record<string, unknown> = {};
+  const fieldPattern = /<([a-zA-Z_][\w.-]*)>\s*([\s\S]*?)\s*<\/\1>/g;
+  for (const match of value.matchAll(fieldPattern)) {
+    input[match[1]] = parseToolScalar(match[2]);
+  }
+  return {
+    id: `call_text_${iteration}_${bodyIndex}_xml`,
+    name: functionMatch[1],
+    input,
+  };
+}
+
+function parseToolScalar(value: string): unknown {
+  const trimmed = value.trim();
+  if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(trimmed)) {
+    const number = Number(trimmed);
+    if (Number.isFinite(number)) return number;
+  }
+  if (/^true$/i.test(trimmed)) return true;
+  if (/^false$/i.test(trimmed)) return false;
+  if (/^(?:null|none)$/i.test(trimmed)) return null;
+  if (/^[\[{]/.test(trimmed)) {
+    try {
+      return JSON.parse(jsonrepair(trimmed));
+    } catch {
+      // Preserve the original string when a nested value is not JSON-like.
+    }
+  }
+  return trimmed;
+}
+
+function normalizeQwenToolMapSyntax(value: string): string {
+  return value
+    .replace(/^(\s*\{\s*)"{2,}/, '$1"')
+    .replace(/^(\s*\{\s*"[^"]+")\s*:{2,}/, "$1:");
+}
+
+function extractJsonCandidate(value: string): string {
+  const cleaned = value
+    .replace(/^\s*```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim();
+  const start = cleaned.search(/[\[{]/);
+  if (start < 0) return cleaned;
+
+  const opening = cleaned[start];
+  const closing = opening === "[" ? "]" : "}";
+  let depth = 0;
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  for (let index = start; index < cleaned.length; index++) {
+    const char = cleaned[index];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === opening) depth += 1;
+    if (char === closing) {
+      depth -= 1;
+      if (depth === 0) return cleaned.slice(start, index + 1);
+    }
+  }
+  return cleaned.slice(start);
+}
+
+function visibleTextFromNonStreamingMessage(
+  content: string,
+  reasoningContent: string,
+  callbacks: StreamChatParams["callbacks"],
+): string {
+  if (reasoningContent) callbacks?.onReasoningDelta?.(reasoningContent);
+  const filter = new ThinkTagFilter();
+  const segments = filter.feed(content);
+  const flushed = filter.flush();
+  for (const text of [...segments.reasoning, ...flushed.reasoning]) {
+    callbacks?.onReasoningDelta?.(text);
+  }
+  if (reasoningContent || filter.sawReasoning) {
+    callbacks?.onReasoningBlockEnd?.();
+  }
+  const visible = [...segments.content, ...flushed.content].join("");
+  if (visible) callbacks?.onContentDelta?.(visible);
+  return visible;
+}
+
+async function streamLocalToolsWithoutSse(
   params: StreamChatParams,
+  configured: ConfiguredModel,
+  url: string,
+  key: string,
+  modelName: string,
 ): Promise<StreamChatResult> {
-  const {
-    systemPrompt,
-    tools = [],
-    callbacks = {},
-    runTools,
-  } = params;
-  const configured = configuredModelOrThrow(params.model);
-  const url = `${baseUrl(configured)}/chat/completions`;
-  const key = apiKey(configured);
-  const modelName = apiModel(configured);
+  const { systemPrompt, tools = [], callbacks = {}, runTools } = params;
   const maxIter = params.maxIterations ?? 10;
   let messages = toChatMessages(systemPrompt, params.messages);
   let fullText = "";
@@ -272,19 +560,170 @@ export async function streamOpenAICompatible(
       needsCourtlistenerCitationReminder = false;
     }
 
+    const requestSignal = params.abortSignal
+      ? AbortSignal.any([params.abortSignal, AbortSignal.timeout(requestTimeoutMs(params.requestTimeoutMs))])
+      : AbortSignal.timeout(requestTimeoutMs(params.requestTimeoutMs));
     const response = await fetch(url, {
       method: "POST",
-      signal: params.abortSignal,
+      signal: requestSignal,
       headers: {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: modelName,
-        messages,
-        tools: tools.length ? tools : undefined,
-        stream: true,
-      }),
+      body: JSON.stringify(
+        requestBody(configured, {
+          model: modelName,
+          messages,
+          tools,
+          max_tokens: 4096,
+          stream: false,
+        }),
+      ),
+    });
+    const responseText = await response.text();
+    let json: ChatCompletionResponse = {};
+    try {
+      json = responseText ? JSON.parse(responseText) as ChatCompletionResponse : {};
+    } catch {
+      json = {};
+    }
+    if (!response.ok) {
+      const detail = json.error?.message || responseText || response.statusText;
+      const error = new Error(
+        `OpenAI-compatible request failed (${response.status}): ${detail}`,
+      );
+      (error as { status?: number }).status = response.status;
+      throw error;
+    }
+
+    const message = json.choices?.[0]?.message;
+    if (!message) {
+      throw new Error("OpenAI-compatible response did not include a message.");
+    }
+    const content = message.content ?? "";
+    const structuredCalls = (message.tool_calls ?? []).flatMap(
+      (call, index): NormalizedToolCall[] => {
+        const name = call.function?.name?.trim() ?? "";
+        if (!name) return [];
+        return [{
+          id: call.id || `call_${iter}_${index}`,
+          name,
+          input: parseToolInput(call.function?.arguments),
+        }];
+      },
+    );
+    const toolCalls = deduplicateToolCalls(
+      structuredCalls.length
+        ? structuredCalls
+        : parseTextToolCalls(content, iter),
+    );
+
+    if (!toolCalls.length || !runTools) {
+      fullText += visibleTextFromNonStreamingMessage(
+        content,
+        message.reasoning_content ?? "",
+        callbacks,
+      );
+      break;
+    }
+
+    for (const call of toolCalls) callbacks.onToolCallStart?.(call);
+    if (
+      toolCalls.some((call) =>
+        COURTLISTENER_CITATION_REMINDER_TOOL_NAMES.has(call.name),
+      )
+    ) {
+      needsCourtlistenerCitationReminder = true;
+    }
+    const results = await runTools(toolCalls);
+    throwIfAborted(params.abortSignal);
+    messages = [
+      ...messages,
+      {
+        role: "assistant",
+        content:
+          content.trim() && !/<tool_call>/i.test(content)
+            ? content
+            : "Calling tool.",
+        tool_calls: toolCalls.map((call) => ({
+          id: call.id,
+          type: "function" as const,
+          function: {
+            name: call.name,
+            arguments: JSON.stringify(call.input),
+          },
+        })),
+      },
+      ...results.map(
+        (result): ChatMessage => ({
+          role: "tool",
+          tool_call_id: result.tool_use_id,
+          content: result.content,
+        }),
+      ),
+    ];
+  }
+  return { fullText };
+}
+
+export async function streamOpenAICompatible(
+  params: StreamChatParams,
+): Promise<StreamChatResult> {
+  const {
+    systemPrompt,
+    tools = [],
+    callbacks = {},
+    runTools,
+  } = params;
+  const configured = configuredModelOrThrow(params.model);
+  const url = `${baseUrl(configured)}/chat/completions`;
+  const key = apiKey(configured, params.apiKeys);
+  const modelName = apiModel(configured);
+  if (configured.location === "local" && tools.length && runTools) {
+    return streamLocalToolsWithoutSse(
+      params,
+      configured,
+      url,
+      key,
+      modelName,
+    );
+  }
+  const maxIter = params.maxIterations ?? 10;
+  let messages = toChatMessages(systemPrompt, params.messages);
+  let fullText = "";
+  let needsCourtlistenerCitationReminder = false;
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    throwIfAborted(params.abortSignal);
+    if (needsCourtlistenerCitationReminder) {
+      messages = [
+        {
+          role: "system",
+          content: `${systemPrompt}\n\n${COURTLISTENER_CITATION_REMINDER}`,
+        },
+        ...messages.slice(1),
+      ];
+      needsCourtlistenerCitationReminder = false;
+    }
+
+    const requestSignal = params.abortSignal
+      ? AbortSignal.any([params.abortSignal, AbortSignal.timeout(requestTimeoutMs(params.requestTimeoutMs))])
+      : AbortSignal.timeout(requestTimeoutMs(params.requestTimeoutMs));
+    const response = await fetch(url, {
+      method: "POST",
+      signal: requestSignal,
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        requestBody(configured, {
+          model: modelName,
+          messages,
+          tools: tools.length ? tools : undefined,
+          stream: true,
+        }),
+      ),
     });
 
     if (!response.ok) {
@@ -349,8 +788,10 @@ export async function streamOpenAICompatible(
           }
         }
 
-        for (const toolCall of delta.tool_calls ?? []) {
-          const existing = pendingToolCalls.get(toolCall.index) ?? {
+        for (const [position, toolCall] of (delta.tool_calls ?? []).entries()) {
+          const index =
+            Number.isInteger(toolCall.index) ? toolCall.index : position;
+          const existing = pendingToolCalls.get(index) ?? {
             id: "",
             name: "",
             arguments: "",
@@ -359,7 +800,7 @@ export async function streamOpenAICompatible(
           if (toolCall.function?.name) existing.name += toolCall.function.name;
           if (toolCall.function?.arguments)
             existing.arguments += toolCall.function.arguments;
-          pendingToolCalls.set(toolCall.index, existing);
+          pendingToolCalls.set(index, existing);
         }
       }
     }
@@ -379,24 +820,15 @@ export async function streamOpenAICompatible(
     fullText += iterationText;
     throwIfAborted(params.abortSignal);
 
-    const toolCalls: NormalizedToolCall[] = [...pendingToolCalls.values()].map(
+    const toolCalls: NormalizedToolCall[] = deduplicateToolCalls([...pendingToolCalls.values()].map(
       (call, index) => {
-        let input: Record<string, unknown> = {};
-        try {
-          const parsed = JSON.parse(call.arguments || "{}");
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            input = parsed as Record<string, unknown>;
-          }
-        } catch {
-          input = {};
-        }
         return {
           id: call.id || `call_${iter}_${index}`,
           name: call.name,
-          input,
+          input: parseToolInput(call.arguments),
         };
       },
-    );
+    ));
 
     if (!toolCalls.length || !runTools) break;
 
@@ -418,7 +850,7 @@ export async function streamOpenAICompatible(
       ...messages,
       {
         role: "assistant",
-        content: iterationText || null,
+        content: iterationText.trim() ? iterationText : "Calling tool.",
         tool_calls: toolCalls.map((call) => ({
           id: call.id,
           type: "function" as const,

@@ -154,6 +154,7 @@ function ModelPreferenceDropdown({
         "Committee",
         "Local",
         "Anthropic",
+        "Moonshot",
         "Google",
         "OpenAI",
     ];
