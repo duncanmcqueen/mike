@@ -1,5 +1,5 @@
 import { createServerDatabase } from "./database";
-import { uploadFile, storageKey } from "./storage";
+import { uploadFile, deleteFile, storageKey } from "./storage";
 import {
     ALLOWED_DOCUMENT_TYPES,
     ALLOWED_DOCUMENT_TYPES_LABEL,
@@ -67,6 +67,7 @@ export async function createDocumentFromBytes(params: {
     }
 
     const docId = doc.id as string;
+    const uploadedPaths: string[] = [];
     try {
         const key = storageKey(userId, docId, filename);
         const contentType = contentTypeForDocumentType(suffix);
@@ -75,6 +76,7 @@ export async function createDocumentFromBytes(params: {
             content.byteOffset + content.byteLength,
         ) as ArrayBuffer;
         await uploadFile(key, bytes, contentType);
+        uploadedPaths.push(key);
 
         const pageCount = suffix === "pdf" ? await countPdfPages(bytes) : null;
 
@@ -93,6 +95,7 @@ export async function createDocumentFromBytes(params: {
                     "application/pdf",
                 );
                 pdfStoragePath = pdfKey;
+                uploadedPaths.push(pdfKey);
             } catch (err) {
                 console.error(
                     `[ingest] Office→PDF conversion failed for ${filename}:`,
@@ -153,6 +156,10 @@ export async function createDocumentFromBytes(params: {
             : { id: docId };
         return { ok: true, document: responseDoc as IngestedDocument };
     } catch (e) {
+        // Don't leave orphaned bytes in storage when ingest fails partway.
+        await Promise.all(
+            uploadedPaths.map((path) => deleteFile(path).catch(() => {})),
+        );
         await db.from("documents").update({ status: "error" }).eq("id", docId);
         return {
             ok: false,
