@@ -77,6 +77,7 @@ function readInput(body: unknown): LegalMonitorInput {
         : Number(value.maxItemsPerRun ?? 50),
     alertEmail: typeof value.alertEmail === "string" ? value.alertEmail : null,
     emailEnabled: value.emailEnabled === true,
+    knowledgeCaptureEnabled: value.knowledgeCaptureEnabled === true,
     enabled: value.enabled !== false,
   };
 }

@@ -11,6 +11,7 @@ import {
     FileText,
     FileSearch,
     Globe2,
+    LibraryBig,
     Loader2,
     Mail,
     Pencil,
@@ -72,6 +73,7 @@ const EMPTY_DRAFT: LegalMonitorInput = {
     maxItemsPerRun: 50,
     alertEmail: null,
     emailEnabled: false,
+    knowledgeCaptureEnabled: false,
     enabled: true,
 };
 
@@ -124,6 +126,7 @@ function draftFromMonitor(monitor: LegalMonitor): LegalMonitorInput {
         maxItemsPerRun: monitor.maxItemsPerRun,
         alertEmail: monitor.alertEmail,
         emailEnabled: monitor.emailEnabled,
+        knowledgeCaptureEnabled: monitor.knowledgeCaptureEnabled,
         enabled: monitor.enabled,
     };
 }
@@ -616,6 +619,7 @@ export default function LegalMonitorsPage() {
                         <section className="grid gap-4 border-t border-gray-200 pt-4 sm:grid-cols-2 lg:grid-cols-3">
                             <div><ModalFieldLabel htmlFor="monitor-items">Maximum items per run</ModalFieldLabel><ModalSelect id="monitor-items" value={String(draft.maxItemsPerRun)} options={[10, 25, 50, 100].map((count) => ({ value: String(count), label: String(count) }))} onChange={(value) => setDraft((current) => ({ ...current, maxItemsPerRun: Number(value) }))} /></div>
                             <div className="sm:col-span-2"><ToggleRow label="Email material updates" icon={<Mail className="h-4 w-4" />} checked={draft.emailEnabled} disabled={!configuration?.emailAvailable} onChange={(checked) => setDraft((current) => ({ ...current, emailEnabled: checked }))} />{draft.emailEnabled && <div className="mt-2"><ModalTextInput id="monitor-email" type="email" value={draft.alertEmail ?? ""} onChange={(event) => setDraft((current) => ({ ...current, alertEmail: event.target.value }))} /></div>}</div>
+                            <div className="sm:col-span-2 lg:col-span-3"><ToggleRow label="Save run reports to Library" icon={<LibraryBig className="h-4 w-4" />} checked={draft.knowledgeCaptureEnabled} onChange={(checked) => setDraft((current) => ({ ...current, knowledgeCaptureEnabled: checked }))} />{draft.knowledgeCaptureEnabled && <p className="mt-1 text-xs text-gray-500">A living Markdown knowledgebase is kept in Library &rsaquo; Legal Monitors. Each run weaves new developments into it — valid prior knowledge is kept, superseded facts are corrected — and the assistant can read it or you can attach it as monitor context.</p>}</div>
                         </section>
                     </div>
                 </div>

@@ -576,6 +576,8 @@ export interface LegalMonitor {
     maxItemsPerRun: number;
     alertEmail: string | null;
     emailEnabled: boolean;
+    knowledgeCaptureEnabled: boolean;
+    knowledgeDocumentId: string | null;
     enabled: boolean;
     nextRunAt: string | null;
     lastRunAt: string | null;
@@ -639,6 +641,7 @@ export interface LegalMonitorInput {
     maxItemsPerRun: number;
     alertEmail: string | null;
     emailEnabled: boolean;
+    knowledgeCaptureEnabled: boolean;
     enabled: boolean;
 }
 
