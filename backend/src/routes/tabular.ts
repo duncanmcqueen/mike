@@ -101,6 +101,29 @@ function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
     };
 }
 
+const GENERATE_DOC_CONCURRENCY = 4;
+
+async function mapWithConcurrency<T>(
+    items: T[],
+    limit: number,
+    worker: (item: T) => Promise<void>,
+): Promise<void> {
+    let nextIndex = 0;
+    const run = async () => {
+        while (nextIndex < items.length) {
+            const index = nextIndex;
+            nextIndex += 1;
+            await worker(items[index]);
+        }
+    };
+    await Promise.all(
+        Array.from(
+            { length: Math.min(Math.max(1, limit), items.length) },
+            () => run(),
+        ),
+    );
+}
+
 // GET /tabular-review
 tabularRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
@@ -955,8 +978,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     const write = (line: string) => res.write(line);
 
     try {
-        await Promise.all(
-            docs.map(async (doc) => {
+        await mapWithConcurrency(docs, GENERATE_DOC_CONCURRENCY, async (doc) => {
                 const docId = doc.id as string;
                 let markdown = "";
 
@@ -1059,8 +1081,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                         );
                     }
                 }
-            }),
-        );
+            });
 
         write("data: [DONE]\n\n");
     } catch (err) {

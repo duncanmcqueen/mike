@@ -845,6 +845,17 @@ export function TRChatPanel({
             .finally(() => setIsLoadingMessages(false));
     }, [reviewId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Abort any in-flight stream and stop the drip animation on unmount
+    useEffect(() => {
+        return () => {
+            abortRef.current?.abort();
+            if (dripIntervalRef.current !== null) {
+                clearInterval(dripIntervalRef.current);
+                dripIntervalRef.current = null;
+            }
+        };
+    }, []);
+
     // Fill in title once chats list arrives
     useEffect(() => {
         if (currentChatId && !currentChatTitle) {

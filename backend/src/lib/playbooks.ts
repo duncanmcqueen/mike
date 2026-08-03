@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { jsonrepair } from "jsonrepair";
 import { z } from "zod";
 import {
   createServerDatabase,
@@ -240,8 +241,14 @@ function parseModelJson(raw: string): unknown {
   } catch {
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
-    if (start >= 0 && end > start)
-      return JSON.parse(cleaned.slice(start, end + 1));
+    if (start >= 0 && end > start) {
+      const slice = cleaned.slice(start, end + 1);
+      try {
+        return JSON.parse(slice);
+      } catch {
+        return JSON.parse(jsonrepair(slice));
+      }
+    }
     throw new Error("The model did not return structured JSON.");
   }
 }

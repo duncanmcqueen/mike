@@ -100,10 +100,11 @@ function isValidEmail(email: string): boolean {
 }
 
 userRouter.post("/auth/signup", localAuthOnly, async (req, res) => {
-    const email = typeof req.body?.email === "string" ? req.body.email : "";
+    const email =
+        typeof req.body?.email === "string" ? req.body.email.trim() : "";
     const password =
         typeof req.body?.password === "string" ? req.body.password : "";
-    if (!isValidEmail(email.trim()) || password.length < 6) {
+    if (!isValidEmail(email) || password.length < 6) {
         return void res
             .status(400)
             .json({ detail: "A valid email and a 6+ character password are required" });
@@ -132,7 +133,8 @@ function profileMfaOnLogin(userId: string): boolean {
 }
 
 userRouter.post("/auth/login", localAuthOnly, async (req, res) => {
-    const email = typeof req.body?.email === "string" ? req.body.email : "";
+    const email =
+        typeof req.body?.email === "string" ? req.body.email.trim() : "";
     const password =
         typeof req.body?.password === "string" ? req.body.password : "";
     const row = findLocalUserByEmail(email) as
@@ -168,8 +170,9 @@ userRouter.post("/auth/logout", localAuthOnly, async (req, res) => {
 });
 
 userRouter.patch("/auth/email", localAuthOnly, requireAuth, async (req, res) => {
-    const email = typeof req.body?.email === "string" ? req.body.email : "";
-    if (!isValidEmail(email.trim())) {
+    const email =
+        typeof req.body?.email === "string" ? req.body.email.trim() : "";
+    if (!isValidEmail(email)) {
         return void res.status(400).json({ detail: "A valid email is required" });
     }
     const userId = res.locals.userId as string;
@@ -212,21 +215,23 @@ userRouter.post("/support", requireAuth, async (req, res) => {
     const inbox = process.env.SUPPORT_INBOX_EMAIL;
     const resendKey = process.env.RESEND_API_KEY;
     if (inbox && resendKey) {
-        try {
-            const { Resend } = await import("resend");
-            const resend = new Resend(resendKey);
-            await resend.emails.send({
-                from: process.env.SUPPORT_FROM_EMAIL ?? "Mike Support <onboarding@resend.dev>",
-                to: inbox,
-                subject: `[Mike ${type}] ${subject.slice(0, 200)}`,
-                text: `From: ${userEmail} (${userId})\nType: ${type}\nLink: ${link || "-"}\n\n${message}`,
-            });
-        } catch (err) {
-            console.error("[user/support] email delivery failed", {
-                userId,
-                error: errorMessage(err),
-            });
-        }
+        void (async () => {
+            try {
+                const { Resend } = await import("resend");
+                const resend = new Resend(resendKey);
+                await resend.emails.send({
+                    from: process.env.SUPPORT_FROM_EMAIL ?? "Mike Support <onboarding@resend.dev>",
+                    to: inbox,
+                    subject: `[Mike ${type}] ${subject.slice(0, 200)}`,
+                    text: `From: ${userEmail} (${userId})\nType: ${type}\nLink: ${link || "-"}\n\n${message}`,
+                });
+            } catch (err) {
+                console.error("[user/support] email delivery failed", {
+                    userId,
+                    error: errorMessage(err),
+                });
+            }
+        })();
     }
     res.status(204).send();
 });
@@ -900,7 +905,8 @@ async function loadProfile(
                 credits_reset_date: creditsResetDate.toISOString(),
                 updated_at: new Date().toISOString(),
             })
-            .eq("user_id", userId);
+            .eq("user_id", userId)
+            .lt("credits_reset_date", new Date().toISOString());
 
         if (resetError) return { data: null, error: resetError };
         const { data: resetData, error: resetLoadError } = await selectProfile(

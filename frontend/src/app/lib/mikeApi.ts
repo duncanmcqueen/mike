@@ -1415,10 +1415,16 @@ export async function getChat(chatId: string): Promise<ChatDetailOut> {
             id: m.id,
             role: "assistant",
             content:
-                events
-                    ?.filter((e) => e.type === "content")
-                    .map((e) => (e as { type: "content"; text: string }).text)
-                    .join("") ?? "",
+                typeof m.content === "string"
+                    ? m.content
+                    : (events
+                          ?.filter((e) => e.type === "content")
+                          .map(
+                              (e) =>
+                                  (e as { type: "content"; text: string })
+                                      .text,
+                          )
+                          .join("") ?? ""),
             citations: m.citations ?? undefined,
             events,
         };
@@ -1787,10 +1793,12 @@ export function mapTRMessages(raw: RawTRMessage[]): TRDisplayMessage[] {
             ? (m.content as AssistantEvent[])
             : undefined;
         const content =
-            events
-                ?.filter((e) => e.type === "content")
-                .map((e) => (e as { type: "content"; text: string }).text)
-                .join("") ?? "";
+            typeof m.content === "string"
+                ? m.content
+                : (events
+                      ?.filter((e) => e.type === "content")
+                      .map((e) => (e as { type: "content"; text: string }).text)
+                      .join("") ?? "");
         return {
             role: "assistant" as const,
             content,

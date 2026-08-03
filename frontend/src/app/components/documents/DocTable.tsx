@@ -701,14 +701,29 @@ export function DocTable({
             setExpandedFolderIds((prev) => new Set([...prev, parentId]));
 
         // Replace with real folder from API
-        const folder = await operations.createFolder(name, parentId ?? null);
-        setFolders((prev) => prev.map((f) => (f.id === tempId ? folder : f)));
-        setExpandedFolderIds((prev) => {
-            const next = new Set(prev);
-            next.delete(tempId);
-            next.add(folder.id);
-            return next;
-        });
+        try {
+            const folder = await operations.createFolder(
+                name,
+                parentId ?? null,
+            );
+            setFolders((prev) =>
+                prev.map((f) => (f.id === tempId ? folder : f)),
+            );
+            setExpandedFolderIds((prev) => {
+                const next = new Set(prev);
+                next.delete(tempId);
+                next.add(folder.id);
+                return next;
+            });
+        } catch (err) {
+            console.error("Folder creation failed", err);
+            setFolders((prev) => prev.filter((f) => f.id !== tempId));
+            setExpandedFolderIds((prev) => {
+                const next = new Set(prev);
+                next.delete(tempId);
+                return next;
+            });
+        }
     }
 
     async function handleRenameFolder(folderId: string) {
@@ -1016,15 +1031,20 @@ export function DocTable({
 
     // ── Drag & drop ───────────────────────────────────────────────────────────
 
+    const folderParentById = useMemo(() => {
+        const map = new Map<string, string | null>();
+        for (const f of folders) {
+            map.set(f.id, f.parent_folder_id ?? null);
+        }
+        return map;
+    }, [folders]);
+
     function wouldCreateCycle(movingId: string, targetId: string): boolean {
         // Returns true if targetId is movingId or a descendant of it
-        let cur: DocTableFolder | undefined = folders.find(
-            (f) => f.id === targetId,
-        );
+        let cur: string | null | undefined = targetId;
         while (cur) {
-            if (cur.id === movingId) return true;
-            if (!cur.parent_folder_id) break;
-            cur = folders.find((f) => f.id === cur!.parent_folder_id);
+            if (cur === movingId) return true;
+            cur = folderParentById.get(cur);
         }
         return false;
     }

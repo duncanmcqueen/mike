@@ -231,11 +231,14 @@ export function useAssistantChat({
     updater: (e: AssistantEvent) => AssistantEvent,
   ) => {
     const events = eventsRef.current;
-    const idx = [...events]
-      .map((_, i) => i)
-      .reverse()
-      .find((i) => predicate(events[i]));
-    if (idx === undefined) return false;
+    let idx = -1;
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (predicate(events[i])) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx === -1) return false;
     const newEvents = [...events];
     newEvents[idx] = updater(events[idx]);
     eventsRef.current = newEvents;

@@ -292,9 +292,15 @@ function ProjectAssistantChatPageInner({
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
+        let stale = false;
         getProject(projectId)
-            .then(setProject)
+            .then((p) => {
+                if (!stale) setProject(p);
+            })
             .catch(() => {});
+        return () => {
+            stale = true;
+        };
     }, [projectId]);
 
     // Whenever the assistant mutates project documents — creating a new
@@ -343,9 +349,15 @@ function ProjectAssistantChatPageInner({
 
     useEffect(() => {
         if (!projectMutationSignature) return;
+        let stale = false;
         getProject(projectId)
-            .then(setProject)
+            .then((p) => {
+                if (!stale) setProject(p);
+            })
             .catch(() => {});
+        return () => {
+            stale = true;
+        };
     }, [projectMutationSignature, projectId]);
 
     useEffect(() => {
@@ -746,7 +758,15 @@ function ProjectAssistantChatPageInner({
                   }
                 : prev,
         );
-        await moveDocumentToFolder(projectId, docId, targetFolderId);
+        try {
+            await moveDocumentToFolder(projectId, docId, targetFolderId);
+        } catch (err) {
+            // Revert the optimistic move by refetching the project
+            getProject(projectId)
+                .then(setProject)
+                .catch(() => {});
+            throw err;
+        }
     };
 
     const handleMoveFolder = async (
@@ -765,7 +785,15 @@ function ProjectAssistantChatPageInner({
                   }
                 : prev,
         );
-        await moveSubfolderToFolder(projectId, folderId, targetFolderId);
+        try {
+            await moveSubfolderToFolder(projectId, folderId, targetFolderId);
+        } catch (err) {
+            // Revert the optimistic move by refetching the project
+            getProject(projectId)
+                .then(setProject)
+                .catch(() => {});
+            throw err;
+        }
     };
 
     const handleDeleteDoc = async (docId: string) => {
@@ -1216,7 +1244,7 @@ function ProjectAssistantChatPageInner({
                                 return messages.map((msg, i) =>
                                     msg.role === "user" ? (
                                         <div
-                                            key={i}
+                                            key={msg.id ?? i}
                                             ref={
                                                 i === lastUserIdx
                                                     ? latestUserMessageRef
@@ -1232,7 +1260,7 @@ function ProjectAssistantChatPageInner({
                                         </div>
                                     ) : (
                                         <AssistantMessage
-                                            key={i}
+                                            key={msg.id ?? i}
                                             events={msg.events}
                                             isStreaming={
                                                 i === messages.length - 1 &&
