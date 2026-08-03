@@ -1,6 +1,6 @@
 import {
   streamChatWithTools,
-  resolveModel,
+  resolveUsableModel,
   DEFAULT_MAIN_MODEL,
   type LlmMessage,
   type OpenAIToolSchema,
@@ -388,7 +388,7 @@ Use the available DingDuff MCP tool(s) for case retrieval, case reading, and cas
     }
   };
 
-  const selectedModel = resolveModel(model, DEFAULT_MAIN_MODEL);
+  const selectedModel = resolveUsableModel(model, DEFAULT_MAIN_MODEL, apiKeys);
 
   try {
     throwIfAborted(signal);

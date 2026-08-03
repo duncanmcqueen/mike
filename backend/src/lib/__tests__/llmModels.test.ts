@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
     CLAUDE_MAIN_MODELS,
     GEMINI_MAIN_MODELS,
@@ -14,7 +14,12 @@ import {
     DEFAULT_TABULAR_MODEL,
     providerForModel,
     resolveModel,
+    resolveUsableModel,
 } from "../llm/models";
+
+afterEach(() => {
+    vi.unstubAllEnvs();
+});
 
 // ---------------------------------------------------------------------------
 // providerForModel
@@ -101,6 +106,48 @@ describe("resolveModel", () => {
         for (const model of catalog) {
             expect(resolveModel(model, "fallback-model")).toBe(model);
         }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// resolveUsableModel
+// ---------------------------------------------------------------------------
+
+describe("resolveUsableModel", () => {
+    it("keeps the selected model when its user API key is available", () => {
+        expect(
+            resolveUsableModel(
+                "gemini-3-flash-preview",
+                DEFAULT_MAIN_MODEL,
+                { gemini: "user-gemini-key" },
+            ),
+        ).toBe("gemini-3-flash-preview");
+    });
+
+    it("uses an available configured model when the default has no key", () => {
+        vi.stubEnv("GEMINI_API_KEY", "");
+        vi.stubEnv("ANTHROPIC_API_KEY", "");
+        vi.stubEnv("CLAUDE_API_KEY", "");
+        vi.stubEnv("OPENAI_API_KEY", "");
+        vi.stubEnv("KIMI_API_KEY", "");
+
+        expect(
+            resolveUsableModel(undefined, DEFAULT_MAIN_MODEL, {
+                kimi: "user-kimi-key",
+            }),
+        ).toBe("kimi-k3");
+    });
+
+    it("retains the resolved model when no provider has a key", () => {
+        vi.stubEnv("GEMINI_API_KEY", "");
+        vi.stubEnv("ANTHROPIC_API_KEY", "");
+        vi.stubEnv("CLAUDE_API_KEY", "");
+        vi.stubEnv("OPENAI_API_KEY", "");
+        vi.stubEnv("KIMI_API_KEY", "");
+
+        expect(resolveUsableModel(undefined, DEFAULT_MAIN_MODEL, {})).toBe(
+            DEFAULT_MAIN_MODEL,
+        );
     });
 });
 
