@@ -1,5 +1,8 @@
 import crypto from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     createPromptLibraryItem,
     deletePromptLibraryItem,
@@ -13,6 +16,7 @@ import { createServerSQLite } from "../sqlite";
 const createdPromptIds: string[] = [];
 
 afterEach(async () => {
+    vi.unstubAllEnvs();
     const db = createServerSQLite();
     for (const id of createdPromptIds.splice(0)) {
         await db.from("saved_prompts").delete().eq("id", id);
@@ -20,21 +24,61 @@ afterEach(async () => {
 });
 
 describe("built-in prompt library", () => {
-    it("loads every prompt row from the Mike example workbook snapshot", () => {
-        const prompts = listBuiltInPrompts();
-        expect(prompts).toHaveLength(108);
-        expect(new Set(prompts.map((prompt) => prompt.prompt)).size).toBe(106);
-        expect(prompts.every((prompt) => prompt.source === "built_in")).toBe(true);
-        expect(prompts.some((prompt) => prompt.categories.includes("Analyze"))).toBe(true);
-        expect(prompts.some((prompt) => prompt.practiceAreas.includes("Litigation (General)"))).toBe(true);
+    it("does not require the private prompt data file", async () => {
+        vi.stubEnv(
+            "MIKE_BUILTIN_PROMPTS_PATH",
+            path.join(os.tmpdir(), `missing-prompts-${crypto.randomUUID()}.json`),
+        );
+        vi.resetModules();
+        const library = await import("../promptLibrary");
+        expect(library.listBuiltInPrompts()).toEqual([]);
     });
 
-    it("returns defensive copies and rejects built-in mutations", async () => {
-        const [prompt] = listBuiltInPrompts();
-        prompt.categories.push("Changed");
-        expect(listBuiltInPrompts()[0].categories).not.toContain("Changed");
-        await expect(deletePromptLibraryItem("u1", prompt.id)).rejects.toThrow(/cannot be deleted/i);
-        await expect(updatePromptLibraryItem("u1", prompt.id, { name: "Changed", prompt: "Changed" })).rejects.toThrow(/cannot be edited/i);
+    it("loads optional runtime data and protects built-in prompts", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mike-prompts-"));
+        const promptPath = path.join(tempDir, "prompts.json");
+        fs.writeFileSync(
+            promptPath,
+            JSON.stringify([
+                {
+                    id: "private-example-1",
+                    name: "Example analysis",
+                    prompt: "Analyze the supplied material.",
+                    promptType: "Assist",
+                    categories: ["Analyze"],
+                    practiceAreas: ["Commercial"],
+                    sourceRequirements: ["Files"],
+                    originalCreator: null,
+                    originalCreatedAt: null,
+                },
+            ]),
+        );
+        try {
+            vi.stubEnv("MIKE_BUILTIN_PROMPTS_PATH", promptPath);
+            vi.resetModules();
+            const library = await import("../promptLibrary");
+            const [prompt] = library.listBuiltInPrompts();
+            expect(prompt).toMatchObject({
+                id: "private-example-1",
+                source: "built_in",
+                categories: ["Analyze"],
+            });
+            prompt.categories.push("Changed");
+            expect(library.listBuiltInPrompts()[0].categories).not.toContain(
+                "Changed",
+            );
+            await expect(
+                library.deletePromptLibraryItem("u1", prompt.id),
+            ).rejects.toThrow(/cannot be deleted/i);
+            await expect(
+                library.updatePromptLibraryItem("u1", prompt.id, {
+                    name: "Changed",
+                    prompt: "Changed",
+                }),
+            ).rejects.toThrow(/cannot be edited/i);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 });
 
@@ -52,6 +96,7 @@ describe("saved prompt persistence", () => {
         });
         createdPromptIds.push(created.id);
 
+        const builtInCount = listBuiltInPrompts().length;
         expect(created).toMatchObject({
             userId,
             source: "user",
@@ -60,7 +105,7 @@ describe("saved prompt persistence", () => {
         });
         const listed = await listPromptLibrary(userId);
         expect(listed[0]).toMatchObject({ id: created.id, name: "Review indemnity" });
-        expect(listed).toHaveLength(109);
+        expect(listed).toHaveLength(builtInCount + 1);
         await expect(getPromptLibraryItem(userId, created.id)).resolves.toMatchObject({ id: created.id });
 
         const updated = await updatePromptLibraryItem(userId, created.id, {

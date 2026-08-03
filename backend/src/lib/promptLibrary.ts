@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import mikePrompts from "../data/mikeExamplePrompts.json";
+import fs from "node:fs";
+import path from "node:path";
 import {
   createServerDatabase,
   databaseProviderIsSQLite,
@@ -63,7 +64,69 @@ type MikePrompt = {
 };
 
 const BUILTIN_IMPORTED_AT = "2026-07-29T18:14:42.184Z";
-const builtIns: PromptLibraryItem[] = (mikePrompts as MikePrompt[]).map(
+const PRIVATE_PROMPT_FILENAME = "mikeExamplePrompts.json";
+
+function isMikePrompt(value: unknown): value is MikePrompt {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.id === "string" &&
+    typeof item.name === "string" &&
+    typeof item.prompt === "string" &&
+    (item.promptType === null || typeof item.promptType === "string") &&
+    Array.isArray(item.categories) &&
+    item.categories.every((entry) => typeof entry === "string") &&
+    Array.isArray(item.practiceAreas) &&
+    item.practiceAreas.every((entry) => typeof entry === "string") &&
+    Array.isArray(item.sourceRequirements) &&
+    item.sourceRequirements.every((entry) => typeof entry === "string") &&
+    (item.originalCreator === null ||
+      typeof item.originalCreator === "string") &&
+    (item.originalCreatedAt === null ||
+      typeof item.originalCreatedAt === "string")
+  );
+}
+
+function privatePromptPaths(): string[] {
+  const configured = process.env.MIKE_BUILTIN_PROMPTS_PATH?.trim();
+  if (configured) return [path.resolve(configured)];
+  return [
+    path.resolve(process.cwd(), "data", PRIVATE_PROMPT_FILENAME),
+    path.resolve(process.cwd(), "backend", "data", PRIVATE_PROMPT_FILENAME),
+  ];
+}
+
+function loadPrivatePrompts(): MikePrompt[] {
+  for (const filePath of privatePromptPaths()) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as unknown;
+      if (!Array.isArray(parsed)) {
+        console.warn("[prompt-library] private prompt data must be an array", {
+          filePath,
+        });
+        return [];
+      }
+      const prompts = parsed.filter(isMikePrompt);
+      if (prompts.length !== parsed.length) {
+        console.warn("[prompt-library] ignored invalid private prompt rows", {
+          filePath,
+          ignored: parsed.length - prompts.length,
+        });
+      }
+      return prompts;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") continue;
+      console.warn("[prompt-library] could not load private prompt data", {
+        filePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+  return [];
+}
+
+const builtIns: PromptLibraryItem[] = loadPrivatePrompts().map(
   (item) => ({
     id: item.id,
     userId: null,

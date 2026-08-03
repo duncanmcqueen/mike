@@ -2,9 +2,10 @@
 
 MikeOSS includes a Prompt Library for reusable legal prompts. Open **Prompts** from the application sidebar to browse built-in prompts, create personal prompts, search prompt text and metadata, or filter by category.
 
-## Built-in prompts
+## Optional built-in prompts
 
-The built-in library contains all 108 rows from `mike-EXAMPLE-2026-07-29T18_14_42.184341.xlsx`:
+Deployments may privately provide the 108 rows from the Mike example prompt
+library:
 
 - 39 Analyze assignments
 - 35 Draft assignments
@@ -17,7 +18,11 @@ Some prompts have more than one category. The workbook contains 106 unique query
 
 The workbook's example responses are not injected into a new model request. They are historical outputs rather than reusable instructions, and using them would risk anchoring a new response to stale facts or unsupported citations.
 
-Built-in prompts are versioned with MikeOSS and cannot be edited or deleted. Select **Use prompt** to open Assistant with the prompt loaded into the composer.
+This private data is intentionally not versioned or distributed with MikeOSS.
+When supplied at runtime, built-in prompts cannot be edited or deleted. Select
+**Use prompt** to open Assistant with the prompt loaded into the composer. If
+the private file is absent, the application starts normally and the personal
+prompt library remains available.
 
 ## Personal prompts
 
@@ -40,7 +45,11 @@ Selecting a prompt fills the composer but does not submit it automatically. This
 
 ## Storage and API
 
-Custom prompts use the `saved_prompts` SQLite table. Built-ins are loaded from `backend/src/data/mikeExamplePrompts.json` and returned alongside the current user's rows.
+Custom prompts use the `saved_prompts` SQLite table. Optional built-ins are
+loaded from `MIKE_BUILTIN_PROMPTS_PATH` or, by default,
+`backend/data/mikeExamplePrompts.json`, and returned alongside the current
+user's rows. Both the old source-tree path and the local runtime path are
+ignored by Git.
 
 Authenticated endpoints:
 
