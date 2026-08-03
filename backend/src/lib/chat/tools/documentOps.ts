@@ -46,6 +46,117 @@ export function citationReminder(docLabel: string, filename: string): string {
   ].join("\n");
 }
 
+type PdfTextItem = {
+  str?: string;
+  transform?: number[];
+  width?: number;
+  height?: number;
+  hasEOL?: boolean;
+};
+
+/**
+ * Rebuild a page's text from positioned pdfjs items, preserving the visual
+ * layout: lines are reconstructed from y-coordinates/hasEOL markers, words
+ * are joined (or split) based on measured x-gaps rather than a blanket
+ * space, paragraph breaks become blank lines, and indentation is kept
+ * relative to the page's left margin.
+ */
+function layoutPageText(items: PdfTextItem[]): string {
+  type Item = {
+    str: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    eol: boolean;
+  };
+  const clean: Item[] = [];
+  for (const it of items) {
+    const str = it.str ?? "";
+    if (!str) continue;
+    const t = Array.isArray(it.transform) ? it.transform : [];
+    clean.push({
+      str,
+      x: typeof t[4] === "number" ? t[4] : 0,
+      y: typeof t[5] === "number" ? t[5] : 0,
+      w: typeof it.width === "number" ? it.width : 0,
+      h:
+        Math.abs(typeof t[3] === "number" ? t[3] : 0) ||
+        (typeof it.height === "number" ? it.height : 0) ||
+        10,
+      eol: it.hasEOL === true,
+    });
+  }
+  if (!clean.length) return "";
+
+  // Group into lines: pdfjs marks line ends with hasEOL; also break when the
+  // y coordinate jumps (some producers don't set hasEOL reliably).
+  const lines: Item[][] = [];
+  let cur: Item[] = [];
+  let curY: number | null = null;
+  const flush = () => {
+    if (cur.length) {
+      lines.push(cur);
+      cur = [];
+      curY = null;
+    }
+  };
+  for (const it of clean) {
+    if (cur.length && curY !== null) {
+      const lineH = Math.max(...cur.map((c) => c.h));
+      if (Math.abs(it.y - curY) > Math.max(2, lineH * 0.5)) flush();
+    }
+    cur.push(it);
+    curY = it.y;
+    if (it.eol) flush();
+  }
+  flush();
+
+  // Order lines top-to-bottom (PDF y grows upward) and items left-to-right.
+  lines.sort((a, b) => (b[0]?.y ?? 0) - (a[0]?.y ?? 0));
+  for (const line of lines) line.sort((a, b) => a.x - b.x);
+
+  const marginX = Math.min(...lines.map((line) => line[0]?.x ?? 0));
+
+  const out: string[] = [];
+  let prevY: number | null = null;
+  let prevLineH: number | null = null;
+  for (const line of lines) {
+    const lineH = Math.max(...line.map((c) => c.h));
+
+    // Paragraph break: a vertical gap well above the line height.
+    if (prevY !== null && prevLineH !== null) {
+      const vGap = Math.abs((line[0]?.y ?? 0) - prevY);
+      if (vGap > prevLineH * 1.7) out.push("");
+    }
+
+    // Indentation relative to the page's left margin.
+    const charW = Math.max(1, lineH * 0.5);
+    const indent = Math.min(
+      24,
+      Math.max(0, Math.round(((line[0]?.x ?? 0) - marginX) / charW)),
+    );
+
+    let s = "";
+    let prevEnd: number | null = null;
+    for (const it of line) {
+      if (prevEnd !== null) {
+        const gap = it.x - prevEnd;
+        // Only insert a space for a real word gap — small kerning gaps
+        // (e.g. "constitut" + "e") are joined without one.
+        if (gap > lineH * 0.28) s += " ";
+      }
+      s += it.str;
+      prevEnd = it.x + it.w;
+    }
+    const trimmed = s.trimEnd();
+    if (trimmed) out.push(" ".repeat(indent) + trimmed);
+    prevY = line[0]?.y ?? prevY;
+    prevLineH = lineH;
+  }
+  return out.join("\n");
+}
+
 export async function extractPdfText(buf: ArrayBuffer): Promise<string> {
   try {
     const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs" as string);
@@ -56,7 +167,7 @@ export async function extractPdfText(buf: ArrayBuffer): Promise<string> {
             numPages: number;
             getPage: (n: number) => Promise<{
               getTextContent: () => Promise<{
-                items: { str?: string }[];
+                items: PdfTextItem[];
               }>;
             }>;
           }>;
@@ -70,9 +181,7 @@ export async function extractPdfText(buf: ArrayBuffer): Promise<string> {
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
-      parts.push(
-        `[Page ${i}]\n${textContent.items.map((it) => it.str ?? "").join(" ")}`,
-      );
+      parts.push(`[Page ${i}]\n${layoutPageText(textContent.items)}`);
     }
     return parts.join("\n\n");
   } catch {
@@ -91,6 +200,8 @@ export async function generateDocx(
     projectId?: string | null;
   },
 ) {
+  let fileUploaded = false;
+  let discardFile: () => Promise<void> = async () => {};
   try {
     const {
       Document,
@@ -532,12 +643,8 @@ export async function generateDocx(
     // missing secret leaves an unreachable file in SQLite storage.
     const downloadUrl = buildDownloadUrl(key, filename);
 
-    await uploadFile(
-      key,
-      buf,
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    );
-    const discardFile = async () => {
+    fileUploaded = false;
+    discardFile = async () => {
       try {
         await deleteFile(key);
       } catch (cleanupError) {
@@ -546,6 +653,13 @@ export async function generateDocx(
         );
       }
     };
+
+    await uploadFile(
+      key,
+      buf,
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    fileUploaded = true;
 
     // Persist to DB so generated docs are first-class documents:
     // openable in the DocPanel and editable via edit_document. In
@@ -629,6 +743,7 @@ export async function generateDocx(
       message: `Document '${filename}' has been generated successfully.`,
     };
   } catch (e) {
+    if (fileUploaded) await discardFile();
     return { error: String(e) };
   }
 }
@@ -1166,6 +1281,150 @@ export async function loadCurrentVersionBytes(
   if (!raw) return null;
   return { bytes: Buffer.from(raw), storage_path: active.storage_path };
 }
+
+/**
+ * Build an editable .docx copy of a PDF document so PDFs can be redlined
+ * via edit_document. The copy is registered as a new document (the
+ * original PDF is left untouched) containing the extracted text, with
+ * [Page N] markers preserved as their own paragraphs.
+ */
+export async function createEditableDocxFromPdf(params: {
+  documentId: string;
+  userId: string;
+  db: ReturnType<typeof createServerDatabase>;
+}): Promise<
+  | {
+      ok: true;
+      document_id: string;
+      version_id: string;
+      filename: string;
+      storage_path: string;
+    }
+  | { ok: false; error: string }
+> {
+  const { documentId, userId, db } = params;
+
+  const { data: sourceDoc } = await db
+    .from("documents")
+    .select("id, project_id")
+    .eq("id", documentId)
+    .single();
+  if (!sourceDoc) return { ok: false, error: "Document not found." };
+
+  const active = await loadActiveVersion(documentId, db);
+  if (!active) return { ok: false, error: "Could not load document." };
+  const raw = await downloadFile(active.storage_path);
+  if (!raw) return { ok: false, error: "Could not load document bytes." };
+
+  const text = await extractPdfText(raw);
+  if (!text.trim()) {
+    return {
+      ok: false,
+      error:
+        "Could not extract text from the PDF (scanned or image-only PDFs are not supported).",
+    };
+  }
+
+  const { Document, Paragraph, TextRun, Packer } = await import("docx");
+  const baseName = (active.filename?.trim() || "Untitled document").replace(
+    /\.pdf$/i,
+    "",
+  );
+  const filename = `${baseName} (Editable).docx`;
+  const paragraphs = text.split("\n").map(
+    (line) =>
+      new Paragraph({
+        spacing: { after: 120 },
+        children: [
+          new TextRun({ text: line, font: "Times New Roman", size: 22 }),
+        ],
+      }),
+  );
+  const docxDoc = new Document({
+    sections: [{ properties: {}, children: paragraphs }],
+  });
+  const buf = await Packer.toBuffer(docxDoc);
+
+  const newDocId = crypto.randomUUID().replace(/-/g, "");
+  const key = generatedDocKey(userId, newDocId, filename);
+  let uploaded = false;
+  try {
+    await uploadFile(
+      key,
+      buf,
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    uploaded = true;
+
+    const { data: docRow, error: docErr } = await db
+      .from("documents")
+      .insert({
+        project_id: sourceDoc.project_id ?? null,
+        user_id: userId,
+        status: "ready",
+      })
+      .select("id")
+      .single();
+    if (docErr || !docRow) {
+      throw new Error(docErr?.message ?? "failed to register document");
+    }
+
+    const { data: versionRow, error: verErr } = await db
+      .from("document_versions")
+      .insert({
+        document_id: docRow.id,
+        storage_path: key,
+        source: "generated",
+        version_number: 1,
+        filename,
+        file_type: "docx",
+        size_bytes: buf.byteLength,
+        page_count: null,
+      })
+      .select("id")
+      .single();
+    if (verErr || !versionRow) {
+      await db
+        .from("documents")
+        .delete()
+        .eq("id", docRow.id)
+        .eq("user_id", userId);
+      throw new Error(verErr?.message ?? "failed to register version");
+    }
+
+    const { error: currentVersionError } = await db
+      .from("documents")
+      .update({ current_version_id: versionRow.id })
+      .eq("id", docRow.id);
+    if (currentVersionError) {
+      await db.from("document_versions").delete().eq("id", versionRow.id);
+      await db
+        .from("documents")
+        .delete()
+        .eq("id", docRow.id)
+        .eq("user_id", userId);
+      throw new Error(currentVersionError.message);
+    }
+
+    return {
+      ok: true,
+      document_id: docRow.id as string,
+      version_id: versionRow.id as string,
+      filename,
+      storage_path: key,
+    };
+  } catch (e) {
+    if (uploaded) {
+      try {
+        await deleteFile(key);
+      } catch {
+        /* ignore */
+      }
+    }
+    return { ok: false, error: String(e) };
+  }
+}
+
 
 /**
  * Ensure the document has a document_versions row for the current upload.
@@ -1849,7 +2108,18 @@ export type DocEditedResult = {
 
 export type TurnEditState = Map<
   string,
-  { versionId: string; versionNumber: number; storagePath: string }
+  {
+    versionId: string;
+    versionNumber: number;
+    storagePath: string;
+    /**
+     * Set when the turn's edits target a different document than the map
+     * key — e.g. edits against a PDF are redirected to the editable .docx
+     * copy created for it, so repeat edit_document calls in the same turn
+     * reuse that copy instead of converting again.
+     */
+    documentId?: string;
+  }
 >;
 
 export type TurnReadState = Map<

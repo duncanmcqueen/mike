@@ -57,6 +57,7 @@ import { loadActiveVersion } from "../../documentVersions";
 import { type EditInput } from "../../docxTrackedChanges";
 import {
   citationReminder,
+  createEditableDocxFromPdf,
   generateDocx,
   generateExcel,
   generatePpt,
@@ -606,8 +607,11 @@ export async function runToolCalls(
     let args: Record<string, unknown> = {};
     try {
       args = JSON.parse(tc.function.arguments || "{}");
-    } catch {
-      /* ignore */
+    } catch (parseErr) {
+      devLog(
+        `[toolDispatcher] failed to parse args for ${tc.function.name}:`,
+        parseErr instanceof Error ? parseErr.message : parseErr,
+      );
     }
 
     if (tc.function.name.startsWith("mcp_")) {
@@ -1450,8 +1454,8 @@ export async function runToolCalls(
           tool_call_id: tc.id,
           content: JSON.stringify({ error: err }),
         });
-      } else if (docInfo.file_type !== "docx") {
-        const err = "edit_document only supports .docx files.";
+      } else if (docInfo.file_type !== "docx" && docInfo.file_type !== "pdf") {
+        const err = "edit_document only supports .docx and .pdf files.";
         emitEditError(docInfo.filename, indexed.document_id, err);
         toolResults.push({
           role: "tool",
@@ -1459,10 +1463,50 @@ export async function runToolCalls(
           content: JSON.stringify({ error: err }),
         });
       } else {
+        // PDFs can't carry tracked changes — on the first edit of a PDF in
+        // this turn, materialize an editable .docx copy from the extracted
+        // text and redirect the edits (and the download card) to that copy.
+        let editFilename = docInfo.filename;
+        let editDocumentId = indexed.document_id;
+        let conversionReuse:
+          | { versionId: string; versionNumber: number; storagePath: string }
+          | undefined;
+        let conversionError: string | null = null;
+        if (docInfo.file_type === "pdf") {
+          const priorConversion = turnEditState?.get(indexed.document_id);
+          if (priorConversion?.documentId) {
+            editDocumentId = priorConversion.documentId;
+            conversionReuse = priorConversion;
+          } else {
+            const conversion = await createEditableDocxFromPdf({
+              documentId: indexed.document_id,
+              userId,
+              db,
+            });
+            if (conversion.ok) {
+              editFilename = conversion.filename;
+              editDocumentId = conversion.document_id;
+            } else {
+              conversionError = conversion.error;
+            }
+          }
+        }
+
+        if (conversionError) {
+          emitEditError(docInfo.filename, indexed.document_id, conversionError);
+          toolResults.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: JSON.stringify({
+              error: conversionError,
+              is_pdf: true,
+            }),
+          });
+        } else {
         write(
           `data: ${JSON.stringify({
             type: "doc_edited_start",
-            filename: docInfo.filename,
+            filename: editFilename,
           })}\n\n`,
         );
         const edits: EditInput[] = (editsRaw as Record<string, unknown>[]).map(
@@ -1474,9 +1518,10 @@ export async function runToolCalls(
             reason: e.reason ? String(e.reason) : undefined,
           }),
         );
-        const reuseVersion = turnEditState?.get(indexed.document_id);
+        const reuseVersion =
+          conversionReuse ?? turnEditState?.get(editDocumentId);
         const result = await runEditDocument({
-          documentId: indexed.document_id,
+          documentId: editDocumentId,
           userId,
           edits,
           db,
@@ -1488,12 +1533,15 @@ export async function runToolCalls(
             versionId: result.version_id,
             versionNumber: result.version_number,
             storagePath: result.storage_path,
+            ...(editDocumentId !== indexed.document_id
+              ? { documentId: editDocumentId }
+              : {}),
           });
-          clearTurnReadsForDocument(turnReadState, indexed.document_id);
+          clearTurnReadsForDocument(turnReadState, editDocumentId);
           // Keep the chat-local doc label pointed at the latest
           // edited version so any follow-up read_document call in
           // the same assistant turn reads and cites the same bytes.
-          if (docIndex[docId]) {
+          if (editDocumentId === indexed.document_id && docIndex[docId]) {
             docIndex[docId] = {
               ...docIndex[docId],
               version_id: result.version_id,
@@ -1501,15 +1549,15 @@ export async function runToolCalls(
             };
           }
           const currentDocStore = docStore.get(docId);
-          if (currentDocStore) {
+          if (editDocumentId === indexed.document_id && currentDocStore) {
             docStore.set(docId, {
               ...currentDocStore,
               storage_path: result.storage_path,
             });
           }
           const payload: DocEditedResult = {
-            filename: docInfo.filename,
-            document_id: indexed.document_id,
+            filename: editFilename,
+            document_id: editDocumentId,
             version_id: result.version_id,
             version_number: result.version_number,
             download_url: result.download_url,
@@ -1528,11 +1576,17 @@ export async function runToolCalls(
             content: JSON.stringify({
               ok: true,
               doc_id: docId,
-              document_id: indexed.document_id,
+              document_id: editDocumentId,
               version_id: result.version_id,
               version_number: result.version_number,
               applied: result.annotations.length,
               errors: result.errors,
+              ...(docInfo.file_type === "pdf"
+                ? {
+                    converted_from_pdf: true,
+                    editable_filename: editFilename,
+                  }
+                : {}),
               next_required_action: [
                 `The edited document remains available as doc_id "${docId}".`,
                 `Before making factual claims about the edited document's final contents, call read_document with doc_id "${docId}" and base the response on that returned text.`,
@@ -1545,8 +1599,8 @@ export async function runToolCalls(
           write(
             `data: ${JSON.stringify({
               type: "doc_edited",
-              filename: docInfo.filename,
-              document_id: indexed.document_id,
+              filename: editFilename,
+              document_id: editDocumentId,
               version_id: "",
               download_url: "",
               annotations: [],
@@ -1561,6 +1615,7 @@ export async function runToolCalls(
               error: result.error,
             }),
           });
+        }
         }
       }
     } else if (tc.function.name === "replicate_document" && docIndex) {
