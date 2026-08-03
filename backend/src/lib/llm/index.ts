@@ -29,6 +29,7 @@ export async function completeText(params: {
     apiKeys?: UserApiKeys;
     committeeStack?: string[];
     requestTimeoutMs?: number;
+    reasoningEffort?: string;
 }): Promise<string> {
     if (isCommitteeId(params.model)) return completeCommitteeText(params);
     const provider = providerForModel(params.model);
@@ -44,6 +45,7 @@ export async function completeText(params: {
             maxTokens: params.maxTokens,
             apiKeys: params.apiKeys,
             requestTimeoutMs: params.requestTimeoutMs,
+            reasoningEffort: params.reasoningEffort,
         });
     }
     return completeGeminiText(params);

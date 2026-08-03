@@ -116,6 +116,7 @@ export async function completeOpenAICompatibleText(params: {
   maxTokens?: number;
   apiKeys?: UserApiKeys;
   requestTimeoutMs?: number;
+  reasoningEffort?: string;
 }): Promise<string> {
   const response = await fetch(`${baseUrl(params.model)}/chat/completions`, {
     method: "POST",
@@ -134,6 +135,9 @@ export async function completeOpenAICompatibleText(params: {
           { role: "user", content: params.user },
         ],
         max_tokens: params.maxTokens ?? 512,
+        ...(params.reasoningEffort
+          ? { reasoning_effort: params.reasoningEffort }
+          : {}),
         stream: false,
       }),
     ),
