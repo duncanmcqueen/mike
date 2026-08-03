@@ -15,7 +15,10 @@ Website: [mikeoss.com](https://mikeoss.com)
 
 - **Document review, drafting, and research** — project and standalone
   document chat, tabular review, workflows, document versions, and DOCX/PDF
-  handling.
+  handling. Redlining works on PDFs too: the assistant asks for the original
+  Word file, or converts the PDF into an editable `.docx` copy (original
+  untouched) using layout-preserving text extraction, then applies tracked
+  changes to the copy.
 - **Selectable infrastructure providers** — run fully self-contained on
   SQLite (database, auth, and file storage) with Node 22+, or use the
   upstream Supabase + Cloudflare R2 profile. See
@@ -24,7 +27,9 @@ Website: [mikeoss.com](https://mikeoss.com)
   want with the `MIKE_ENABLED_MODULES` allow-list.
 - **Model orchestration** — Anthropic, Gemini, OpenAI, and Kimi cloud
   models, local OpenAI-compatible servers (with streaming tool calling and
-  reasoning channels), and multi-model committee orchestration. See
+  reasoning channels), and multi-model committee orchestration. If the
+  requested or default model has no usable API key, chat automatically
+  falls back to a configured model that does. See
   [model orchestration](docs/model-orchestration.md).
 - **Legal monitors** — scheduled classify → gap-check → memo-draft → digest
   pipelines over RSS/Atom feeds and connector sources, with run history,
@@ -138,6 +143,10 @@ GMAIL_REDIRECT_URI=http://localhost:3001/integrations/gmail/oauth/callback
 # patent/trademark connector. Public search tools work without these keys.
 USPTO_API_KEY=your-uspto-open-data-portal-key
 TSDR_API_KEY=your-uspto-tsdr-key
+
+# Optional: per-request LLM timeout in milliseconds (default 120000). Raise
+# for long reasoning-heavy turns such as large-document redlines.
+LLM_REQUEST_TIMEOUT_MS=600000
 ```
 
 `FRONTEND_URL` must exactly match the origin the browser uses to reach the
