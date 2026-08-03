@@ -24,6 +24,7 @@ import {
   contentTypeForDocumentType,
   isPresentationDocumentType,
   isSpreadsheetDocumentType,
+  isTextDocumentType,
   isWordDocumentType,
   shouldConvertToPdf,
 } from "../../documentTypes";
@@ -1877,6 +1878,11 @@ export async function readDocumentContent(
       );
       devLog(
         `[read_document] legacy Office PDF extraction length=${text.length} for filename="${docInfo.filename}"`,
+      );
+    } else if (isTextDocumentType(fileType)) {
+      text = Buffer.from(raw).toString("utf8");
+      devLog(
+        `[read_document] text file read length=${text.length} for filename="${docInfo.filename}"`,
       );
     } else {
       devLog(
