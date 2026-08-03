@@ -14,11 +14,11 @@ Website: [mikeoss.com](https://mikeoss.com)
 ## Features
 
 - **Document review, drafting, and research** — project and standalone
-  document chat, tabular review, workflows, document versions, and DOCX/PDF
-  handling. Redlining works on PDFs too: the assistant asks for the original
-  Word file, or converts the PDF into an editable `.docx` copy (original
-  untouched) using layout-preserving text extraction, then applies tracked
-  changes to the copy.
+  document chat, tabular review, workflows, document versions, and
+  DOCX/PDF/Markdown handling. Redlining works on PDFs too: the assistant
+  asks for the original Word file, or converts the PDF into an editable
+  `.docx` copy (original untouched) using layout-preserving text
+  extraction, then applies tracked changes to the copy.
 - **Selectable infrastructure providers** — run fully self-contained on
   SQLite (database, auth, and file storage) with Node 22+, or use the
   upstream Supabase + Cloudflare R2 profile. See
@@ -242,6 +242,15 @@ or install a bundled preset (**Fintech GC Regulatory Digest**, trademark
 monitoring). Each run keeps history, deduplicates and checkpoints items, and
 can capture source documents. See the
 [legal monitor sources guide](docs/legal-monitor-sources.md).
+
+**Library knowledgebase (opt-in).** Enable **Save run reports to Library** on
+a monitor to maintain a living Markdown knowledgebase in
+**Library › Legal Monitors**. Each completed run weaves new developments into
+the document — still-valid knowledge is preserved, duplicates are merged, and
+superseded facts are corrected in place with dated notes — so the monitor
+keeps learning instead of starting over. Updates are versioned, and the
+knowledgebase is an ordinary Library file: the assistant can read it in chat
+and you can attach it back to the monitor as reference context.
 
 ## Playbooks
 
