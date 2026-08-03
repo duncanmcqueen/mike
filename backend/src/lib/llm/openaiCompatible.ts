@@ -57,9 +57,12 @@ type StreamChunk = {
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 
 function requestTimeoutMs(value?: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? Math.floor(value)
-    : DEFAULT_REQUEST_TIMEOUT_MS;
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+        return Math.floor(value);
+    }
+    const fromEnv = Number(process.env.LLM_REQUEST_TIMEOUT_MS);
+    if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.floor(fromEnv);
+    return DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
 const COURTLISTENER_CITATION_REMINDER_TOOL_NAMES = new Set([
