@@ -557,10 +557,12 @@ async function streamLocalToolsWithoutSse(
   // `maxIter` limits tool-use rounds. If every allowed round requests more
   // tools, make one additional request without tool declarations so the
   // user still receives a visible conclusion instead of a reasoning-only
-  // response (mirrors the Gemini provider's force-final-answer pass).
-  for (let iter = 0; iter <= maxIter; iter++) {
+  // response (mirrors the Gemini provider's force-final-answer pass). The
+  // forced pass also runs when the model ends a turn with no visible text.
+  let forcedPassConsumed = false;
+  for (let iter = 0; iter <= maxIter + 1; iter++) {
     throwIfAborted(params.abortSignal);
-    const forceFinalAnswer = iter === maxIter;
+    const forceFinalAnswer = iter === maxIter || forcedPassConsumed;
     if (forceFinalAnswer) {
       messages = [
         {
@@ -646,6 +648,13 @@ async function streamLocalToolsWithoutSse(
         message.reasoning_content ?? "",
         callbacks,
       );
+      // The model closed its turn without any visible text (e.g. a
+      // reasoning-only response). Give it one forced no-tools answer pass
+      // before giving up.
+      if (!fullText.trim() && !forcedPassConsumed) {
+        forcedPassConsumed = true;
+        continue;
+      }
       break;
     }
 
@@ -718,10 +727,12 @@ export async function streamOpenAICompatible(
   // `maxIter` limits tool-use rounds. If every allowed round requests more
   // tools, make one additional request without tool declarations so the
   // user still receives a visible conclusion instead of a reasoning-only
-  // response (mirrors the Gemini provider's force-final-answer pass).
-  for (let iter = 0; iter <= maxIter; iter++) {
+  // response (mirrors the Gemini provider's force-final-answer pass). The
+  // forced pass also runs when the model ends a turn with no visible text.
+  let forcedPassConsumed = false;
+  for (let iter = 0; iter <= maxIter + 1; iter++) {
     throwIfAborted(params.abortSignal);
-    const forceFinalAnswer = iter === maxIter;
+    const forceFinalAnswer = iter === maxIter || forcedPassConsumed;
     if (forceFinalAnswer) {
       messages = [
         {
@@ -865,7 +876,16 @@ export async function streamOpenAICompatible(
       },
     ));
 
-    if (!toolCalls.length || !runTools) break;
+    if (!toolCalls.length || !runTools) {
+      // The model closed its turn without any visible text (e.g. a
+      // reasoning-only response). Give it one forced no-tools answer pass
+      // before giving up.
+      if (!fullText.trim() && !forcedPassConsumed) {
+        forcedPassConsumed = true;
+        continue;
+      }
+      break;
+    }
 
     for (const call of toolCalls) {
       callbacks.onToolCallStart?.(call);

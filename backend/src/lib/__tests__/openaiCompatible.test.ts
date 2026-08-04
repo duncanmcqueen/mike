@@ -49,6 +49,72 @@ describe("OpenAI-compatible response timeout", () => {
 });
 
 describe("local OpenAI-compatible tool orchestration", () => {
+    it("forces a final answer pass when the model closes with no visible text", async () => {
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                choices: [{
+                    message: {
+                        role: "assistant",
+                        content: null,
+                        tool_calls: [{
+                            id: "call-1",
+                            type: "function",
+                            function: {
+                                name: "mcp_search_trademarks",
+                                arguments: "{\"query\":\"ACME\"}",
+                            },
+                        }],
+                    },
+                    finish_reason: "tool_calls",
+                }],
+            }), { status: 200 }))
+            // Model ends its turn with an empty, tool-less response.
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                choices: [{
+                    message: { role: "assistant", content: "" },
+                    finish_reason: "stop",
+                }],
+            }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                choices: [{
+                    message: {
+                        role: "assistant",
+                        content: "Here is the answer from what I gathered.",
+                    },
+                    finish_reason: "stop",
+                }],
+            }), { status: 200 }));
+        global.fetch = fetchMock;
+        const runTools = vi.fn().mockResolvedValue([{
+            tool_use_id: "call-1",
+            content: "{\"matches\":3}",
+        }]);
+
+        const result = await streamOpenAICompatible({
+            model: "test-local-qwen",
+            systemPrompt: "Use tools.",
+            messages: [{ role: "user", content: "Search ACME trademarks." }],
+            tools: [{
+                type: "function",
+                function: {
+                    name: "mcp_search_trademarks",
+                    description: "Search trademarks",
+                    parameters: { type: "object" },
+                },
+            }],
+            maxIterations: 5,
+            runTools,
+        });
+
+        // 1 tool round + 1 empty response + 1 forced final-answer pass.
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        const finalBody = JSON.parse(String(fetchMock.mock.calls[2][1]?.body));
+        expect(finalBody.tools).toBeUndefined();
+        expect(finalBody.messages[0].content).toContain("FINAL RESPONSE REQUIRED");
+        expect(result.fullText).toBe("Here is the answer from what I gathered.");
+        expect(runTools).toHaveBeenCalledTimes(1);
+    });
+
     it("forces a final answer pass without tools when the iteration budget is exhausted", async () => {
         const toolCallResponse = () => new Response(JSON.stringify({
             choices: [{

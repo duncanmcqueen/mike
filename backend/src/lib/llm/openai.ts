@@ -232,10 +232,12 @@ export async function streamOpenAI(
     // `maxIter` limits tool-use rounds. If every allowed round requests
     // more tools, make one additional request without tool declarations so
     // the user still receives a visible conclusion (mirrors the Gemini
-    // provider's force-final-answer pass).
-    for (let iter = 0; iter <= maxIter; iter++) {
+    // provider's force-final-answer pass). The forced pass also runs when
+    // the model ends a turn with no visible text.
+    let forcedPassConsumed = false;
+    for (let iter = 0; iter <= maxIter + 1; iter++) {
       throwIfAborted(params.abortSignal);
-      const forceFinalAnswer = iter === maxIter;
+      const forceFinalAnswer = iter === maxIter || forcedPassConsumed;
       const response = await createResponse({
         model,
         instructions: forceFinalAnswer
@@ -348,6 +350,12 @@ export async function streamOpenAI(
       throwIfAborted(params.abortSignal);
 
       if (!toolCalls.length || !runTools) {
+        // The model closed its turn without any visible text. Give it one
+        // forced no-tools answer pass before giving up.
+        if (!fullText.trim() && !forcedPassConsumed) {
+          forcedPassConsumed = true;
+          continue;
+        }
         break;
       }
 
