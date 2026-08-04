@@ -125,15 +125,24 @@ export async function streamClaude(
   });
 
   try {
-    for (let iter = 0; iter < maxIter; iter++) {
+    // `maxIter` limits tool-use rounds. If every allowed round requests
+    // more tools, make one additional request without tool declarations so
+    // the user still receives a visible conclusion (mirrors the Gemini
+    // provider's force-final-answer pass).
+    for (let iter = 0; iter <= maxIter; iter++) {
       throwIfAborted(params.abortSignal);
+      const forceFinalAnswer = iter === maxIter;
       const stream = anthropic.messages.stream({
         model,
-        system: systemPrompt,
+        system: forceFinalAnswer
+          ? `${systemPrompt}\n\nFINAL RESPONSE REQUIRED:\nYou have reached the tool-use limit. Do not call or request any more tools. Give the user a concise final answer using only relevant information already obtained. If the available tools or results cannot verify the request, say that clearly and explain what source capability is missing. Do not present unrelated tool results as responsive evidence.`
+          : systemPrompt,
         messages: messages as Anthropic.MessageParam[],
-        tools: claudeTools.length
-          ? (claudeTools as unknown as Tool[])
-          : undefined,
+        tools: forceFinalAnswer
+          ? undefined
+          : claudeTools.length
+            ? (claudeTools as unknown as Tool[])
+            : undefined,
         max_tokens: MAX_TOKENS,
         // Claude 4.x models require `thinking.type: "adaptive"` and
         // drive effort via `output_config.effort` rather than a fixed

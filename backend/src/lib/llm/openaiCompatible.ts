@@ -554,9 +554,22 @@ async function streamLocalToolsWithoutSse(
   let fullText = "";
   let needsCourtlistenerCitationReminder = false;
 
-  for (let iter = 0; iter < maxIter; iter++) {
+  // `maxIter` limits tool-use rounds. If every allowed round requests more
+  // tools, make one additional request without tool declarations so the
+  // user still receives a visible conclusion instead of a reasoning-only
+  // response (mirrors the Gemini provider's force-final-answer pass).
+  for (let iter = 0; iter <= maxIter; iter++) {
     throwIfAborted(params.abortSignal);
-    if (needsCourtlistenerCitationReminder) {
+    const forceFinalAnswer = iter === maxIter;
+    if (forceFinalAnswer) {
+      messages = [
+        {
+          role: "system",
+          content: `${systemPrompt}\n\nFINAL RESPONSE REQUIRED:\nYou have reached the tool-use limit. Do not call or request any more tools. Give the user a concise final answer using only relevant information already obtained. If the available tools or results cannot verify the request, say that clearly and explain what source capability is missing. Do not present unrelated tool results as responsive evidence.`,
+        },
+        ...messages.slice(1),
+      ];
+    } else if (needsCourtlistenerCitationReminder) {
       messages = [
         {
           role: "system",
@@ -581,7 +594,7 @@ async function streamLocalToolsWithoutSse(
         requestBody(configured, {
           model: modelName,
           messages,
-          tools,
+          tools: forceFinalAnswer ? undefined : tools,
           max_tokens: 4096,
           stream: false,
         }),
@@ -619,11 +632,13 @@ async function streamLocalToolsWithoutSse(
         }];
       },
     );
-    const toolCalls = deduplicateToolCalls(
-      structuredCalls.length
-        ? structuredCalls
-        : parseTextToolCalls(content, iter),
-    );
+    const toolCalls = forceFinalAnswer
+      ? []
+      : deduplicateToolCalls(
+          structuredCalls.length
+            ? structuredCalls
+            : parseTextToolCalls(content, iter),
+        );
 
     if (!toolCalls.length || !runTools) {
       fullText += visibleTextFromNonStreamingMessage(
@@ -700,9 +715,22 @@ export async function streamOpenAICompatible(
   let fullText = "";
   let needsCourtlistenerCitationReminder = false;
 
-  for (let iter = 0; iter < maxIter; iter++) {
+  // `maxIter` limits tool-use rounds. If every allowed round requests more
+  // tools, make one additional request without tool declarations so the
+  // user still receives a visible conclusion instead of a reasoning-only
+  // response (mirrors the Gemini provider's force-final-answer pass).
+  for (let iter = 0; iter <= maxIter; iter++) {
     throwIfAborted(params.abortSignal);
-    if (needsCourtlistenerCitationReminder) {
+    const forceFinalAnswer = iter === maxIter;
+    if (forceFinalAnswer) {
+      messages = [
+        {
+          role: "system",
+          content: `${systemPrompt}\n\nFINAL RESPONSE REQUIRED:\nYou have reached the tool-use limit. Do not call or request any more tools. Give the user a concise final answer using only relevant information already obtained. If the available tools or results cannot verify the request, say that clearly and explain what source capability is missing. Do not present unrelated tool results as responsive evidence.`,
+        },
+        ...messages.slice(1),
+      ];
+    } else if (needsCourtlistenerCitationReminder) {
       messages = [
         {
           role: "system",
@@ -727,7 +755,7 @@ export async function streamOpenAICompatible(
         requestBody(configured, {
           model: modelName,
           messages,
-          tools: tools.length ? tools : undefined,
+          tools: tools.length && !forceFinalAnswer ? tools : undefined,
           stream: true,
         }),
       ),

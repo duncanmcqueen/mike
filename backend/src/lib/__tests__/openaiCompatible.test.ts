@@ -49,6 +49,67 @@ describe("OpenAI-compatible response timeout", () => {
 });
 
 describe("local OpenAI-compatible tool orchestration", () => {
+    it("forces a final answer pass without tools when the iteration budget is exhausted", async () => {
+        const toolCallResponse = () => new Response(JSON.stringify({
+            choices: [{
+                message: {
+                    role: "assistant",
+                    content: null,
+                    tool_calls: [{
+                        id: "call-1",
+                        type: "function",
+                        function: {
+                            name: "mcp_search_trademarks",
+                            arguments: "{\"query\":\"ACME\"}",
+                        },
+                    }],
+                },
+                finish_reason: "tool_calls",
+            }],
+        }), { status: 200 });
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(toolCallResponse())
+            .mockResolvedValueOnce(toolCallResponse())
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                choices: [{
+                    message: {
+                        role: "assistant",
+                        content: "Based on what I found, here is the answer.",
+                    },
+                    finish_reason: "stop",
+                }],
+            }), { status: 200 }));
+        global.fetch = fetchMock;
+        const runTools = vi.fn().mockResolvedValue([{
+            tool_use_id: "call-1",
+            content: "{\"matches\":3}",
+        }]);
+
+        const result = await streamOpenAICompatible({
+            model: "test-local-qwen",
+            systemPrompt: "Use tools.",
+            messages: [{ role: "user", content: "Search ACME trademarks." }],
+            tools: [{
+                type: "function",
+                function: {
+                    name: "mcp_search_trademarks",
+                    description: "Search trademarks",
+                    parameters: { type: "object" },
+                },
+            }],
+            maxIterations: 2,
+            runTools,
+        });
+
+        // 2 tool rounds + 1 forced final-answer pass.
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        const finalBody = JSON.parse(String(fetchMock.mock.calls[2][1]?.body));
+        expect(finalBody.tools).toBeUndefined();
+        expect(finalBody.messages[0].content).toContain("FINAL RESPONSE REQUIRED");
+        expect(result.fullText).toBe("Based on what I found, here is the answer.");
+        expect(runTools).toHaveBeenCalledTimes(2);
+    });
+
     it("uses non-streaming responses and deduplicates identical Qwen tool calls", async () => {
         const fetchMock = vi.fn()
             .mockResolvedValueOnce(new Response(JSON.stringify({
