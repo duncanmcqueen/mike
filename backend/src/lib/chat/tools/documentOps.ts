@@ -12,7 +12,10 @@ import {
   type EditInput,
 } from "../../docxTrackedChanges";
 import { buildDownloadUrl } from "../../downloadTokens";
-import { loadActiveVersion } from "../../documentVersions";
+import {
+  contentSha256,
+  loadActiveVersion,
+} from "../../documentVersions";
 import {
   type DocStore,
   type DocIndex,
@@ -31,7 +34,11 @@ import {
 import { extractPresentationText } from "../../officeText";
 import { spreadsheetToLLMText } from "../../spreadsheet";
 
-export function citationReminder(docLabel: string, filename: string): string {
+export function citationReminder(
+  docLabel: string,
+  filename: string,
+  promptFilename: string,
+): string {
   const isSpreadsheet = isSpreadsheetDocumentType(
     filename.split(".").pop() ?? "",
   );
@@ -39,7 +46,8 @@ export function citationReminder(docLabel: string, filename: string): string {
     ? `Use this citation object shape for this spreadsheet: {"ref": 1, "doc_id": "${docLabel}", "quotes": [{"sheet": "Sheet name", "cell": "B7", "quote": "plain cell value"}]}. Cite by "sheet" + "cell" (A1 address or range), not by page.`
     : `Use this citation object shape: {"ref": 1, "doc_id": "${docLabel}", "quotes": [{"page": 1, "quote": "exact verbatim text from the document"}]}. Include top-level "page" and "quote" too only if they match the first quote.`;
   return [
-    `[Citation requirement for ${docLabel} ("${filename}")]:`,
+    `[Citation requirement for ${docLabel}]:`,
+    `Document filename: ${promptFilename}`,
     `If your final answer makes any factual claim from this document, include inline [N] markers and append a final <CITATIONS> JSON block.`,
     `Every citation entry for this document MUST use "doc_id": "${docLabel}".`,
     shapeLine,
@@ -695,6 +703,7 @@ export async function generateDocx(
         file_type: "docx",
         size_bytes: buf.byteLength,
         page_count: null,
+        content_sha256: contentSha256(buf),
       })
       .select("id")
       .single();
@@ -1186,6 +1195,7 @@ async function persistGeneratedFile(params: {
       file_type: extension,
       size_bytes: buffer.byteLength,
       page_count: null,
+      content_sha256: contentSha256(buffer),
     })
     .select("id")
     .single();
@@ -1506,6 +1516,16 @@ export async function runEditDocument(params: {
     newPath = reuseVersion.storagePath;
     versionRowId = reuseVersion.versionId;
     nextVersionNumber = reuseVersion.versionNumber;
+
+    // Clear the hash before the bytes change; the update below sets it again.
+    // Storage and Postgres cannot be written atomically, so a failure between
+    // the two leaves the version unhashed and therefore unverifiable, rather
+    // than hashed against content it no longer holds.
+    await db
+      .from("document_versions")
+      .update({ content_sha256: null })
+      .eq("id", versionRowId);
+
     await uploadFile(
       newPath,
       ab,
@@ -1517,6 +1537,7 @@ export async function runEditDocument(params: {
         file_type: "docx",
         size_bytes: editedBytes.byteLength,
         page_count: null,
+        content_sha256: contentSha256(editedBytes),
       })
       .eq("id", versionRowId);
   } else {
@@ -1572,6 +1593,7 @@ export async function runEditDocument(params: {
         file_type: "docx",
         size_bytes: editedBytes.byteLength,
         page_count: null,
+        content_sha256: contentSha256(editedBytes),
       })
       .select("id")
       .single();
@@ -1705,7 +1727,6 @@ export async function getTurnReadIdentity(params: {
 
 export function duplicateReadDocumentResult(identity: {
   docLabel: string;
-  filename: string;
   documentId?: string;
   versionId?: string | null;
 }) {
@@ -1713,7 +1734,6 @@ export function duplicateReadDocumentResult(identity: {
     ok: true,
     already_read: true,
     doc_id: identity.docLabel,
-    filename: identity.filename,
     document_id: identity.documentId,
     version_id: identity.versionId ?? null,
     content:

@@ -4,7 +4,9 @@
 -- should instead apply the dated incremental migration files in
 -- backend/migrations that are newer than the version of Mike they currently
 -- have deployed.
-
+-- Use this for a fresh Supabase database. Existing deployments should instead
+-- apply the dated incremental migration files in backend/migrations that are
+-- newer than the version of Mike they currently have deployed.
 create extension if not exists "pgcrypto";
 create extension if not exists "pg_trgm";
 
@@ -90,6 +92,7 @@ create table if not exists public.user_mcp_connectors (
   name text not null,
   transport text not null default 'streamable_http'
     check (transport in ('streamable_http', 'stdio')),
+    check (transport in ('streamable_http')),
   server_url text not null,
   auth_type text not null default 'none'
     check (auth_type in ('none', 'bearer', 'oauth')),
@@ -281,6 +284,7 @@ create table if not exists public.document_versions (
   file_type text,
   size_bytes integer,
   page_count integer,
+  content_sha256 text,
   deleted_at timestamptz,
   deleted_by uuid,
   created_at timestamptz not null default now(),
@@ -596,6 +600,7 @@ create table if not exists public.tabular_reviews (
   document_ids jsonb,
   workflow_id uuid references public.workflows(id) on delete set null,
   practice text,
+  document_grouping text not null default 'document' check (document_grouping in ('document', 'folder')),
   shared_with jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -691,10 +696,41 @@ as $$
   order by vp.created_at desc;
 $$;
 
+create table if not exists public.tabular_review_rows (
+  id uuid primary key default gen_random_uuid(),
+  review_id uuid not null references public.tabular_reviews(id) on delete cascade,
+  label text not null,
+  row_type text not null check (row_type in ('document', 'folder')),
+  folder_id uuid references public.project_subfolders(id) on delete set null,
+  library_folder_id uuid references public.library_folders(id) on delete set null,
+  document_id uuid references public.documents(id) on delete set null,
+  sort_index integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_tabular_review_rows_review
+  on public.tabular_review_rows(review_id, sort_index);
+
+alter table public.tabular_review_rows enable row level security;
+
+create table if not exists public.tabular_review_row_sources (
+  row_id uuid not null references public.tabular_review_rows(id) on delete cascade,
+  document_id uuid not null references public.documents(id) on delete cascade,
+  sort_index integer not null default 0,
+  created_at timestamptz not null default now(),
+  primary key (row_id, document_id)
+);
+
+create index if not exists idx_tabular_review_row_sources_document
+  on public.tabular_review_row_sources(document_id);
+
+alter table public.tabular_review_row_sources enable row level security;
+
 create table if not exists public.tabular_cells (
   id uuid primary key default gen_random_uuid(),
   review_id uuid not null references public.tabular_reviews(id) on delete cascade,
-  document_id uuid not null references public.documents(id) on delete cascade,
+  row_id uuid not null references public.tabular_review_rows(id) on delete cascade,
+  document_id uuid references public.documents(id) on delete cascade,
   column_index integer not null,
   content text,
   citations jsonb,
@@ -708,7 +744,8 @@ create index if not exists idx_tabular_cells_review
 drop function if exists public.get_tabular_reviews_overview(
   text, text, text, integer, integer, text, text, text
 );
-
+create index if not exists idx_tabular_cells_review_row
+  on public.tabular_cells(review_id, row_id, column_index);
 create or replace function public.get_tabular_reviews_overview(
   p_user_id text,
   p_user_email text,
@@ -1425,6 +1462,80 @@ revoke all on public.legal_monitor_documents from anon, authenticated;
 revoke all on public.workflow_open_source_submissions from anon, authenticated;
 revoke all on public.support_feedback from anon, authenticated;
 revoke all on public.contact_messages from anon, authenticated;
+revoke all on public.courtlistener_citation_index from anon, authenticated;
+revoke all on public.courtlistener_opinion_cluster_index from anon, authenticated;
+
+-- CourtListener bulk-data indexes
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.courtlistener_citation_index (
+  id bigint primary key,
+  volume text not null,
+  reporter text not null,
+  page text not null,
+  type integer,
+  cluster_id bigint not null,
+  date_created timestamptz,
+  date_modified timestamptz
+);
+
+create index if not exists courtlistener_citation_lookup_idx
+  on public.courtlistener_citation_index(volume, reporter, page);
+
+create index if not exists courtlistener_citation_cluster_idx
+  on public.courtlistener_citation_index(cluster_id);
+
+alter table public.courtlistener_citation_index enable row level security;
+
+create table if not exists public.courtlistener_opinion_cluster_index (
+  id bigint primary key,
+  case_name text,
+  case_name_short text,
+  case_name_full text,
+  slug text,
+  date_filed date,
+  citation_count integer,
+  precedential_status text,
+  filepath_pdf_harvard text,
+  filepath_json_harvard text,
+  docket_id bigint
+);
+
+alter table public.courtlistener_opinion_cluster_index enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- Direct client grant hardening
+-- ---------------------------------------------------------------------------
+--
+-- The frontend uses Supabase directly only for authentication. Application
+-- data access goes through the backend API with the service role after the
+-- backend verifies the user's JWT. Do not grant the browser anon/authenticated
+-- roles direct table privileges for backend-owned data.
+
+revoke all on public.user_profiles from anon, authenticated;
+revoke all on public.projects from anon, authenticated;
+revoke all on public.project_subfolders from anon, authenticated;
+revoke all on public.library_folders from anon, authenticated;
+revoke all on public.documents from anon, authenticated;
+revoke all on public.document_versions from anon, authenticated;
+revoke all on public.document_edits from anon, authenticated;
+revoke all on public.workflows from anon, authenticated;
+revoke all on public.hidden_workflows from anon, authenticated;
+revoke all on public.workflow_shares from anon, authenticated;
+revoke all on public.chats from anon, authenticated;
+revoke all on public.chat_messages from anon, authenticated;
+revoke all on public.tabular_reviews from anon, authenticated;
+revoke all on public.tabular_cells from anon, authenticated;
+revoke all on public.tabular_review_rows from anon, authenticated;
+revoke all on public.tabular_review_row_sources from anon, authenticated;
+revoke all on public.tabular_review_chats from anon, authenticated;
+revoke all on public.tabular_review_chat_messages from anon, authenticated;
+revoke all on public.user_api_keys from anon, authenticated;
+revoke all on public.user_mcp_connectors from anon, authenticated;
+revoke all on public.user_mcp_oauth_tokens from anon, authenticated;
+revoke all on public.user_mcp_oauth_states from anon, authenticated;
+revoke all on public.user_mcp_connector_tools from anon, authenticated;
+revoke all on public.user_mcp_tool_audit_logs from anon, authenticated;
 revoke all on public.courtlistener_citation_index from anon, authenticated;
 revoke all on public.courtlistener_opinion_cluster_index from anon, authenticated;
 

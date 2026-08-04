@@ -7,6 +7,7 @@ import {
     shouldConvertToPdf,
 } from "./documentTypes";
 import { convertedPdfKey, docxToPdf } from "./convert";
+import { contentSha256 } from "./documentVersions";
 
 type Db = ReturnType<typeof createServerDatabase>;
 
@@ -118,6 +119,7 @@ export async function createDocumentFromBytes(params: {
                 file_type: suffix,
                 size_bytes: content.byteLength,
                 page_count: pageCount,
+                content_sha256: contentSha256(content),
             })
             .select("id")
             .single();
@@ -148,6 +150,8 @@ export async function createDocumentFromBytes(params: {
                   filename,
                   storage_path: key,
                   pdf_storage_path: pdfStoragePath,
+                  folder_id:
+                      (updated.library_folder_id as string | null | undefined) ?? null,
                   file_type: suffix,
                   size_bytes: content.byteLength,
                   page_count: pageCount,

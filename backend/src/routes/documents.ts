@@ -21,6 +21,7 @@ import { buildDownloadUrl } from "../lib/downloadTokens";
 import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
+  contentSha256,
   loadActiveVersion,
 } from "../lib/documentVersions";
 import { ensureDocAccess } from "../lib/access";
@@ -539,6 +540,7 @@ documentsRouter.post(
         file_type: sourceType || null,
         size_bytes: active.size_bytes ?? bytes.byteLength,
         page_count: active.page_count,
+        content_sha256: contentSha256(bytes),
       })
       .select("id, version_number, source, created_at, filename")
       .single();
@@ -708,6 +710,7 @@ documentsRouter.post(
         file_type: suffix,
         size_bytes: file.buffer.byteLength,
         page_count: pageCount,
+        content_sha256: contentSha256(file.buffer),
       })
       .select("id, version_number, source, created_at, filename")
       .single();
@@ -903,6 +906,7 @@ documentsRouter.put(
         file_type: suffix,
         size_bytes: file.buffer.byteLength,
         page_count: pageCount,
+        content_sha256: contentSha256(file.buffer),
         created_at: uploadedAt,
       })
       .eq("id", versionId)
@@ -1235,6 +1239,18 @@ async function handleEditResolution(
     resolvedBytes.byteOffset,
     resolvedBytes.byteOffset + resolvedBytes.byteLength,
   ) as ArrayBuffer;
+
+  // Clear the hash before the bytes change, and set it again after. The stored
+  // object and the hash live in different systems, so they cannot be written
+  // atomically; ordering it this way means a failure in between leaves the
+  // version unhashed, which the manifest reports as unverifiable. The
+  // alternative ordering can leave a hash attesting to content the version no
+  // longer holds, which is the one thing the manifest must never do.
+  await db
+    .from("document_versions")
+    .update({ content_sha256: null })
+    .eq("id", doc.current_version_id);
+
   devLog(`[edit-resolution] overwriting bytes in place`, {
     latestPath,
     byteLength: ab.byteLength,
@@ -1244,6 +1260,11 @@ async function handleEditResolution(
     ab,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   );
+
+  await db
+    .from("document_versions")
+    .update({ content_sha256: contentSha256(ab) })
+    .eq("id", doc.current_version_id);
 
   const { error: statusErr } = await db
     .from("document_edits")
@@ -1257,7 +1278,6 @@ async function handleEditResolution(
     newStatus: mode === "accept" ? "accepted" : "rejected",
     statusErr,
   });
-
   const { count: remainingPending } = await db
     .from("document_edits")
     .select("id", { count: "exact", head: true })

@@ -13,13 +13,11 @@ const {
     checkProjectAccess,
     filterAccessibleDocumentIds,
     getUserModelSettings,
-    loadActiveVersion,
 } = vi.hoisted(() => ({
     ensureReviewAccess: vi.fn(),
     checkProjectAccess: vi.fn(),
     filterAccessibleDocumentIds: vi.fn(),
     getUserModelSettings: vi.fn(),
-    loadActiveVersion: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -112,12 +110,11 @@ vi.mock("../../lib/userSettings", () => ({
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
-// Version-path enrichment + active-version resolution hit the DB in real life;
-// no-op them so route responses are driven purely by the table stubs.
+// Version-path enrichment hits the DB in real life; no-op it so route
+// responses are driven purely by the table stubs.
 vi.mock("../../lib/documentVersions", () => ({
     attachActiveVersionPaths: vi.fn(async () => {}),
     attachLatestVersionNumbers: vi.fn(async () => {}),
-    loadActiveVersion: (...args: unknown[]) => loadActiveVersion(...args),
 }));
 
 import { app } from "../../app";
@@ -145,7 +142,6 @@ describe("tabular.routes", () => {
             legal_research_us: false,
             api_keys: { claude: "sk-test" },
         });
-        loadActiveVersion.mockResolvedValue(null);
     });
 
     // ── GET /tabular-review (overview) ────────────────────────────────────
@@ -180,6 +176,31 @@ describe("tabular.routes", () => {
                 data: { id: "r9", title: "Gamma", document_ids: ["d1"] },
                 error: null,
             };
+            dbState.tables.documents = {
+                data: [
+                    {
+                        id: "d1",
+                        filename: "Agreement.pdf",
+                        file_type: "pdf",
+                        folder_id: null,
+                    },
+                ],
+                error: null,
+            };
+            dbState.tables.tabular_review_rows = {
+                data: [
+                    {
+                        id: "row-1",
+                        review_id: "r9",
+                        label: "Agreement.pdf",
+                        row_type: "document",
+                        folder_id: null,
+                        document_id: "d1",
+                        sort_index: 0,
+                    },
+                ],
+                error: null,
+            };
             // d2 is not accessible — it must be filtered out of the insert.
             filterAccessibleDocumentIds.mockResolvedValue(["d1"]);
 
@@ -201,16 +222,216 @@ describe("tabular.routes", () => {
             expect(reviewInsert?.payload).toMatchObject({
                 document_ids: ["d1"],
             });
-            // Cells are created for accessible docs × columns only (1 × 1).
+            // Cells are created for accessible review rows × columns only (1 × 1).
             const cellInsert = dbState.inserts.find(
                 (i) => i.table === "tabular_cells",
             );
             expect(cellInsert?.payload).toEqual([
                 {
                     review_id: "r9",
+                    row_id: "row-1",
                     document_id: "d1",
                     column_index: 0,
                     status: "pending",
+                },
+            ]);
+        });
+
+        it("groups project-folder documents into one review row", async () => {
+            dbState.tables.tabular_reviews = {
+                data: { id: "r10", title: "Grouped", document_ids: ["d1", "d2", "d3"] },
+                error: null,
+            };
+            dbState.tables.documents = {
+                data: [
+                    { id: "d1", filename: "A.pdf", file_type: "pdf", project_id: "p1", folder_id: "f1" },
+                    { id: "d2", filename: "B.pdf", file_type: "pdf", project_id: "p1", folder_id: "f1" },
+                    { id: "d3", filename: "Loose.pdf", file_type: "pdf", project_id: "p1", folder_id: null },
+                ],
+                error: null,
+            };
+            dbState.tables.project_subfolders = {
+                data: [{ id: "f1", name: "Contracts", parent_folder_id: null }],
+                error: null,
+            };
+            dbState.tables.tabular_review_rows = {
+                data: [
+                    {
+                        id: "row-folder",
+                        review_id: "r10",
+                        label: "Contracts",
+                        row_type: "folder",
+                        folder_id: "f1",
+                        library_folder_id: null,
+                        document_id: null,
+                        sort_index: 0,
+                    },
+                    {
+                        id: "row-document",
+                        review_id: "r10",
+                        label: "Loose.pdf",
+                        row_type: "document",
+                        folder_id: null,
+                        library_folder_id: null,
+                        document_id: "d3",
+                        sort_index: 1,
+                    },
+                ],
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/tabular-review")
+                .set(...AUTH)
+                .send({
+                    title: "Grouped",
+                    project_id: "p1",
+                    document_ids: ["d1", "d2", "d3"],
+                    document_grouping: "folder",
+                    columns_config: [{ index: 0, name: "Col", prompt: "p" }],
+                });
+
+            expect(res.status).toBe(201);
+            expect(dbState.inserts.find((i) => i.table === "tabular_reviews")?.payload)
+                .toMatchObject({ document_grouping: "folder" });
+            expect(dbState.inserts.find((i) => i.table === "tabular_review_rows")?.payload)
+                .toEqual([
+                    {
+                        review_id: "r10",
+                        label: "Contracts",
+                        row_type: "folder",
+                        folder_id: "f1",
+                        library_folder_id: null,
+                        document_id: null,
+                        sort_index: 0,
+                    },
+                    {
+                        review_id: "r10",
+                        label: "Loose.pdf",
+                        row_type: "document",
+                        folder_id: null,
+                        library_folder_id: null,
+                        document_id: "d3",
+                        sort_index: 1,
+                    },
+                ]);
+            expect(dbState.inserts.find((i) => i.table === "tabular_review_row_sources")?.payload)
+                .toEqual([
+                    { row_id: "row-folder", document_id: "d1", sort_index: 0 },
+                    { row_id: "row-folder", document_id: "d2", sort_index: 1 },
+                    { row_id: "row-document", document_id: "d3", sort_index: 0 },
+                ]);
+            expect(dbState.inserts.find((i) => i.table === "tabular_cells")?.payload)
+                .toEqual([
+                    {
+                        review_id: "r10",
+                        row_id: "row-folder",
+                        document_id: null,
+                        column_index: 0,
+                        status: "pending",
+                    },
+                    {
+                        review_id: "r10",
+                        row_id: "row-document",
+                        document_id: "d3",
+                        column_index: 0,
+                        status: "pending",
+                    },
+                ]);
+        });
+
+        it("groups library file-folder documents into one review row", async () => {
+            dbState.tables.tabular_reviews = {
+                data: { id: "r11", title: "Library grouped" },
+                error: null,
+            };
+            dbState.tables.documents = {
+                data: [
+                    {
+                        id: "d1",
+                        filename: "A.pdf",
+                        file_type: "pdf",
+                        project_id: null,
+                        folder_id: null,
+                        library_folder_id: "lf1",
+                    },
+                    {
+                        id: "d2",
+                        filename: "B.pdf",
+                        file_type: "pdf",
+                        project_id: null,
+                        folder_id: null,
+                        library_folder_id: "lf1",
+                    },
+                ],
+                error: null,
+            };
+            dbState.tables.library_folders = {
+                data: [
+                    {
+                        id: "lf1",
+                        name: "Precedents",
+                        parent_folder_id: null,
+                    },
+                ],
+                error: null,
+            };
+            dbState.tables.tabular_review_rows = {
+                data: [
+                    {
+                        id: "row-library-folder",
+                        review_id: "r11",
+                        label: "Precedents",
+                        row_type: "folder",
+                        folder_id: null,
+                        library_folder_id: "lf1",
+                        document_id: null,
+                        sort_index: 0,
+                    },
+                ],
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/tabular-review")
+                .set(...AUTH)
+                .send({
+                    title: "Library grouped",
+                    document_ids: ["d1", "d2"],
+                    document_grouping: "folder",
+                    columns_config: [{ index: 0, name: "Col", prompt: "p" }],
+                });
+
+            expect(res.status).toBe(201);
+            expect(
+                dbState.inserts.find(
+                    (insert) => insert.table === "tabular_review_rows",
+                )?.payload,
+            ).toEqual([
+                {
+                    review_id: "r11",
+                    label: "Precedents",
+                    row_type: "folder",
+                    folder_id: null,
+                    library_folder_id: "lf1",
+                    document_id: null,
+                    sort_index: 0,
+                },
+            ]);
+            expect(
+                dbState.inserts.find(
+                    (insert) => insert.table === "tabular_review_row_sources",
+                )?.payload,
+            ).toEqual([
+                {
+                    row_id: "row-library-folder",
+                    document_id: "d1",
+                    sort_index: 0,
+                },
+                {
+                    row_id: "row-library-folder",
+                    document_id: "d2",
+                    sort_index: 1,
                 },
             ]);
         });
@@ -408,14 +629,14 @@ describe("tabular.routes", () => {
 
     // ── POST /tabular-review/:reviewId/clear-cells ────────────────────────
     describe("POST /tabular-review/:reviewId/clear-cells", () => {
-        it("returns 400 when document_ids is missing", async () => {
+        it("returns 400 when row_ids is missing", async () => {
             const res = await request(app)
                 .post("/tabular-review/r1/clear-cells")
                 .set(...AUTH)
                 .send({});
 
             expect(res.status).toBe(400);
-            expect(res.body.detail).toBe("document_ids is required");
+            expect(res.body.detail).toBe("row_ids is required");
         });
 
         it("returns 404 when review access is denied", async () => {
@@ -428,7 +649,7 @@ describe("tabular.routes", () => {
             const res = await request(app)
                 .post("/tabular-review/r1/clear-cells")
                 .set(...AUTH)
-                .send({ document_ids: ["d1"] });
+                .send({ row_ids: ["row-1"] });
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Review not found");
@@ -443,7 +664,7 @@ describe("tabular.routes", () => {
             const res = await request(app)
                 .post("/tabular-review/r1/clear-cells")
                 .set(...AUTH)
-                .send({ document_ids: ["d1"] });
+                .send({ row_ids: ["row-1"] });
 
             expect(res.status).toBe(204);
         });
@@ -451,7 +672,7 @@ describe("tabular.routes", () => {
 
     // ── POST /tabular-review/:reviewId/regenerate-cell ────────────────────
     describe("POST /tabular-review/:reviewId/regenerate-cell", () => {
-        it("returns 400 when document_id / column_index are missing", async () => {
+        it("returns 400 when row_id / column_index are missing", async () => {
             const res = await request(app)
                 .post("/tabular-review/r1/regenerate-cell")
                 .set(...AUTH)
@@ -459,7 +680,7 @@ describe("tabular.routes", () => {
 
             expect(res.status).toBe(400);
             expect(res.body.detail).toBe(
-                "document_id and column_index are required",
+                "row_id and column_index are required",
             );
         });
 
@@ -473,7 +694,7 @@ describe("tabular.routes", () => {
             const res = await request(app)
                 .post("/tabular-review/r1/regenerate-cell")
                 .set(...AUTH)
-                .send({ document_id: "d1", column_index: 0 });
+                .send({ row_id: "row-1", column_index: 0 });
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Review not found");
@@ -493,13 +714,13 @@ describe("tabular.routes", () => {
             const res = await request(app)
                 .post("/tabular-review/r1/regenerate-cell")
                 .set(...AUTH)
-                .send({ document_id: "d1", column_index: 0 });
+                .send({ row_id: "row-1", column_index: 0 });
 
             expect(res.status).toBe(400);
             expect(res.body.detail).toBe("Column not found");
         });
 
-        it("returns 404 when the document is not accessible", async () => {
+        it("returns 404 when a row source document is not accessible", async () => {
             dbState.tables.tabular_reviews = {
                 data: {
                     id: "r1",
@@ -509,15 +730,37 @@ describe("tabular.routes", () => {
                 },
                 error: null,
             };
+            dbState.tables.tabular_review_rows = {
+                data: [
+                    {
+                        id: "row-forbidden",
+                        review_id: "r1",
+                        label: "Forbidden",
+                        row_type: "document",
+                        document_id: "d-forbidden",
+                        sort_index: 0,
+                    },
+                ],
+                error: null,
+            };
+            dbState.tables.tabular_review_row_sources = {
+                data: [
+                    {
+                        row_id: "row-forbidden",
+                        document_id: "d-forbidden",
+                    },
+                ],
+                error: null,
+            };
             filterAccessibleDocumentIds.mockResolvedValue([]);
 
             const res = await request(app)
                 .post("/tabular-review/r1/regenerate-cell")
                 .set(...AUTH)
-                .send({ document_id: "d-forbidden", column_index: 0 });
+                .send({ row_id: "row-forbidden", column_index: 0 });
 
             expect(res.status).toBe(404);
-            expect(res.body.detail).toBe("Document not found");
+            expect(res.body.detail).toBe("Review row not found");
         });
 
         it("returns 422 with missing_api_key when the model key is absent", async () => {
@@ -530,8 +773,21 @@ describe("tabular.routes", () => {
                 },
                 error: null,
             };
-            dbState.tables.documents = {
-                data: { id: "d1", current_version_id: null },
+            dbState.tables.tabular_review_rows = {
+                data: [
+                    {
+                        id: "row-1",
+                        review_id: "r1",
+                        label: "Document",
+                        row_type: "document",
+                        document_id: "d1",
+                        sort_index: 0,
+                    },
+                ],
+                error: null,
+            };
+            dbState.tables.tabular_review_row_sources = {
+                data: [{ row_id: "row-1", document_id: "d1" }],
                 error: null,
             };
             getUserModelSettings.mockResolvedValue({
@@ -544,7 +800,7 @@ describe("tabular.routes", () => {
             const res = await request(app)
                 .post("/tabular-review/r1/regenerate-cell")
                 .set(...AUTH)
-                .send({ document_id: "d1", column_index: 0 });
+                .send({ row_id: "row-1", column_index: 0 });
 
             expect(res.status).toBe(422);
             expect(res.body.code).toBe("missing_api_key");

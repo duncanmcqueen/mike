@@ -13,7 +13,6 @@ const REQUIRED_PUBLIC_BUILD_ENV = isLocalAuthProvider
           "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY",
           "NEXT_PUBLIC_API_BASE_URL",
       ];
-
 if (process.env.NODE_ENV === "production") {
     const missing = REQUIRED_PUBLIC_BUILD_ENV.filter(
         (key) => !process.env[key]?.trim(),
