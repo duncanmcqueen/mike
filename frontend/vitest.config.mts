@@ -57,17 +57,17 @@ export default defineConfig({
             // plumbing and several endpoint families are tested; the
             // remaining gap is thin endpoint wrappers (MCP connectors,
             // workflow shares) and local-auth flows that add functions faster
-            // than tests. Measured on this merged tree: 54.35% statements,
-            // 58.57% branches, 38.23% functions, 54.64% lines. These floors
+            // than tests. Measured on this merged tree: 55.31% statements,
+            // 60.10% branches, 39.52% functions, 55.41% lines. These floors
             // are the measurements rounded down to whole percents, so CI
             // fails on a real drop. When you add tests, raise the floors in
             // the same PR. Backlog + per-area status:
             // docs/frontend-testing.md.
             thresholds: {
-                statements: 54,
-                branches: 58,
-                functions: 38,
-                lines: 54,
+                statements: 55,
+                branches: 60,
+                functions: 39,
+                lines: 55,
             },
         },
     },

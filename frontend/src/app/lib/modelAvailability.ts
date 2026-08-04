@@ -7,9 +7,11 @@ export type ModelProvider =
     | "gemini"
     | "openai"
     | "local"
-    | "committee";
+    | "committee"
+    | "ollama";
 
 export function getModelProvider(modelId: string): ModelProvider | null {
+    if (modelId.startsWith("ollama/")) return "ollama"; // dynamic, not in the static list
     const model = SETTINGS_MODELS.find((m) => m.id === modelId);
     if (!model) return null;
     return modelGroupToProvider(model.group);
@@ -28,7 +30,13 @@ export function isProviderAvailable(
     provider: ModelProvider,
     apiKeys: ApiKeyState,
 ): boolean {
-    if (provider === "local" || provider === "committee") return true;
+    if (
+        provider === "local" ||
+        provider === "committee" ||
+        provider === "ollama"
+    ) {
+        return true;
+    }
     return !!apiKeys[provider]?.configured;
 }
 
@@ -38,6 +46,7 @@ export function providerLabel(provider: ModelProvider): string {
     if (provider === "claude") return "Anthropic (Claude)";
     if (provider === "kimi") return "Moonshot (Kimi)";
     if (provider === "openai") return "OpenAI";
+    if (provider === "ollama") return "Local (Ollama)";
     return "Google (Gemini)";
 }
 

@@ -27,6 +27,7 @@ describe("getModelProvider", () => {
         expect(getModelProvider("claude-haiku-4-5")).toBe("claude");
         expect(getModelProvider("gemini-3-flash-preview")).toBe("gemini");
         expect(getModelProvider("gpt-5.4-lite")).toBe("openai");
+        expect(getModelProvider("ollama/qwen3.6")).toBe("ollama");
     });
 
     it("resolves a provider for every model in SETTINGS_MODELS", () => {
@@ -58,6 +59,10 @@ describe("isModelAvailable", () => {
             ),
         ).toBe(true);
     });
+
+    it("allows dynamic Ollama models without an API key", () => {
+        expect(isModelAvailable("ollama/qwen3.6", keys({}))).toBe(true);
+    });
 });
 
 describe("isProviderAvailable", () => {
@@ -80,6 +85,7 @@ describe("providerLabel", () => {
         expect(providerLabel("claude")).toBe("Anthropic (Claude)");
         expect(providerLabel("openai")).toBe("OpenAI");
         expect(providerLabel("gemini")).toBe("Google (Gemini)");
+        expect(providerLabel("ollama")).toBe("Local (Ollama)");
     });
 });
 

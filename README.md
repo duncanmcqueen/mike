@@ -63,6 +63,7 @@ Website: [mikeoss.com](https://mikeoss.com)
 - `backend/` - Express API, provider-neutral data access, document processing, model routing, and database schema
 - `backend/schema.sql` - Supabase schema for fresh databases
 - `backend/migrations/` - dated, incremental schema migrations; on an existing database, apply the files dated after the Mike version you deployed
+- `docker-compose.yml` - complete local Supabase, object-storage, email, frontend, and backend stack
 - `word-addin/` - Microsoft Word task-pane add-in
 - `docs/deployment-modules.md` - deployment profiles and optional-module allow-list
 - `docs/model-orchestration.md` - local OpenAI-compatible and committee model setup
@@ -73,22 +74,52 @@ Website: [mikeoss.com](https://mikeoss.com)
 - `docs/patent-mcp-connector.md` - enabling the managed USPTO patent and trademark MCP connector
 - `docs/word-addin.md` - Word add-in development, sideloading, and deployment
 
+## Quick start with Docker
+
+The bundled `docker-compose.yml` runs Mike with local Supabase, RustFS object
+storage, Mailpit, and the frontend/backend. It is an alternative to the
+self-contained SQLite profile described below.
+
+```bash
+cp .env.example .env
+cp backend/.env.example backend/.env
+```
+
+Set `DOWNLOAD_SIGNING_SECRET` and `USER_API_KEYS_ENCRYPTION_SECRET` in
+`backend/.env` to separate values generated with `openssl rand -hex 32`. Add a
+hosted model API key unless you plan to use Ollama exclusively, then start the
+stack:
+
+```bash
+docker compose up --build
+```
+
+Open `http://localhost:3000`. Mailpit is available at
+`http://localhost:8025`, and the RustFS console is at
+`http://localhost:9001`.
+
+Ollama models are discovered dynamically from the host. Pulling a model makes
+it available under the Local model group after refresh:
+
+```bash
+ollama pull qwen3.6
+```
+
+The Supabase keys included for this stack are public local-development demo
+values. Replace them before exposing the services outside localhost.
+
 ## System Workflows
 
 Mike's system assistant and tabular review workflows are maintained in the
 [`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows)
 repository.
 
-Every built assistant workflow gets a slash command from its `SKILL.md` name:
+## Manual or production deployment
 
-```yaml
-name: contract-intake
-```
+Use this path when connecting Mike to managed Supabase and S3-compatible
+storage rather than the infrastructure bundled in Docker Compose.
 
-For example, `name: contract-intake` becomes `/contract-intake`. Workflow names
-must contain only lowercase letters, numbers, and hyphens.
-
-## Prerequisites
+### Prerequisites
 
 - Node.js 20 or newer; Node.js 22 or newer for the SQLite providers
 - npm
@@ -99,7 +130,7 @@ must contain only lowercase letters, numbers, and hyphens.
 - Optional: [`uv`](https://docs.astral.sh/uv/getting-started/installation/) for the USPTO patent/trademark connector
 - LibreOffice installed locally if you need DOC/DOCX to PDF conversion
 
-## Database Setup
+### Database setup
 
 The SQLite profile needs no schema step: the database is created automatically on
 first boot (see [Run Locally](#run-locally)).
@@ -111,17 +142,21 @@ For a new Supabase database, open the Supabase SQL editor and run:
 -- backend/schema.sql
 ```
 
-The schema file is for fresh deployments and already includes the latest database shape.
+The schema file is for fresh deployments and already includes the latest
+database shape.
 
-For an existing database, do not run the full schema file over production data. Instead, apply the incremental files in `backend/migrations/`: run the migrations dated **after** the version of Mike you currently have deployed, in filename order. Each file is named `YYYYMMDD_<name>.sql` (the date is also recorded in a comment at the top of the file) and is written to be safe to re-run, so when unsure you can re-apply the most recent migrations without harm.
+For an existing database, do not run the full schema over production data.
+Apply the files in `backend/migrations/` dated after the deployed Mike version,
+in filename order. Migration files use the format `YYYYMMDD_<name>.sql` and are
+written to be safe to re-run.
 
-## Environment
+### Environment
 
-Create local env files:
+Copy the maintained examples:
 
 ```bash
-touch backend/.env
-touch frontend/.env.local
+cp backend/.env.example backend/.env
+cp frontend/.env.local.example frontend/.env.local
 ```
 
 Create `backend/.env`:
@@ -239,7 +274,9 @@ API key field is read-only.
 For local OpenAI-compatible models and committee orchestration, see
 `docs/model-orchestration.md`.
 
-## Tamper-Evident Export
+Supabase Auth, rather than the Mike backend, sends signup, email-change, and
+password-recovery messages. Configure production SMTP in the Supabase dashboard
+if those flows are enabled. Mike does not require a Resend API key.
 
 Mike hashes a document version's bytes (SHA-256) whenever it writes them.
 `GET /projects/:projectId/export` returns a manifest of those hashes plus the
@@ -291,13 +328,11 @@ versions ignore the setting.
 
 ## Run Locally
 
-Start the backend:
+Start the backend and frontend in separate terminals:
 
 ```bash
 npm run dev --prefix backend
 ```
-
-Start the main app:
 
 ```bash
 npm run dev --prefix frontend

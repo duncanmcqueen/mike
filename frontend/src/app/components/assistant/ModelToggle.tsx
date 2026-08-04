@@ -16,6 +16,7 @@ import { isModelAvailable } from "@/app/lib/modelAvailability";
 import { getConfiguredModels, type ApiKeyState } from "@/app/lib/mikeApi";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { featureEnabled } from "@/app/lib/featureFlags";
+import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 
 export interface ModelOption {
     id: string;
@@ -35,6 +36,7 @@ export const MODELS: ModelOption[] = [
     { id: "kimi-k3-256k", label: "Kimi K3 256K", group: "Moonshot" },
     { id: "gpt-5.5", label: "GPT-5.5", group: "OpenAI" },
     { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
+    // Local (Ollama) models are appended dynamically — see useOllamaModels.
 ];
 
 export const SETTINGS_MODELS: ModelOption[] = [
@@ -65,6 +67,7 @@ const itemClassName =
 
 export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
     const { profile } = useUserProfile();
+    const ollamaModels = useOllamaModels();
     const [options, setOptions] = useState<ModelOption[]>(base);
     const localModelsEnabled = featureEnabled(
         profile?.featureFlags,
@@ -112,7 +115,11 @@ export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
         };
     }, [base, localModelsEnabled, committeeModelsEnabled]);
 
-    return options;
+    const merged = new Map(options.map((model) => [model.id, model]));
+    if (localModelsEnabled) {
+        ollamaModels.forEach((model) => merged.set(model.id, model));
+    }
+    return Array.from(merged.values());
 }
 
 interface Props {

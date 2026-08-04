@@ -23,6 +23,8 @@ export const GEMINI_MAIN_MODELS = [
     "gemini-3-flash-preview",
 ] as const;
 export const OPENAI_MAIN_MODELS = ["gpt-5.5", "gpt-5.4"] as const;
+// Ollama models are detected dynamically (see GET /models/ollama). Any id of
+// the form "ollama/<tag>" is valid — see providerForModel / resolveModel.
 
 // Mid-tier (used for tabular review) — user picks one in account settings.
 export const CLAUDE_MID_MODELS = ["claude-sonnet-4-6"] as const;
@@ -62,6 +64,7 @@ export function builtInModelIds(): string[] {
 export function providerForModel(model: string): Provider {
     const configured = configuredProviderForModel(model);
     if (configured) return configured;
+    if (model.startsWith("ollama")) return "ollama";
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("gpt-")) return "openai";
@@ -70,7 +73,7 @@ export function providerForModel(model: string): Provider {
 
 export function resolveModel(id: string | null | undefined, fallback: string): string {
     if (id && configuredModelIds().includes(id)) return id;
-    if (id && ALL_MODELS.has(id)) return id;
+    if (id && (ALL_MODELS.has(id) || id.startsWith("ollama/"))) return id;
     return fallback;
 }
 
@@ -89,6 +92,8 @@ function providerKeyAvailable(
             return !!apiKeys?.gemini?.trim() || hasEnvApiKey("gemini");
         case "openai":
             return !!apiKeys?.openai?.trim() || hasEnvApiKey("openai");
+        case "ollama":
+            return true;
         default:
             return false;
     }

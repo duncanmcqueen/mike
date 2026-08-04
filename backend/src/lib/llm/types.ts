@@ -2,7 +2,12 @@
 // Callers always speak OpenAI-style tools + { role, content } messages; each
 // provider translates internally.
 
-export type Provider = "claude" | "gemini" | "openai" | "openai-compatible";
+export type Provider =
+    | "claude"
+    | "gemini"
+    | "openai"
+    | "openai-compatible"
+    | "ollama";
 
 export type OpenAIToolSchema = {
     type: "function";

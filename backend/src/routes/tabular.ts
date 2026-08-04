@@ -480,7 +480,7 @@ function providerLabel(provider: Provider): string {
 
 function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
     const provider = providerForModel(model);
-    if (provider === "openai-compatible") return null;
+    if (provider === "openai-compatible" || provider === "ollama") return null;
     if (apiKeys[provider]?.trim()) return null;
     return {
         provider,

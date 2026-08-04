@@ -36,13 +36,14 @@ Per-file statement coverage of the gated lib layer from
 | Lib file | % statements | Tested? |
 | --- | ---: | :---: |
 | `lib/auth.ts` | 13 | partial — local-auth client flows |
+| `lib/folderDeleteState.ts` | 83 | ✓ |
 | `lib/mikeApi.ts` | 57 | partial — plumbing, mapping, streaming |
-| `lib/modelAvailability.ts` | 82 | ✓ |
+| `lib/modelAvailability.ts` | 86 | ✓ |
 | `lib/supabase.ts` | 87 | thin wrapper |
 | `lib/theme.ts` | 75 | ✓ |
 
-Global (lib layer): **54.35% statements / 58.57% branches / 38.23% functions /
-54.64% lines**. The global number is dominated by `auth.ts` and `mikeApi.ts`:
+Global (lib layer): **55.31% statements / 60.10% branches / 39.52% functions /
+55.41% lines**. The global number is dominated by `auth.ts` and `mikeApi.ts`:
 their local-auth flows and request /
 auth-header / error-mapping plumbing, `getChat` / `mapTRMessages` message
 mapping, blob downloads, and all four streaming endpoints are tested, but most
@@ -92,8 +93,8 @@ are mostly composition.
 ## Ratchet policy
 
 `frontend/vitest.config.mts` enforces global coverage **floors** over
-`src/app/lib/**` (currently statements 54 / branches 58 / functions 38 /
-lines 54). Same rules as the backend
+`src/app/lib/**` (currently statements 55 / branches 60 / functions 39 /
+lines 55). Same rules as the backend
 ([testing-coverage.md](testing-coverage.md#ratchet-policy)):
 
 - **Floors only go up.** Never lower them to get a PR green — that means your

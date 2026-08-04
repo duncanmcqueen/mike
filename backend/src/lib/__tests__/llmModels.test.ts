@@ -49,6 +49,10 @@ describe("providerForModel", () => {
         expect(providerForModel("kimi-k3-256k")).toBe("openai-compatible");
     });
 
+    it("maps dynamic Ollama ids to the keyless Ollama provider", () => {
+        expect(providerForModel("ollama/qwen3.6")).toBe("ollama");
+    });
+
     it("throws on an unknown model id", () => {
         expect(() => providerForModel("llama-3")).toThrow(/Unknown model id/);
         expect(() => providerForModel("")).toThrow(/Unknown model id/);
@@ -75,6 +79,9 @@ describe("resolveModel", () => {
             "gpt-5.4-lite",
         );
         expect(resolveModel("kimi-k3", DEFAULT_MAIN_MODEL)).toBe("kimi-k3");
+        expect(resolveModel("ollama/qwen3.6", DEFAULT_MAIN_MODEL)).toBe(
+            "ollama/qwen3.6",
+        );
     });
 
     it("falls back for unknown model ids", () => {
@@ -114,6 +121,16 @@ describe("resolveModel", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveUsableModel", () => {
+    it("keeps a dynamic Ollama model without an API key", () => {
+        expect(
+            resolveUsableModel(
+                "ollama/qwen3.6",
+                DEFAULT_MAIN_MODEL,
+                {},
+            ),
+        ).toBe("ollama/qwen3.6");
+    });
+
     it("keeps the selected model when its user API key is available", () => {
         expect(
             resolveUsableModel(

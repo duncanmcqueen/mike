@@ -408,6 +408,7 @@ function modelAvailability(
       reason: error instanceof Error ? error.message : String(error),
     };
   }
+  if (provider === "ollama") return { available: true };
   if (provider === "openai-compatible") {
     return {
       available: false,

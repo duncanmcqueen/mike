@@ -30,6 +30,8 @@ Per-area statement coverage from `npm run test:coverage`:
 | `lib/llm/models.ts` | 100 | ✓ |
 | `lib/documentTypes.ts` | 100 | ✓ |
 | `lib/chat/prompts.ts` | 100 | ✓ |
+| `lib/chat/requestValidation.ts` | 86 | ✓ |
+| `lib/chat/verifyCitations.ts` | 89 | ✓ |
 | `lib/systemWorkflows.ts` | 100 | ✓ |
 | `lib/documentVersions.ts` | 98 | ✓ |
 | `lib/chat/citations.ts` | 98 | ✓ |
@@ -49,7 +51,7 @@ Per-area statement coverage from `npm run test:coverage`:
 | `lib/llm/**` (providers, tools, index, rawStreamLog) | ~4 | ✗ (only models.ts) |
 | `lib/mcp/**` (client, servers, oauth, types) | 0 | ✗ |
 
-Global: **41.51% statements / 34.79% branches / 43.90% functions / 42.97%
+Global: **42.56% statements / 36.12% branches / 45.26% functions / 44.13%
 lines**. The global number is low because `src/lib/**` includes several very
 large feature libs (toolDispatcher, documentOps, courtlistener) that dominate
 the line count.
@@ -113,7 +115,7 @@ better exercised by the e2e suite.
 ## Ratchet policy
 
 `backend/vitest.config.mts` enforces global coverage **floors** (currently
-statements 41 / branches 34 / functions 43 / lines 42). They are a
+statements 42 / branches 36 / functions 45 / lines 44). They are a
 no-regression ratchet, not a target:
 
 - **Floors only go up.** Never lower them to get a PR green — that means your
