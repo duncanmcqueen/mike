@@ -236,6 +236,32 @@ metadata were inspected without reading message text.
 6. Add SQLite indexes for the core access paths and treat `[DONE]` as the
    frontend completion signal.
 
+## Gemini reasoning-only response fix (2026-08-03)
+
+A Gemini 3.5 Flash Assistant turn asking for recent Legal AI news reproduced a
+distinct failure: it ran for about 61 seconds, used all 10 allowed model/tool
+rounds, persisted eight reasoning blocks and 10 successful MCP tool events, but
+persisted no content or citations. The only enabled MCP connectors were
+specialized case-law/PACER and patent/trademark sources; there was no general
+web or news source. Gemini repeatedly tried those tools, and `streamGemini`
+silently treated iteration exhaustion as a successful empty response.
+
+Implemented fixes:
+
+- `backend/src/lib/llm/gemini.ts` now treats `maxIterations` as the maximum
+  number of tool rounds and reserves one final request with tools disabled.
+  That request must synthesize a visible answer from relevant results or state
+  which source capability is missing.
+- A thought-only Gemini completion now raises an explicit stream error instead
+  of being persisted as a successful blank response.
+- The Assistant system prompt now prohibits using case-law, PACER, statute,
+  patent, or trademark tools as proxies for a general current-news search.
+- `backend/src/lib/__tests__/gemini.test.ts` covers tool-round exhaustion,
+  ordinary direct answers, and reasoning-only responses.
+
+Verification after the change: backend TypeScript passed; all backend tests
+passed (**415 passed, 13 skipped** across **51 passed, 2 skipped** files).
+
 ## Loose ends / watch items
 
 - **Uncommitted everything.** `git status` shows modified files across

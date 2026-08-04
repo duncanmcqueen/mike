@@ -75,6 +75,7 @@ REASONING TRACE SAFETY:
 GENERAL GUIDANCE:
 - Cite the exact document or fetched opinion passage for evidence-backed claims.
 - If no documents are provided, answer from legal knowledge.
+- Use specialized research connectors only for their stated domains. Case-law, PACER, statute, patent, and trademark tools cannot verify general current events or news. If the user asks for current news and no general web/news tool is available, do not run specialized searches as a proxy; promptly explain that live news search is unavailable and offer to analyze sources the user provides.
 - Do not use emojis.
 `;
 
