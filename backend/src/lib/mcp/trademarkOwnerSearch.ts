@@ -1,4 +1,8 @@
-const OWNER_SEARCH_PAGE_SIZE = 100;
+// Keep upstream pages below patent_mcp_server's per-response token budget. A
+// large tmsearch record can contain substantial goods/services text, and the
+// connector may otherwise truncate a page before Mike can paginate it.
+const OWNER_SEARCH_PAGE_SIZE = 10;
+const OWNER_SEARCH_PAGE_INTERVAL_MS = 1_000;
 const OWNER_SEARCH_BATCH_INTERVAL_MS = 2_500;
 const TRADEMARK_RATE_LIMIT_MAX_RETRIES = 3;
 const TRADEMARK_RATE_LIMIT_BASE_DELAY_MS = 10_000;
@@ -115,7 +119,15 @@ function trademarkSearchRejectedPhrase(page: TrademarkEnvelope): boolean {
 
 function trademarkToolResponse(response: Record<string, unknown>): unknown {
   return {
-    content: [{ type: "text", text: JSON.stringify(response) }],
+    // The structured payload is what Mike sends to the model. Do not repeat it
+    // in `content`: stringifyMcpResult serializes both fields and the duplicate
+    // used to push otherwise complete portfolios over its size limit.
+    content: [
+      {
+        type: "text",
+        text: "Exact trademark-owner results are in structuredContent.",
+      },
+    ],
     structuredContent: response,
   };
 }
@@ -182,6 +194,121 @@ function escapeElasticsearchPhrase(value: string): string {
   return value.replace(/([\\"])/g, "\\$1");
 }
 
+function firstDefined(
+  record: Record<string, unknown>,
+  keys: string[],
+): unknown {
+  for (const key of keys) {
+    if (record[key] !== undefined && record[key] !== null) return record[key];
+  }
+  return undefined;
+}
+
+function compactStrings(
+  value: unknown,
+  maxItems = 8,
+  maxLength = 180,
+): unknown {
+  const compact = (item: string) =>
+    item.length <= maxLength ? item : `${item.slice(0, maxLength - 1)}…`;
+  if (typeof value === "string") return compact(value.trim());
+  if (Array.isArray(value)) {
+    const strings = value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => compact(item.trim()))
+      .filter(Boolean)
+      .slice(0, maxItems);
+    return strings.length ? strings : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Project a verbose tmsearch hit into the fields needed for a portfolio
+ * workbook. This preserves one row per mark while preventing long index-only
+ * fields from causing Mike's final tool response to be truncated.
+ */
+export function compactTrademarkPortfolioRecord(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const fields: Array<[string, unknown]> = [
+    [
+      "serial_number",
+      firstDefined(record, ["serialNumber", "serial_number", "id"]),
+    ],
+    [
+      "registration_number",
+      firstDefined(record, [
+        "registrationNumber",
+        "registration_number",
+        "registrationId",
+        "registration_id",
+      ]),
+    ],
+    ["mark", firstDefined(record, ["wordmark", "markText", "mark_text"])],
+    [
+      "owner_names",
+      compactStrings(firstDefined(record, ["ownerName", "owner_name"]), 4, 180),
+    ],
+    ["live", firstDefined(record, ["alive", "live"])],
+    [
+      "status",
+      compactStrings(
+        firstDefined(record, [
+          "statusDescription",
+          "status_description",
+          "status",
+        ]),
+        1,
+        180,
+      ),
+    ],
+    ["status_code", firstDefined(record, ["statusCode", "status_code"])],
+    ["mark_type", firstDefined(record, ["markType", "mark_type"])],
+    [
+      "international_classes",
+      compactStrings(
+        firstDefined(record, [
+          "internationalClass",
+          "internationalClasses",
+          "international_class",
+        ]),
+        45,
+        24,
+      ),
+    ],
+    ["filing_date", firstDefined(record, ["filingDate", "filing_date"])],
+    [
+      "registration_date",
+      firstDefined(record, ["registrationDate", "registration_date"]),
+    ],
+    [
+      "publication_date",
+      firstDefined(record, ["publicationDate", "publication_date"]),
+    ],
+    ["abandon_date", firstDefined(record, ["abandonDate", "abandon_date"])],
+    [
+      "cancellation_date",
+      firstDefined(record, ["cancellationDate", "cancellation_date"]),
+    ],
+    [
+      "expiration_date",
+      firstDefined(record, ["expirationDate", "expiration_date"]),
+    ],
+    [
+      "goods_services_summary",
+      compactStrings(
+        firstDefined(record, ["goodsAndServices", "goods_services"]),
+        3,
+        180,
+      ),
+    ],
+  ];
+  return Object.fromEntries(
+    fields.filter(([, value]) => value !== undefined && value !== ""),
+  );
+}
+
 export function exactOwnerCandidateArgs(
   args: Record<string, unknown>,
   ownerName: string,
@@ -217,10 +344,9 @@ export function exactOwnerSearchResponse(input: {
   const matches = input.records.filter((record) =>
     trademarkRecordMatchesExactOwner(record, input.ownerName),
   );
-  const results = matches.slice(
-    input.requestedOffset,
-    input.requestedOffset + input.requestedLimit,
-  );
+  const results = matches
+    .slice(input.requestedOffset, input.requestedOffset + input.requestedLimit)
+    .map(compactTrademarkPortfolioRecord);
   const hasMore =
     input.requestedOffset + results.length < matches.length ||
     !input.exhaustive;
@@ -240,6 +366,7 @@ export function exactOwnerSearchResponse(input: {
       upstream_candidate_total: input.upstreamTotal,
       exhaustive: input.exhaustive,
       owner_phrase_query_supported: input.usedPhraseQuery,
+      result_projection: "compact_portfolio",
       ...(input.exhaustive
         ? {}
         : {
@@ -256,10 +383,10 @@ export async function executeExactTrademarkOwnerSearch(
   options: TrademarkSearchOptions = {},
 ): Promise<unknown> {
   const sleep = options.sleep ?? defaultSleep;
-  const rawLimit = Number(args.limit);
+  const rawLimit = args.limit == null ? Number.NaN : Number(args.limit);
   const requestedLimit = Number.isFinite(rawLimit)
     ? Math.min(100, Math.max(1, Math.trunc(rawLimit)))
-    : 25;
+    : 100;
   const rawOffset = Number(args.offset);
   const requestedOffset = Number.isFinite(rawOffset)
     ? Math.max(0, Math.trunc(rawOffset))
@@ -273,6 +400,7 @@ export async function executeExactTrademarkOwnerSearch(
   let useOwnerPhraseQuery = true;
 
   while (candidatesExamined < MAX_EXACT_OWNER_CANDIDATES) {
+    if (candidateOffset > 0) await sleep(OWNER_SEARCH_PAGE_INTERVAL_MS);
     const remainingCandidates = MAX_EXACT_OWNER_CANDIDATES - candidatesExamined;
     const candidateArgs = exactOwnerCandidateArgs(
       args,
@@ -487,6 +615,8 @@ export async function executeExactTrademarkOwnerBatchSearch(
     metadata: {
       request_mode: "paced_serial",
       request_interval_ms: OWNER_SEARCH_BATCH_INTERVAL_MS,
+      page_size: OWNER_SEARCH_PAGE_SIZE,
+      page_interval_ms: OWNER_SEARCH_PAGE_INTERVAL_MS,
       max_owner_batch_size: MAX_EXACT_OWNER_BATCH_SIZE,
       ...(failedOwnerNames.length
         ? {
@@ -517,7 +647,7 @@ export function managedTrademarkToolSchema(
   properties.owner_name = {
     ...ownerProperty,
     description:
-      "Exact current owner/applicant legal name. Use this for owner portfolios; Mike searches the owner field, pages candidates, and returns only normalized exact ownerName matches. Do not put an owner name in query.",
+      "Exact current owner/applicant legal name. Use this for owner portfolios; Mike searches the owner field, pages candidates, and returns up to 100 normalized exact ownerName matches by default in a compact, complete portfolio format. Do not put an owner name in query.",
   };
   properties.owner_names = {
     type: ["array", "null"],
@@ -525,7 +655,18 @@ export function managedTrademarkToolSchema(
     minItems: 1,
     maxItems: MAX_EXACT_OWNER_BATCH_SIZE,
     description:
-      "Complete legal names for a bulk exact-owner portfolio search. When searching two or more owners, put up to 10 names here in one tool call instead of making separate calls. Do not also use owner_name or query. If a response reports HTTP 429 or failed_owner_names, stop trademark calls for that response and resume only the failed owners after the reported cooldown.",
+      "Complete legal names for a bulk exact-owner portfolio search. When searching two or more owners, put up to 10 names here in one tool call instead of making separate calls. Each owner returns up to 100 marks by default in a compact, complete portfolio format. Do not also use owner_name or query. If a response reports HTTP 429 or failed_owner_names, stop trademark calls for that response and resume only the failed owners after the reported cooldown.",
+  };
+  const limitProperty =
+    properties.limit &&
+    typeof properties.limit === "object" &&
+    !Array.isArray(properties.limit)
+      ? (properties.limit as Record<string, unknown>)
+      : { type: ["integer", "null"] };
+  properties.limit = {
+    ...limitProperty,
+    description:
+      "Maximum records to return. For an exact owner_name or owner_names portfolio, omit this value to receive up to 100 marks per owner; use offset for larger portfolios.",
   };
   return { ...schema, properties };
 }

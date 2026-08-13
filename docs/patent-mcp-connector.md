@@ -59,6 +59,13 @@ candidates were examined and whether the search was exhaustive. Candidate
 sets above 1,000 records are stopped with an explicit incomplete-results
 warning rather than silently presenting a partial portfolio as complete.
 
+Mike retrieves owner candidates in lossless 10-record pages and paces those
+pages one second apart. The final response uses a compact portfolio projection
+(serial and registration numbers, mark, owner, status, classes, key dates, and
+a short goods/services summary), so large portfolios remain complete instead
+of being cut off by the model-context response limit. Exact-owner searches
+return up to 100 marks by default; use `offset` only for portfolios above 100.
+
 ## Verify The Server Outside Mike (optional)
 
 To isolate download or network problems from Mike, run the exact pinned
