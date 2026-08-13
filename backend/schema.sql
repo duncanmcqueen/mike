@@ -92,7 +92,6 @@ create table if not exists public.user_mcp_connectors (
   name text not null,
   transport text not null default 'streamable_http'
     check (transport in ('streamable_http', 'stdio')),
-    check (transport in ('streamable_http')),
   server_url text not null,
   auth_type text not null default 'none'
     check (auth_type in ('none', 'bearer', 'oauth')),
@@ -585,7 +584,10 @@ as $$
   from public.chats c
   left join public.projects p on p.id = c.project_id
   where c.user_id = p_user_id
-     or (p.id is not null and p.user_id = p_user_id)
+     or (
+       p.id is not null
+       and p.user_id = p_user_id
+     )
   order by c.created_at desc, c.id asc
   limit case
     when p_limit is null then null
