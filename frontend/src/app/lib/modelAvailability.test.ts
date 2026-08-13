@@ -118,11 +118,13 @@ describe("isProviderAvailable", () => {
 
 describe("providerLabel", () => {
     it("returns the display label for each provider", () => {
+        expect(providerLabel("local")).toBe("Local");
+        expect(providerLabel("committee")).toBe("Committee");
         expect(providerLabel("claude")).toBe("Anthropic (Claude)");
+        expect(providerLabel("kimi")).toBe("Moonshot (Kimi)");
         expect(providerLabel("openai")).toBe("OpenAI");
         expect(providerLabel("ollama")).toBe("Local (Ollama)");
         expect(providerLabel("gemini")).toBe("Google (Gemini)");
-        expect(providerLabel("ollama")).toBe("Local (Ollama)");
         expect(providerLabel("openrouter")).toBe("OpenRouter");
     });
 });
@@ -130,8 +132,10 @@ describe("providerLabel", () => {
 describe("modelGroupToProvider", () => {
     it("maps every model group to its provider id", () => {
         expect(modelGroupToProvider("Anthropic")).toBe("claude");
+        expect(modelGroupToProvider("Moonshot")).toBe("kimi");
         expect(modelGroupToProvider("OpenAI")).toBe("openai");
         expect(modelGroupToProvider("Local")).toBe("local");
+        expect(modelGroupToProvider("Committee")).toBe("committee");
         expect(modelGroupToProvider("Google")).toBe("gemini");
         expect(modelGroupToProvider("OpenRouter")).toBe("openrouter");
     });

@@ -37,4 +37,21 @@ describe("supabase client bootstrap", () => {
             /NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY/i,
         );
     });
+
+    it("returns the same client instance on repeated calls", async () => {
+        vi.resetModules();
+
+        const { getBrowserSupabase } = await import("./supabase");
+
+        expect(getBrowserSupabase()).toBe(getBrowserSupabase());
+    });
+
+    it("treats unset env vars the same as empty strings", async () => {
+        vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", undefined);
+        vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY", undefined);
+        vi.resetModules();
+
+        const { getBrowserSupabase } = await import("./supabase");
+        expect(() => getBrowserSupabase()).toThrow(/NEXT_PUBLIC_SUPABASE_URL/i);
+    });
 });
