@@ -1,4 +1,6 @@
-import { jsonrepair } from "jsonrepair";
+const { jsonrepair } = require("jsonrepair") as {
+  jsonrepair: (text: string) => string;
+};
 import type {
   ConfiguredModel,
   LlmMessage,

@@ -254,7 +254,7 @@ describe("supabase auth provider", () => {
         await expect(signOut()).rejects.toBe(failure);
     });
 
-    it("updateEmail points the confirmation link back at /account", async () => {
+    it("updateEmail points the confirmation link back at /settings", async () => {
         supabaseAuthMock.updateUser.mockResolvedValue({
             data: { user: { id: "u1", email: "a@b.c", new_email: "new@b.c" } },
             error: null,
@@ -265,7 +265,7 @@ describe("supabase auth provider", () => {
 
         expect(supabaseAuthMock.updateUser).toHaveBeenCalledWith(
             { email: "new@b.c" },
-            { emailRedirectTo: `${window.location.origin}/account` },
+            { emailRedirectTo: `${window.location.origin}/settings` },
         );
         expect(result).toEqual({
             id: "u1",

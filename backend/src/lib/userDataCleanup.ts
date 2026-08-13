@@ -111,8 +111,11 @@ async function deleteUserStoragePrefix(userId: string) {
         const paths = new Set([
             ...(await listFiles(`documents/${userId}/`)),
             ...(await listFiles(`playbooks/${userId}/`)),
+            ...(await listFiles(`workflow-references/${userId}/`)),
         ]);
-        await Promise.all([...paths].map((path) => deleteFile(path).catch(() => {})));
+        await Promise.all(
+            [...paths].map((path) => deleteFile(path).catch(() => {})),
+        );
     } catch {
         // Version-linked objects are deleted above. Prefix cleanup is best-effort
         // for orphaned files left behind by interrupted uploads.
@@ -184,13 +187,15 @@ export async function deleteAllUserChats(db: Db, userId: string) {
         tabularChatIds,
     );
 
-    const [deletedChats, deletedTabularChats] = await Promise.all([
+    const [deletedChats, deletedTabularChats, wordDocuments] = await Promise.all([
         db.from("chats").delete().eq("user_id", userId),
         db.from("tabular_review_chats").delete().eq("user_id", userId),
+        db.from("word_documents").delete().eq("user_id", userId),
     ]);
 
     await throwIfError(deletedChats.error, "Failed to delete assistant chats");
     await throwIfError(deletedTabularChats.error, "Failed to delete tabular chats");
+    await throwIfError(wordDocuments.error, "Failed to delete Word chats");
 }
 
 export async function deleteAllUserTabularReviews(db: Db, userId: string) {
@@ -409,6 +414,7 @@ export async function deleteUserAccountData(
         db.from("tabular_review_chats").delete().eq("user_id", userId),
         db.from("tabular_reviews").delete().eq("user_id", userId),
         db.from("chats").delete().eq("user_id", userId),
+        db.from("word_documents").delete().eq("user_id", userId),
         db.from("project_subfolders").delete().eq("user_id", userId),
         db.from("hidden_workflows").delete().eq("user_id", userId),
         db
@@ -422,11 +428,8 @@ export async function deleteUserAccountData(
                   .delete()
                   .eq("shared_with_email", userEmail.trim().toLowerCase())
             : Promise.resolve({ error: null }),
-        db.from("workflows").delete().eq("user_id", userId),
         // Audit rows carry the user's id, email, chat/document titles and prompt
-        // excerpts. Deleting them here keeps account erasure complete (GDPR) —
-        // they are keyed by user_id and would otherwise be orphaned forever
-        // after the chats/projects they reference are gone.
+        // excerpts, so account erasure must remove them as well.
         db.from("audit_events").delete().eq("user_id", userId),
         db.from("projects").delete().eq("user_id", userId),
         db.from("user_api_keys").delete().eq("user_id", userId),
@@ -448,10 +451,25 @@ export async function deleteUserAccountData(
         db.from("playbook_versions").delete().eq("user_id", userId),
         db.from("playbooks").delete().eq("user_id", userId),
         db.from("user_profiles").delete().eq("user_id", userId),
+        db.from("quick_actions").delete().eq("user_id", userId),
+        db
+            .from("workflow_reference_documents")
+            .delete()
+            .eq("user_id", userId),
+        db
+            .from("default_workflow_installations")
+            .delete()
+            .eq("user_id", userId),
     ];
 
     const results = await Promise.all(deletions);
     for (const result of results) {
         await throwIfError(result.error, "Failed to delete account data");
     }
+
+    const { error: workflowsError } = await db
+        .from("workflows")
+        .delete()
+        .eq("user_id", userId);
+    await throwIfError(workflowsError, "Failed to delete workflows");
 }

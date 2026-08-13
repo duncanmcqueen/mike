@@ -124,6 +124,15 @@ async function authenticateSupabase(
   return true;
 }
 
+function getAdminClient(res: Response) {
+  try {
+    return createServerSupabase();
+  } catch {
+    res.status(500).json({ detail: "Server auth is not configured" });
+    return null;
+  }
+}
+
 export async function requireAuth(
   req: Request,
   res: Response,
@@ -176,13 +185,8 @@ export async function requireMfaIfEnrolled(
     res.status(401).json({ detail: "Missing auth session" });
     return;
   }
-  let admin;
-  try {
-    admin = createServerSupabase();
-  } catch {
-    res.status(500).json({ detail: "Server auth is not configured" });
-    return;
-  }
+  const admin = getAdminClient(res);
+  if (!admin) return;
   const { data, error } =
     await admin.auth.mfa.getAuthenticatorAssuranceLevel(token);
   if (error) {

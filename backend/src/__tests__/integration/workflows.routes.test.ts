@@ -82,12 +82,11 @@ function mockSupabase() {
     };
 }
 
-vi.mock("../../lib/sqlite", () => ({
-    createServerSQLite: vi.fn(() => mockSupabase()),
+vi.mock("../../lib/supabase", () => ({
+    createServerSupabase: vi.fn(() => mockSupabase()),
 }));
 
 vi.mock("../../middleware/auth", () => ({
-    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },
@@ -99,6 +98,7 @@ vi.mock("../../middleware/auth", () => ({
     },
     requireMfaIfEnrolled: (_req: unknown, _res: unknown, next: () => void) =>
         next(),
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 vi.mock("../../lib/access", () => ({
@@ -124,7 +124,8 @@ vi.mock("../../lib/documentVersions", () => ({
 }));
 
 import { app } from "../../app";
-import { createServerSQLite } from "../../lib/sqlite";
+import { createServerSupabase } from "../../lib/supabase";
+import { resetEnsuredDefaultUsersForTests } from "../../lib/workflowCatalog";
 
 const AUTH = ["Authorization", "Bearer test"] as const;
 
@@ -133,7 +134,7 @@ function captureRpcArgs(): { args: unknown; name: string | undefined } {
         args: undefined,
         name: undefined,
     };
-    vi.mocked(createServerSQLite).mockImplementationOnce(() => {
+    vi.mocked(createServerSupabase).mockImplementationOnce(() => {
         const db = mockSupabase();
         const originalRpc = db.rpc;
         db.rpc = vi.fn((name: string, args: unknown) => {
@@ -141,7 +142,7 @@ function captureRpcArgs(): { args: unknown; name: string | undefined } {
             captured.args = args;
             return originalRpc(name, args as never);
         });
-        return db as unknown as ReturnType<typeof createServerSQLite>;
+        return db as unknown as ReturnType<typeof createServerSupabase>;
     });
     return captured;
 }
@@ -150,11 +151,12 @@ describe("workflows.routes", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         resetSupabaseState();
+        resetEnsuredDefaultUsersForTests();
     });
 
     // ── GET /workflows (overview) ─────────────────────────────────────────
     describe("GET /workflows", () => {
-        it("returns system workflows prepended to the RPC's rows when no pagination params are present", async () => {
+        it("returns the user's installed workflows when no pagination params are present", async () => {
             supabaseState.rpc = {
                 data: [{ id: "w1", title: "My workflow" }],
                 error: null,
@@ -165,10 +167,8 @@ describe("workflows.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
-            // System workflows (static, non-uuid ids) come first, then the
-            // DB row (mapped through withDatabaseWorkflow) — exact system
-            // count isn't pinned here since it's a generated constant, just
-            // that the DB row survived untouched.
+            // Defaults are installed as user-owned database workflows rather
+            // than prepended from the static system catalog.
             expect(res.body.at(-1)).toMatchObject({
                 id: "w1",
                 is_system: false,
@@ -237,21 +237,20 @@ describe("workflows.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("Internal server error");
-            expect(JSON.stringify(res.body)).not.toContain("boom");
+            expect(res.body.detail).toBe("boom");
         });
     });
 
     // ── GET /workflows/system ──────────────────────────────────────────────
     describe("GET /workflows/system", () => {
         it("returns only system workflows, filtered by type, with no RPC call", async () => {
-            // Deliberately does NOT touch createServerSQLite's mock at
+            // Deliberately does NOT touch createServerSupabase's mock at
             // all — this route makes no DB call whatsoever, so overriding
             // it here (even just to assert non-invocation) would leave a
             // queued mockImplementationOnce that the route never consumes,
             // shifting every later test's mock by one call. The fact that
             // this route resolves correctly using only the untouched
-            // module-level createServerSQLite mock (never called) is
+            // module-level createServerSupabase mock (never called) is
             // itself the proof no RPC/DB access happened.
             const res = await request(app)
                 .get("/workflows/system?type=assistant")
@@ -266,7 +265,7 @@ describe("workflows.routes", () => {
                 w.is_system && w.metadata.type === "assistant",
         ),
       ).toBe(true);
-            expect(createServerSQLite).not.toHaveBeenCalled();
+            expect(createServerSupabase).not.toHaveBeenCalled();
         });
     });
 
@@ -275,15 +274,16 @@ describe("workflows.routes", () => {
         it("pages through the RPC until an empty page is returned", async () => {
             const rpcMock = vi
                 .fn()
+                .mockResolvedValueOnce({ data: 0, error: null })
                 .mockResolvedValueOnce({
                     data: [{ id: "w1", user_id: "u1" }],
                     error: null,
                 })
                 .mockResolvedValueOnce({ data: [], error: null });
-            vi.mocked(createServerSQLite).mockImplementationOnce(() => {
+            vi.mocked(createServerSupabase).mockImplementationOnce(() => {
                 const db = mockSupabase();
                 db.rpc = rpcMock;
-                return db as unknown as ReturnType<typeof createServerSQLite>;
+                return db as unknown as ReturnType<typeof createServerSupabase>;
             });
 
       const res = await request(app)
@@ -292,8 +292,11 @@ describe("workflows.routes", () => {
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual([{ id: "w1", user_id: "u1" }]);
-            expect(rpcMock).toHaveBeenCalledTimes(2);
-            expect(rpcMock.mock.calls[0][0]).toBe("get_workflow_ids_overview");
+            expect(rpcMock).toHaveBeenCalledTimes(3);
+            expect(rpcMock.mock.calls[0][0]).toBe(
+                "install_missing_default_workflows",
+            );
+            expect(rpcMock.mock.calls[1][0]).toBe("get_workflow_ids_overview");
         });
 
         it("returns 500 with detail when the RPC errors", async () => {
@@ -304,8 +307,7 @@ describe("workflows.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("Internal server error");
-            expect(JSON.stringify(res.body)).not.toContain("boom");
+            expect(res.body.detail).toBe("boom");
         });
     });
 

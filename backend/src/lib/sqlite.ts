@@ -319,7 +319,10 @@ function decodeColumn(key: string, value: unknown): unknown {
     (key === "mfa_on_login" ||
       key === "legal_research_us" ||
       key === "email_integration_enabled" ||
-      key === "dark_mode") &&
+      key === "dark_mode" ||
+      key === "document_upload" ||
+      key === "enabled" ||
+      key === "active") &&
     (decoded === 0 ||
       decoded === 1 ||
       decoded === "0" ||
@@ -749,7 +752,7 @@ export function createServerSQLite(): any {
   };
 }
 
-async function sqliteRpc(name: string, args: Row): Promise<Result<any[]>> {
+async function sqliteRpc(name: string, args: Row): Promise<Result<any>> {
   try {
     if (name === "get_projects_overview") {
       return { data: await projectsOverview(args), error: null };
@@ -766,10 +769,80 @@ async function sqliteRpc(name: string, args: Row): Promise<Result<any[]>> {
     if (name === "get_workflows_overview") {
       return { data: await workflowsOverview(args), error: null };
     }
+    if (name === "install_missing_default_workflows") {
+      return {
+        data: await installMissingDefaultWorkflows(args),
+        error: null,
+      };
+    }
     return { data: [], error: null };
   } catch (error) {
     return { data: null as any, error: error instanceof Error ? error : new Error(String(error)) };
   }
+}
+
+async function installMissingDefaultWorkflows(args: Row): Promise<number> {
+  const userId = rpcUserId(args);
+  const defaults = Array.isArray(args.p_defaults)
+    ? (args.p_defaults as Row[])
+    : [];
+  if (!userId || defaults.length === 0) return 0;
+
+  const db = createServerSQLite();
+  let installed = 0;
+  for (const item of defaults) {
+    const defaultKey = String(item.default_key ?? "").trim();
+    if (!defaultKey) continue;
+    const { data: existing, error: lookupError } = await db
+      .from("default_workflow_installations")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("default_key", defaultKey)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+    if (existing) continue;
+
+    const workflowId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const { error: workflowError } = await db.from("workflows").insert({
+      id: workflowId,
+      user_id: userId,
+      title: item.title,
+      type: item.type,
+      prompt_md: item.prompt_md ?? null,
+      columns_config: item.columns_config ?? null,
+      language: item.language ?? "English",
+      practice: item.practice ?? "General Transactions",
+      jurisdictions: item.jurisdictions ?? ["General"],
+      created_at: now,
+      updated_at: now,
+    });
+    if (workflowError) throw workflowError;
+
+    const { error: markerError } = await db
+      .from("default_workflow_installations")
+      .insert({
+        user_id: userId,
+        default_key: defaultKey,
+        workflow_id: workflowId,
+        installed_at: now,
+      });
+    if (markerError) throw markerError;
+
+    const { error: actionError } = await db.from("quick_actions").insert({
+      user_id: userId,
+      workflow_id: workflowId,
+      prompt: item.quick_action_prompt ?? "",
+      document_upload: item.document_upload === true,
+      enabled: true,
+      sort_order: Number(item.sort_order ?? 0),
+      created_at: now,
+      updated_at: now,
+    });
+    if (actionError) throw actionError;
+    installed += 1;
+  }
+  return installed;
 }
 
 async function selectRows(table: string): Promise<Row[]> {

@@ -209,7 +209,7 @@ export async function updateEmail(email: string): Promise<AuthUser> {
         const redirectTo =
             typeof window === "undefined"
                 ? undefined
-                : `${window.location.origin}/account`;
+                : `${window.location.origin}/settings`;
         const { data, error } = await getBrowserSupabase().auth.updateUser(
             { email },
             redirectTo ? { emailRedirectTo: redirectTo } : undefined,

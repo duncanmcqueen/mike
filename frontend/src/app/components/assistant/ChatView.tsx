@@ -679,7 +679,7 @@ export function ChatView({
                                     .lastIndexOf("assistant");
                                 return messages.map((msg, i) => (
                                     <div
-                                        key={i}
+                                        key={msg.id ?? i}
                                         ref={
                                             i === lastUserIndex
                                                 ? latestUserMessageRef

@@ -8,6 +8,7 @@ import {
 import { getSignedUrl as createAwsSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { buildContentDisposition } from "./filenames";
 import type { FileContent, StorageProvider } from "./types";
+import { safeErrorLog } from "../safeError";
 
 let cachedClient: S3Client | undefined;
 
@@ -81,7 +82,11 @@ export const r2StorageProvider: StorageProvider = {
         bytes.byteOffset,
         bytes.byteOffset + bytes.byteLength,
       ) as ArrayBuffer;
-    } catch {
+    } catch (error) {
+      console.error("[storage] downloadFile failed", {
+        key,
+        error: safeErrorLog(error),
+      });
       return null;
     }
   },
@@ -124,7 +129,11 @@ export const r2StorageProvider: StorageProvider = {
           : undefined,
       });
       return await createAwsSignedUrl(getClient(), command, { expiresIn });
-    } catch {
+    } catch (error) {
+      console.error("[storage] getSignedUrl failed", {
+        key,
+        error: safeErrorLog(error),
+      });
       return null;
     }
   },

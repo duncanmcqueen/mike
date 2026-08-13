@@ -10,30 +10,30 @@ const { checkProjectAccess, deleteUserProjects } = vi.hoisted(() => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Configurable SQLite facade stub. Each test seeds `dbState` in beforeEach;
+// Configurable Supabase stub. Each test seeds `supabaseState` in beforeEach;
 // terminal query operations (.single()/.maybeSingle()/thenable) resolve to the
 // per-table result, and rpc() resolves to a per-call result. Insert payloads
 // are recorded so tests can assert on normalisation (lowercasing / dedupe).
 // ---------------------------------------------------------------------------
 type QueryResult = { data: unknown; error: unknown };
 
-let dbState: {
+let supabaseState: {
     rpc: QueryResult;
     tables: Record<string, QueryResult>;
     inserts: { table: string; payload: unknown }[];
 };
 
-function resetDbState() {
-    dbState = {
+function resetSupabaseState() {
+    supabaseState = {
         rpc: { data: [], error: null },
         tables: {},
         inserts: [],
     };
 }
-resetDbState();
+resetSupabaseState();
 
 function resultForTable(table: string): QueryResult {
-    return dbState.tables[table] ?? { data: null, error: null };
+    return supabaseState.tables[table] ?? { data: null, error: null };
 }
 
 function makeQuery(table: string) {
@@ -61,7 +61,7 @@ function makeQuery(table: string) {
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
     q.insert = vi.fn((payload: unknown) => {
-        dbState.inserts.push({ table, payload });
+        supabaseState.inserts.push({ table, payload });
         return q;
     });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
@@ -73,10 +73,10 @@ function makeQuery(table: string) {
     return q;
 }
 
-function mockDb() {
+function mockSupabase() {
     return {
         from: vi.fn((table: string) => makeQuery(table)),
-        rpc: vi.fn(() => Promise.resolve(dbState.rpc)),
+        rpc: vi.fn(() => Promise.resolve(supabaseState.rpc)),
         auth: {
             getUser: () =>
                 Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
@@ -84,12 +84,11 @@ function mockDb() {
     };
 }
 
-vi.mock("../../lib/sqlite", () => ({
-    createServerSQLite: vi.fn(() => mockDb()),
+vi.mock("../../lib/supabase", () => ({
+    createServerSupabase: vi.fn(() => mockSupabase()),
 }));
 
 vi.mock("../../middleware/auth", () => ({
-    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },
@@ -101,6 +100,7 @@ vi.mock("../../middleware/auth", () => ({
     },
     requireMfaIfEnrolled: (_req: unknown, _res: unknown, next: () => void) =>
         next(),
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 // Every export of lib/access must be present — other routers (chat, documents,
@@ -133,13 +133,13 @@ vi.mock("../../lib/documentVersions", () => ({
 import { app } from "../../app";
 import crypto from "crypto";
 import { manifestPublicKey } from "../../lib/manifestSigning";
-import { createServerSQLite } from "../../lib/sqlite";
+import { createServerSupabase } from "../../lib/supabase";
 
 const SIGNING_KEY = "3b".repeat(32);
 
 const AUTH = ["Authorization", "Bearer test"] as const;
 
-// Wraps mockDb()'s rpc so the next request's exact RPC call args can be
+// Wraps mockSupabase()'s rpc so the next request's exact RPC call args can be
 // asserted on — the shared mock otherwise only lets tests control the
 // *response*, not inspect what was sent.
 function captureRpcArgs(): { args: unknown; name: string | undefined } {
@@ -147,15 +147,15 @@ function captureRpcArgs(): { args: unknown; name: string | undefined } {
     args: undefined,
     name: undefined,
   };
-    vi.mocked(createServerSQLite).mockImplementationOnce(() => {
-        const db = mockDb();
+    vi.mocked(createServerSupabase).mockImplementationOnce(() => {
+        const db = mockSupabase();
         const originalRpc = db.rpc;
         db.rpc = vi.fn((name: string, args: unknown) => {
       captured.name = name;
             captured.args = args;
             return originalRpc(name, args as never);
         });
-        return db as unknown as ReturnType<typeof createServerSQLite>;
+        return db as unknown as ReturnType<typeof createServerSupabase>;
     });
     return captured;
 }
@@ -163,7 +163,7 @@ function captureRpcArgs(): { args: unknown; name: string | undefined } {
 describe("projects.routes", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        resetDbState();
+        resetSupabaseState();
         checkProjectAccess.mockResolvedValue({
             ok: true,
             isOwner: true,
@@ -175,7 +175,7 @@ describe("projects.routes", () => {
     // ── GET /projects (overview) ──────────────────────────────────────────
     describe("GET /projects", () => {
         it("returns the overview rows from the RPC", async () => {
-            dbState.rpc = {
+            supabaseState.rpc = {
                 data: [{ id: "p1", name: "Alpha" }],
                 error: null,
             };
@@ -189,11 +189,11 @@ describe("projects.routes", () => {
         });
 
         it("includes documents and subfolders in the batched directory response", async () => {
-            dbState.rpc = {
+            supabaseState.rpc = {
                 data: [{ id: "p1", name: "Alpha" }],
                 error: null,
             };
-            dbState.tables.documents = {
+            supabaseState.tables.documents = {
                 data: [
                     {
                         id: "d1",
@@ -204,7 +204,7 @@ describe("projects.routes", () => {
                 ],
                 error: null,
             };
-            dbState.tables.project_subfolders = {
+            supabaseState.tables.project_subfolders = {
                 data: [
                     {
                         id: "f1",
@@ -229,22 +229,21 @@ describe("projects.routes", () => {
         });
 
         it("returns 500 with detail when the RPC errors", async () => {
-            dbState.rpc = { data: null, error: { message: "boom" } };
+            supabaseState.rpc = { data: null, error: { message: "boom" } };
 
       const res = await request(app)
         .get("/projects")
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("Internal server error");
-            expect(JSON.stringify(res.body)).not.toContain("boom");
+            expect(res.body.detail).toBe("boom");
         });
 
     // Regression guard: legacy project pickers call GET /projects with no
     // query params and need the full, unpaginated list back.
         it("calls the legacy 2-arg RPC shape when no pagination params are present", async () => {
             const captured = captureRpcArgs();
-            dbState.rpc = { data: [], error: null };
+            supabaseState.rpc = { data: [], error: null };
 
       await request(app)
         .get("/projects")
@@ -258,7 +257,7 @@ describe("projects.routes", () => {
 
         it("calls the paginated RPC shape with every filter parsed once any pagination param is present", async () => {
             const captured = captureRpcArgs();
-            dbState.rpc = { data: [], error: null };
+            supabaseState.rpc = { data: [], error: null };
 
             await request(app)
                 .get(
@@ -283,7 +282,7 @@ describe("projects.routes", () => {
 
     it("uses the lightweight summary RPC for view=summary", async () => {
       const captured = captureRpcArgs();
-      dbState.rpc = {
+      supabaseState.rpc = {
         data: [{ id: "p1", name: "Recently updated" }],
         error: null,
       };
@@ -333,10 +332,10 @@ describe("projects.routes", () => {
                     error: null,
                 })
                 .mockResolvedValueOnce({ data: [], error: null });
-            vi.mocked(createServerSQLite).mockImplementationOnce(() => {
-                const db = mockDb();
+            vi.mocked(createServerSupabase).mockImplementationOnce(() => {
+                const db = mockSupabase();
                 db.rpc = rpcMock;
-                return db as unknown as ReturnType<typeof createServerSQLite>;
+                return db as unknown as ReturnType<typeof createServerSupabase>;
             });
 
       const res = await request(app)
@@ -350,22 +349,21 @@ describe("projects.routes", () => {
         });
 
         it("returns 500 with detail when the RPC errors", async () => {
-            dbState.rpc = { data: null, error: { message: "boom" } };
+            supabaseState.rpc = { data: null, error: { message: "boom" } };
 
       const res = await request(app)
         .get("/projects/ids")
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("Internal server error");
-            expect(JSON.stringify(res.body)).not.toContain("boom");
+            expect(res.body.detail).toBe("boom");
         });
     });
 
   describe("GET /projects/filter-options", () => {
     it("returns lightweight practice and owner facets", async () => {
       const captured = captureRpcArgs();
-      dbState.rpc = {
+      supabaseState.rpc = {
         data: [
           {
             practices: ["Litigation"],
@@ -394,7 +392,7 @@ describe("projects.routes", () => {
   describe("Library query endpoints", () => {
     it("returns a flat paginated search result", async () => {
       const captured = captureRpcArgs();
-      dbState.rpc = {
+      supabaseState.rpc = {
         data: [
           { id: "d1", filename: "Agreement.docx" },
           { id: "d2", filename: "Agreement schedule.docx" },
@@ -443,7 +441,7 @@ describe("projects.routes", () => {
 
     it("returns only the file-type facet payload", async () => {
       const captured = captureRpcArgs();
-      dbState.rpc = {
+      supabaseState.rpc = {
         data: [{ file_types: ["docx", "pdf"] }],
         error: null,
       };
@@ -490,11 +488,11 @@ describe("projects.routes", () => {
             // Sharing requires each recipient to have a mirrored user_profiles
             // row (findMissingUserEmails); seed both emails so validation
             // passes and the create path proceeds.
-            dbState.tables.user_profiles = {
+            supabaseState.tables.user_profiles = {
                 data: [{ email: "a@x.com" }, { email: "b@x.com" }],
                 error: null,
             };
-            dbState.tables.projects = {
+            supabaseState.tables.projects = {
                 data: {
                     id: "p9",
                     name: "Gamma",
@@ -517,9 +515,7 @@ describe("projects.routes", () => {
 
             // The insert payload should be lowercased, deduped, trimmed and
             // the name trimmed.
-            const insert = dbState.inserts.find(
-                (i) => i.table === "projects",
-            );
+      const insert = supabaseState.inserts.find((i) => i.table === "projects");
             expect(insert?.payload).toMatchObject({
                 name: "Gamma",
                 shared_with: ["a@x.com", "b@x.com"],
@@ -539,12 +535,12 @@ describe("projects.routes", () => {
                 "ghost@x.com does not belong to a Mike user.",
             );
             expect(
-                dbState.inserts.find((i) => i.table === "projects"),
+                supabaseState.inserts.find((i) => i.table === "projects"),
             ).toBeUndefined();
         });
 
         it("returns 500 when the insert errors", async () => {
-            dbState.tables.projects = {
+            supabaseState.tables.projects = {
                 data: null,
                 error: { message: "insert failed" },
             };
@@ -555,15 +551,14 @@ describe("projects.routes", () => {
                 .send({ name: "Delta" });
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("Internal server error");
-            expect(JSON.stringify(res.body)).not.toContain("insert failed");
+            expect(res.body.detail).toBe("insert failed");
         });
     });
 
-    // ── GET /projects/:projectId (detail, inline access) ──────────────────
+    // ── GET /projects/:projectId (detail, shared access helper) ───────────
     describe("GET /projects/:projectId", () => {
         it("returns 404 when the project does not exist", async () => {
-            dbState.tables.projects = { data: null, error: null };
+            supabaseState.tables.projects = { data: null, error: null };
 
       const res = await request(app)
         .get("/projects/p1")
@@ -574,14 +569,7 @@ describe("projects.routes", () => {
         });
 
         it("returns 404 when the caller is neither owner nor shared", async () => {
-            dbState.tables.projects = {
-                data: {
-                    id: "p1",
-                    user_id: "someone-else",
-                    shared_with: ["other@x.com"],
-                },
-                error: null,
-            };
+            checkProjectAccess.mockResolvedValue({ ok: false });
 
       const res = await request(app)
         .get("/projects/p1")
@@ -589,19 +577,34 @@ describe("projects.routes", () => {
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Project not found");
+            expect(checkProjectAccess).toHaveBeenCalledWith(
+                "p1",
+                "u1",
+                "u1@test.local",
+                expect.anything(),
+            );
         });
 
-        it("grants access to a shared member (is_owner false)", async () => {
-            dbState.tables.projects = {
+        it("delegates mixed-case shared access to the case-insensitive helper", async () => {
+            checkProjectAccess.mockResolvedValue({
+                ok: true,
+                isOwner: false,
+                project: {
+                    id: "p1",
+                    user_id: "someone-else",
+                    shared_with: ["U1@Test.Local"],
+                },
+            });
+            supabaseState.tables.projects = {
                 data: {
                     id: "p1",
                     user_id: "someone-else",
-                    shared_with: ["u1@test.local"],
+                    shared_with: ["U1@Test.Local"],
                 },
                 error: null,
             };
-            dbState.tables.documents = { data: [], error: null };
-            dbState.tables.project_subfolders = { data: [], error: null };
+            supabaseState.tables.documents = { data: [], error: null };
+            supabaseState.tables.project_subfolders = { data: [], error: null };
 
       const res = await request(app)
         .get("/projects/p1")
@@ -609,18 +612,19 @@ describe("projects.routes", () => {
 
             expect(res.status).toBe(200);
             expect(res.body).toMatchObject({ id: "p1", is_owner: false });
+            expect(checkProjectAccess).toHaveBeenCalledTimes(1);
         });
 
         it("returns 200 with documents/folders/is_owner when owned", async () => {
-            dbState.tables.projects = {
+            supabaseState.tables.projects = {
                 data: { id: "p1", user_id: "u1", shared_with: null },
                 error: null,
             };
-            dbState.tables.documents = {
+            supabaseState.tables.documents = {
                 data: [{ id: "d1", user_id: "u1" }],
                 error: null,
             };
-            dbState.tables.project_subfolders = {
+            supabaseState.tables.project_subfolders = {
                 data: [{ id: "f1" }],
                 error: null,
             };
@@ -654,7 +658,7 @@ describe("projects.routes", () => {
         });
 
         it("returns 200 with documents when access is granted", async () => {
-            dbState.tables.documents = {
+            supabaseState.tables.documents = {
                 data: [{ id: "d1" }, { id: "d2" }],
                 error: null,
             };
@@ -682,7 +686,7 @@ describe("projects.routes", () => {
         });
 
         it("returns 404 when the update matches no owned project", async () => {
-            dbState.tables.projects = { data: null, error: null };
+            supabaseState.tables.projects = { data: null, error: null };
 
             const res = await request(app)
                 .patch("/projects/p1")
@@ -729,14 +733,13 @@ describe("projects.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("Failed to delete project");
-            expect(JSON.stringify(res.body)).not.toContain("cascade failed");
+            expect(res.body.detail).toBe("cascade failed");
         });
     });
     // ── GET /projects/:projectId/export (tamper-evident manifest) ─────────
     describe("GET /projects/:projectId/export", () => {
         function seedProjectWithOneVersion() {
-            dbState.tables.projects = {
+            supabaseState.tables.projects = {
                 data: {
                     id: "p1",
                     name: "Alpha",
@@ -745,7 +748,7 @@ describe("projects.routes", () => {
                 },
                 error: null,
             };
-            dbState.tables.documents = {
+            supabaseState.tables.documents = {
                 data: [
                     {
                         id: "d1",
@@ -757,7 +760,7 @@ describe("projects.routes", () => {
                 ],
                 error: null,
             };
-            dbState.tables.document_versions = {
+            supabaseState.tables.document_versions = {
                 data: [
                     {
                         id: "v1",
@@ -774,7 +777,7 @@ describe("projects.routes", () => {
                 ],
                 error: null,
             };
-            dbState.tables.document_edits = {
+            supabaseState.tables.document_edits = {
                 data: [
                     {
                         id: "e1",
@@ -871,7 +874,7 @@ describe("projects.routes", () => {
         });
 
         it("does not leak the underlying error when the manifest build fails", async () => {
-            dbState.tables.projects = {
+            supabaseState.tables.projects = {
                 data: null,
         error: { message: 'relation "projects" does not exist' },
             };

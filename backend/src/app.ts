@@ -4,12 +4,15 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { chatRouter } from "./routes/chat";
+import { wordChatRouter } from "./routes/wordChat";
 import { projectsRouter } from "./routes/projects";
 import { projectChatRouter } from "./routes/projectChat";
 import { documentsRouter } from "./routes/documents";
 import { libraryRouter } from "./routes/library";
 import { tabularRouter } from "./routes/tabular";
 import { workflowsRouter } from "./routes/workflows";
+import { quickActionsRouter } from "./routes/quickActions";
+import { workflowAddonsRouter } from "./routes/workflowAddons";
 import { userRouter } from "./routes/user";
 import { modelsRouter } from "./routes/models";
 import { downloadsRouter } from "./routes/downloads";
@@ -57,8 +60,7 @@ function makeLimiter(options: {
     legacyHeaders: false,
     skip: (req) => req.method === "OPTIONS",
     message: {
-      detail:
-        options.message ?? "Too many requests. Please try again later.",
+      detail: options.message ?? "Too many requests. Please try again later.",
     },
   });
 }
@@ -126,9 +128,21 @@ app.use(
   }),
 );
 
-const allowedOrigins = new Set<string>([
-  process.env.FRONTEND_URL ?? "http://localhost:3000",
-]);
+export function configuredAllowedOrigins(
+  env: NodeJS.ProcessEnv = process.env,
+): Set<string> {
+  return new Set(
+    [
+      env.FRONTEND_URL ?? "http://localhost:3000",
+      env.WORD_ADDIN_URL,
+      ...(env.ALLOWED_ORIGINS ?? "").split(","),
+    ]
+      .map((origin) => origin?.trim())
+      .filter((origin): origin is string => !!origin),
+  );
+}
+
+const allowedOrigins = configuredAllowedOrigins();
 
 app.use(
   cors({
@@ -162,6 +176,7 @@ app.post("/user/mfa/challenge", authLimiter);
 app.post("/users/mfa/challenge", authLimiter);
 
 app.post("/chat", chatLimiter);
+app.post("/word-chat", chatLimiter);
 app.post("/projects/:projectId/chat", chatLimiter);
 app.post("/tabular-review/:reviewId/chat", chatLimiter);
 app.post("/tabular-review/:reviewId/generate", chatLimiter);
@@ -170,6 +185,12 @@ app.post("/chat/:chatId/generate-title", chatCreateLimiter);
 app.post("/single-documents", uploadLimiter);
 app.post("/library/:kind/documents", uploadLimiter);
 app.post("/single-documents/:documentId/versions", uploadLimiter);
+app.post("/workflows/:workflowId/reference-files", uploadLimiter);
+app.post("/workflow-addons/:addonId/import", uploadLimiter);
+app.put(
+  "/workflows/:workflowId/reference-files/:referenceId",
+  uploadLimiter,
+);
 app.put(
   "/single-documents/:documentId/versions/:versionId/file",
   uploadLimiter,
@@ -192,6 +213,7 @@ app.delete("/user/tabular-reviews", dataDeleteLimiter);
 
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use("/chat", chatRouter);
+app.use("/word-chat", wordChatRouter);
 app.use("/models", modelsRouter);
 app.use("/projects", projectsRouter);
 app.use("/projects/:projectId/chat", projectChatRouter);
@@ -199,6 +221,8 @@ app.use("/single-documents", documentsRouter);
 app.use("/library", libraryRouter);
 app.use("/tabular-review", tabularRouter);
 app.use("/workflows", workflowsRouter);
+app.use("/quick-actions", quickActionsRouter);
+app.use("/workflow-addons", workflowAddonsRouter);
 app.use("/user", userRouter);
 app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
@@ -241,7 +265,9 @@ app.get("/manifest-signing-key", (_req, res) => {
     res.json(manifestPublicKey());
   } catch (err) {
     console.error("[manifest-signing-key] failed", safeErrorLog(err));
-    res.status(500).json({ detail: "Manifest signing key is misconfigured" });
+    res.status(500).json({
+      detail: "Manifest signing key is misconfigured",
+    });
   }
 });
 

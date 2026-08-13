@@ -16,6 +16,7 @@ import {
 import { buildSystemPrompt } from "./prompts";
 import { parseCitations, createCitation } from "./citations";
 import type { AssistantEvent } from "./streaming";
+import { ensureDefaultWorkflows } from "../workflowCatalog";
 
 // ---------------------------------------------------------------------------
 // Prompt-injection spotlighting helpers
@@ -95,13 +96,19 @@ export async function enrichWithPriorEvents(
   db: ReturnType<typeof createServerDatabase>,
   docIndex: DocIndex,
   nonce?: string,
+  messageTable = "chat_messages",
 ): Promise<ChatMessage[]> {
   if (!chatId) return messages;
+  // Skip streaming reservations: routeStreaming inserts the assistant row
+  // with content = null BEFORE the stream runs, so a crashed stream (or a
+  // concurrently streaming POST) leaves a newer null-content row that would
+  // otherwise shadow the previous turn's real events here.
   const { data: rows } = await db
-    .from("chat_messages")
+    .from(messageTable)
     .select("content, created_at")
     .eq("chat_id", chatId)
     .eq("role", "assistant")
+    .not("content", "is", null)
     .order("created_at", { ascending: false })
     .limit(1);
 
@@ -206,7 +213,7 @@ export async function enrichWithPriorEvents(
 }
 
 // ---------------------------------------------------------------------------
-// Word add-in document context (`document_context` on POST /chat)
+// Word add-in document context (`document_context` on POST /word-chat)
 // ---------------------------------------------------------------------------
 
 /** Cap so an oversized document body can't blow the model's context window. */
@@ -214,7 +221,7 @@ export const MAX_DOCUMENT_CONTEXT_CHARS = 200_000;
 
 /**
  * Parses the optional `document_context` field the Word add-in sends on
- * POST /chat: the plain-text body of the user's active document, read via
+ * POST /word-chat: the plain-text body of the user's active document, read via
  * Word.run() and posted inline rather than uploaded (there is no stored
  * document record). Absent/empty values normalize to `undefined`; anything
  * that is present but not a string is a 400.
@@ -237,14 +244,9 @@ export function parseOptionalDocumentContext(value: unknown):
 }
 
 /**
- * Builds the system-prompt block that carries the Word add-in's active
- * document body to the model (via buildMessages's `systemPromptExtra`).
- * The document body is user-controlled text and a prompt-injection vector,
- * so it MUST enter the system prompt nonce-fenced via spotlight() (the
- * shared helper at the top of this module), preceded by an instruction
- * that it is reference content only. Takes the per-request nonce so a
- * single request carries exactly one fence nonce — the invariant the
- * system-prompt policy states.
+ * Builds the system-prompt block carrying the Word add-in's active document.
+ * The document body is user-controlled, so it must enter the prompt inside
+ * the same per-request spotlight fence used for other untrusted content.
  */
 export function buildWordDocumentContextPrompt(
   documentContext: string,
@@ -408,13 +410,14 @@ export async function appendAskInputsResponseToLastAssistantMessage(
   db: ReturnType<typeof createServerDatabase>,
   chatId: string,
   response: AskInputsResponseRequest,
+  messageTable = "chat_messages",
 ) {
   await appendAssistantEventsToLastAssistantMessage(db, chatId, [
     {
       type: "ask_inputs_response" as const,
       responses: response.responses,
     },
-  ]);
+  ], undefined, messageTable);
 }
 
 export async function appendAssistantEventsToLastAssistantMessage(
@@ -422,15 +425,20 @@ export async function appendAssistantEventsToLastAssistantMessage(
   chatId: string,
   events: AssistantEvent[],
   citations?: unknown[],
+  messageTable = "chat_messages",
 ) {
   if (events.length === 0 && (!citations || citations.length === 0)) {
     return;
   }
+  // Skip streaming reservations (content = null, see routeStreaming) so
+  // events are appended to the real last assistant message, not onto an
+  // empty reservation left by a crashed or still-streaming request.
   const { data: rows, error: selectError } = await db
-    .from("chat_messages")
+    .from(messageTable)
     .select("id, content, citations")
     .eq("chat_id", chatId)
     .eq("role", "assistant")
+    .not("content", "is", null)
     .order("created_at", { ascending: false })
     .limit(1);
   if (selectError || !rows?.[0]) {
@@ -460,7 +468,7 @@ export async function appendAssistantEventsToLastAssistantMessage(
       ? [...existingCitations, ...citations]
       : existingCitations;
   const { error: updateError } = await db
-    .from("chat_messages")
+    .from(messageTable)
     .update({
       content: next.length ? next : null,
       citations: nextCitations.length ? nextCitations : null,
@@ -501,6 +509,7 @@ export async function buildDocContext(
   userId: string,
   db: ReturnType<typeof createServerDatabase>,
   chatId?: string | null,
+  messageTable = "chat_messages",
 ): Promise<{ docIndex: DocIndex; docStore: DocStore }> {
   const docIndex: DocIndex = {};
   const docStore: DocStore = new Map();
@@ -520,7 +529,7 @@ export async function buildDocContext(
   // them, and can't call edit_document / read_document on them.
   if (chatId) {
     const { data: rows } = await db
-      .from("chat_messages")
+      .from(messageTable)
       .select("content")
       .eq("chat_id", chatId)
       .eq("role", "assistant");
@@ -533,6 +542,19 @@ export async function buildDocContext(
           typeof ev.document_id === "string"
         ) {
           documentIds.add(ev.document_id);
+        } else if (ev?.type === "doc_replicated" && Array.isArray(ev.copies)) {
+          for (const copy of ev.copies) {
+            if (
+              copy &&
+              typeof copy === "object" &&
+              typeof (copy as { document_id?: unknown }).document_id ===
+                "string"
+            ) {
+              documentIds.add(
+                (copy as { document_id: string }).document_id,
+              );
+            }
+          }
         }
       }
     }
@@ -542,7 +564,7 @@ export async function buildDocContext(
   if (ids.length > 0) {
     const { data: docs } = await db
       .from("documents")
-      .select("id, current_version_id, status")
+      .select("id, current_version_id, status, library_kind")
       .in("id", ids)
       .eq("user_id", userId)
       .eq("status", "ready");
@@ -554,6 +576,7 @@ export async function buildDocContext(
       current_version_id?: string | null;
       active_version_number?: number | null;
       storage_path?: string | null;
+      library_kind?: string | null;
     }[];
     await attachActiveVersionPaths(db, docList);
     for (let i = 0; i < docList.length; i++) {
@@ -571,6 +594,8 @@ export async function buildDocContext(
         storage_path: doc.storage_path,
         file_type: doc.file_type ?? "",
         filename,
+        source_kind:
+          doc.library_kind === "template" ? "library_template" : "document",
       });
     }
   }
@@ -684,13 +709,29 @@ export async function buildWorkflowStore(
   userEmail: string | null | undefined,
   db: ReturnType<typeof createServerDatabase>,
 ): Promise<WorkflowStore> {
-  const { SYSTEM_ASSISTANT_WORKFLOWS } = await import("../systemWorkflows");
+  const { SYSTEM_ASSISTANT_WORKFLOWS } = await import("../systemWorkflows.js");
   const store: WorkflowStore = new Map();
   const normalizedUserEmail = (userEmail ?? "").trim().toLowerCase();
 
-  // Seed system workflows first.
+  // Best-effort: the chat routes call this outside their try blocks, so a
+  // thrown error here becomes an unhandled rejection that kills the process
+  // (Express 4 does not forward async errors). A chat must never fail —
+  // let alone crash the backend — because default installation failed.
+  try {
+    await ensureDefaultWorkflows(userId, db);
+  } catch (err) {
+    console.error("[buildWorkflowStore] ensureDefaultWorkflows failed:", err);
+  }
+
+  // Keep repository IDs readable for historical chat attachments, but do not
+  // expose them through list_workflows. Current discovery happens through the
+  // user's owned/shared workflows and the Add-ons catalog.
   for (const wf of SYSTEM_ASSISTANT_WORKFLOWS) {
-    store.set(wf.id, { title: wf.title, skill_md: wf.skill_md });
+    store.set(wf.id, {
+      title: wf.title,
+      skill_md: wf.skill_md,
+      listed: false,
+    });
   }
 
   // Then overlay user-owned assistant workflows.
@@ -701,7 +742,11 @@ export async function buildWorkflowStore(
     .eq("type", "assistant");
   for (const wf of workflows ?? []) {
     if (wf.prompt_md) {
-      store.set(wf.id, { title: wf.title, skill_md: wf.prompt_md });
+      store.set(wf.id, {
+        title: wf.title,
+        skill_md: wf.prompt_md,
+        listed: true,
+      });
     }
   }
 
@@ -725,9 +770,38 @@ export async function buildWorkflowStore(
           store.set(wf.id, {
             title: wf.title,
             skill_md: wf.prompt_md,
+            listed: true,
           });
         }
       }
+    }
+  }
+  const databaseWorkflowIds = [...store.entries()]
+    .filter(([, workflow]) => workflow.listed !== false)
+    .map(([id]) => id);
+  if (databaseWorkflowIds.length > 0) {
+    const { data: referenceDocuments } = await db
+      .from("workflow_reference_documents")
+      .select("id, workflow_id, filename, file_type, storage_path")
+      .in("workflow_id", databaseWorkflowIds);
+    const documents = (referenceDocuments ?? []) as {
+      id: string;
+      workflow_id: string;
+      filename: string;
+      file_type: string;
+      storage_path: string;
+    }[];
+    for (const document of documents) {
+      const workflow = store.get(document.workflow_id);
+      if (!workflow) continue;
+      const references = workflow.reference_files ?? [];
+      references.push({
+        reference_id: document.id,
+        filename: document.filename?.trim() || "Untitled reference",
+        file_type: document.file_type,
+        storage_path: document.storage_path,
+      });
+      workflow.reference_files = references;
     }
   }
   return store;

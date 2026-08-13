@@ -201,7 +201,7 @@ alter table public.user_mcp_tool_audit_logs enable row level security;
 
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
-  user_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   cm_number text,
   practice text,
@@ -223,7 +223,7 @@ create index if not exists projects_shared_with_idx
 create table if not exists public.project_subfolders (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,
-  user_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   parent_folder_id uuid references public.project_subfolders(id) on delete cascade,
   created_at timestamptz not null default now(),
@@ -235,7 +235,7 @@ create index if not exists idx_project_subfolders_project
 
 create table if not exists public.library_folders (
   id uuid primary key default gen_random_uuid(),
-  user_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
   library_kind text not null default 'file',
   name text not null,
   parent_folder_id uuid references public.library_folders(id) on delete cascade,
@@ -254,7 +254,7 @@ create index if not exists idx_library_folders_parent
 create table if not exists public.documents (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade,
-  user_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
   status text not null default 'pending',
   folder_id uuid references public.project_subfolders(id) on delete set null,
   library_kind text not null default 'file',
@@ -288,7 +288,7 @@ create table if not exists public.document_versions (
   page_count integer,
   content_sha256 text,
   deleted_at timestamptz,
-  deleted_by uuid,
+  deleted_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   constraint document_versions_source_check
     check (source = any (array[
@@ -368,7 +368,7 @@ create index if not exists document_edits_version_id_idx
 
 create table if not exists public.workflows (
   id uuid primary key default gen_random_uuid(),
-  user_id text,
+  user_id uuid references auth.users(id) on delete cascade,
   title text not null,
   type text not null,
   prompt_md text,
@@ -384,7 +384,7 @@ create index if not exists idx_workflows_user
 
 create table if not exists public.hidden_workflows (
   id uuid primary key default gen_random_uuid(),
-  user_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
   workflow_id text not null,
   created_at timestamptz not null default now(),
   unique(user_id, workflow_id)
@@ -396,7 +396,7 @@ create index if not exists idx_hidden_workflows_user
 create table if not exists public.workflow_shares (
   id uuid primary key default gen_random_uuid(),
   workflow_id uuid not null references public.workflows(id) on delete cascade,
-  shared_by_user_id text not null,
+  shared_by_user_id uuid not null references auth.users(id) on delete cascade,
   shared_with_email text not null,
   allow_edit boolean not null default false,
   created_at timestamptz not null default now(),
@@ -410,12 +410,208 @@ create index if not exists workflow_shares_workflow_id_idx
 create index if not exists workflow_shares_email_idx
   on public.workflow_shares(shared_with_email);
 
+create table if not exists public.default_workflow_installations (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  default_key text not null,
+  workflow_id uuid references public.workflows(id) on delete set null,
+  installed_at timestamptz not null default now(),
+  constraint default_workflow_installations_user_key_unique
+    unique(user_id, default_key),
+  constraint default_workflow_installations_workflow_unique
+    unique(workflow_id)
+);
+
+create table if not exists public.quick_actions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  workflow_id uuid not null references public.workflows(id) on delete cascade,
+  prompt text not null default '',
+  document_upload boolean not null default false,
+  enabled boolean not null default true,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists quick_actions_user_order_idx
+  on public.quick_actions(user_id, sort_order, created_at);
+
+create index if not exists quick_actions_workflow_idx
+  on public.quick_actions(workflow_id);
+
+create table if not exists public.workflow_addons (
+  id uuid primary key default gen_random_uuid(),
+  addon_key text not null unique,
+  pack_key text,
+  pack_title text,
+  pack_description text,
+  pack_version text,
+  version text,
+  title text not null,
+  description text,
+  type text not null,
+  prompt_md text,
+  columns_config jsonb,
+  contributors jsonb,
+  language text,
+  practice text,
+  jurisdictions text[],
+  content_hash text not null,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint workflow_addons_type_check
+    check(type in ('assistant', 'tabular'))
+);
+
+create index if not exists workflow_addons_active_type_idx
+  on public.workflow_addons(active, type, title);
+
+create index if not exists workflow_addons_active_pack_idx
+  on public.workflow_addons(active, pack_key, title);
+
+create table if not exists public.workflow_reference_documents (
+  id uuid primary key default gen_random_uuid(),
+  workflow_id uuid not null references public.workflows(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  filename text not null,
+  file_type text not null,
+  storage_path text not null,
+  size_bytes integer,
+  content_hash text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists workflow_reference_documents_workflow_idx
+  on public.workflow_reference_documents(workflow_id, created_at);
+
+create index if not exists workflow_reference_documents_user_idx
+  on public.workflow_reference_documents(user_id);
+
+create table if not exists public.workflow_addon_reference_files (
+  id uuid primary key default gen_random_uuid(),
+  addon_id uuid not null references public.workflow_addons(id) on delete cascade,
+  filename text not null,
+  file_type text not null,
+  storage_path text not null,
+  size_bytes integer,
+  content_hash text not null,
+  created_at timestamptz not null default now(),
+  constraint workflow_addon_reference_files_name_unique
+    unique(addon_id, filename)
+);
+
+-- Install each user's editable defaults and Quick Actions atomically. The
+-- installation row remains after a default workflow is deleted so it is not
+-- silently recreated on a later request.
+create or replace function public.install_missing_default_workflows(
+  p_user_id text,
+  p_defaults jsonb
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  item jsonb;
+  workflow_uuid uuid;
+  installed_count integer := 0;
+  jurisdiction_values text[];
+begin
+  perform pg_advisory_xact_lock(hashtextextended(p_user_id, 0));
+
+  for item in select value from jsonb_array_elements(coalesce(p_defaults, '[]'::jsonb))
+  loop
+    if nullif(trim(item->>'default_key'), '') is null then
+      continue;
+    end if;
+
+    if exists (
+      select 1
+      from public.default_workflow_installations dwi
+      where dwi.user_id::text = p_user_id
+        and dwi.default_key = item->>'default_key'
+    ) then
+      continue;
+    end if;
+
+    select coalesce(array_agg(value), array['General']::text[])
+      into jurisdiction_values
+    from jsonb_array_elements_text(
+      case
+        when jsonb_typeof(item->'jurisdictions') = 'array'
+          then item->'jurisdictions'
+        else '["General"]'::jsonb
+      end
+    );
+
+    insert into public.workflows (
+      user_id,
+      title,
+      type,
+      prompt_md,
+      columns_config,
+      language,
+      practice,
+      jurisdictions
+    ) values (
+      p_user_id::uuid,
+      item->>'title',
+      item->>'type',
+      nullif(item->>'prompt_md', ''),
+      case
+        when jsonb_typeof(item->'columns_config') = 'array'
+          then item->'columns_config'
+        else null
+      end,
+      coalesce(nullif(item->>'language', ''), 'English'),
+      coalesce(nullif(item->>'practice', ''), 'General Transactions'),
+      jurisdiction_values
+    )
+    returning id into workflow_uuid;
+
+    insert into public.default_workflow_installations (
+      user_id,
+      default_key,
+      workflow_id
+    ) values (
+      p_user_id::uuid,
+      item->>'default_key',
+      workflow_uuid
+    );
+
+    insert into public.quick_actions (
+      user_id,
+      workflow_id,
+      prompt,
+      document_upload,
+      enabled,
+      sort_order
+    ) values (
+      p_user_id::uuid,
+      workflow_uuid,
+      coalesce(item->>'quick_action_prompt', ''),
+      coalesce((item->>'document_upload')::boolean, false),
+      true,
+      coalesce((item->>'sort_order')::integer, installed_count)
+    );
+
+    installed_count := installed_count + 1;
+  end loop;
+
+  return installed_count;
+end;
+$$;
+
 -- Review queue for user-submitted workflows that may later be published to the
 -- open-source workflow repository. The backend writes with the service role.
 create table if not exists public.workflow_open_source_submissions (
   id uuid primary key default gen_random_uuid(),
   workflow_id uuid not null references public.workflows(id) on delete cascade,
-  submitted_by_user_id text not null,
+  submitted_by_user_id uuid not null references auth.users(id) on delete cascade,
   submitter_email text,
   submitter_name text,
   contributor_mode text not null default 'anonymous',
@@ -544,7 +740,7 @@ $$;
 create table if not exists public.chats (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade,
-  user_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
   title text,
   created_at timestamptz not null default now()
 );
@@ -577,16 +773,16 @@ as $$
   select
     c.id,
     c.project_id,
-    c.user_id,
+    c.user_id::text as user_id,
     c.title,
     c.created_at,
     p.name as project_name
   from public.chats c
   left join public.projects p on p.id = c.project_id
-  where c.user_id = p_user_id
+  where c.user_id::text = p_user_id
      or (
        p.id is not null
-       and p.user_id = p_user_id
+       and p.user_id::text = p_user_id
      )
   order by c.created_at desc, c.id asc
   limit case
@@ -610,6 +806,58 @@ create table if not exists public.chat_messages (
 
 create index if not exists idx_chat_messages_chat
   on public.chat_messages(chat_id);
+
+-- ---------------------------------------------------------------------------
+-- Word add-in chats
+-- ---------------------------------------------------------------------------
+-- These conversations are document-scoped and deliberately separate from the
+-- web assistant's chats/chat_messages history.
+
+create table if not exists public.word_documents (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  client_document_id uuid not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, client_document_id)
+);
+
+create index if not exists idx_word_documents_user_updated
+  on public.word_documents(user_id, updated_at desc);
+
+create table if not exists public.word_chats (
+  id uuid primary key default gen_random_uuid(),
+  word_document_id uuid not null
+    references public.word_documents(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  title text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_word_chats_document_updated
+  on public.word_chats(word_document_id, updated_at desc);
+
+create index if not exists idx_word_chats_user
+  on public.word_chats(user_id);
+
+create table if not exists public.word_chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  chat_id uuid not null references public.word_chats(id) on delete cascade,
+  role text not null check (role in ('user', 'assistant')),
+  content jsonb,
+  files jsonb,
+  workflow jsonb,
+  citations jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_word_chat_messages_chat_created
+  on public.word_chat_messages(chat_id, created_at);
+
+alter table public.word_documents enable row level security;
+alter table public.word_chats enable row level security;
+alter table public.word_chat_messages enable row level security;
 
 do $$
 begin
@@ -635,7 +883,7 @@ $$;
 create table if not exists public.tabular_reviews (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade,
-  user_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
   title text,
   columns_config jsonb,
   document_ids jsonb,
@@ -685,10 +933,10 @@ as $$
   with visible_projects as (
     select p.*
     from public.projects p
-    where p.user_id = p_user_id
+    where p.user_id::text = p_user_id
        or (
         coalesce(p_user_email, '') <> ''
-        and p.user_id <> p_user_id
+        and p.user_id::text <> p_user_id
         and p.shared_with @> jsonb_build_array(p_user_email)
       )
   ),
@@ -712,14 +960,14 @@ as $$
   )
   select
     vp.id,
-    vp.user_id,
+    vp.user_id::text as user_id,
     vp.name,
     vp.cm_number,
     vp.practice,
     vp.shared_with,
     vp.created_at,
     vp.updated_at,
-    vp.user_id = p_user_id as is_owner,
+    vp.user_id::text = p_user_id as is_owner,
     nullif(trim(up.display_name), '') as owner_display_name,
     null::text as owner_email,
     coalesce(dc.document_count, 0) as document_count,
@@ -727,7 +975,7 @@ as $$
     coalesce(rc.review_count, 0) as review_count
   from visible_projects vp
   left join public.user_profiles up
-    on up.user_id::text = vp.user_id
+    on up.user_id::text = vp.user_id::text
   left join document_counts dc
     on dc.project_id = vp.id
   left join chat_counts cc
@@ -818,10 +1066,10 @@ as $$
   with accessible_projects as (
     select p.id
     from public.projects p
-    where p.user_id = p_user_id
+    where p.user_id::text = p_user_id
        or (
         coalesce(p_user_email, '') <> ''
-        and p.user_id <> p_user_id
+        and p.user_id::text <> p_user_id
         and p.shared_with @> jsonb_build_array(p_user_email)
       )
   ),
@@ -860,15 +1108,15 @@ as $$
         )
       )
       and (
-        tr.user_id = p_user_id
+        tr.user_id::text = p_user_id
         or (
           tr.project_id in (select ap.id from accessible_projects ap)
-          and tr.user_id <> p_user_id
+          and tr.user_id::text <> p_user_id
         )
         or (
           p_project_id is null
           and coalesce(p_user_email, '') <> ''
-          and tr.user_id <> p_user_id
+          and tr.user_id::text <> p_user_id
           and tr.shared_with @> jsonb_build_array(p_user_email)
         )
       )
@@ -903,7 +1151,7 @@ as $$
   select
     vr.id,
     vr.project_id,
-    vr.user_id,
+    vr.user_id::text as user_id,
     vr.title,
     vr.columns_config,
     vr.document_ids,
@@ -911,7 +1159,7 @@ as $$
     vr.shared_with,
     vr.created_at,
     vr.updated_at,
-    vr.user_id = p_user_id as is_owner,
+    vr.user_id::text = p_user_id as is_owner,
     rdc.document_count
   from visible_reviews vr
   join review_document_counts rdc
@@ -1010,14 +1258,14 @@ as $$
   with accessible_projects as (
     select p.id
     from public.projects p
-    where p.user_id = p_user_id
+    where p.user_id::text = p_user_id
        or (
         coalesce(p_user_email, '') <> ''
-        and p.user_id <> p_user_id
+        and p.user_id::text <> p_user_id
         and p.shared_with @> jsonb_build_array(p_user_email)
       )
   )
-  select tr.id, tr.user_id
+  select tr.id, tr.user_id::text as user_id
   from public.tabular_reviews tr
   where (p_project_id is null or tr.project_id::text = p_project_id)
     and (
@@ -1051,15 +1299,15 @@ as $$
       )
     )
     and (
-      tr.user_id = p_user_id
+      tr.user_id::text = p_user_id
       or (
         tr.project_id in (select ap.id from accessible_projects ap)
-        and tr.user_id <> p_user_id
+        and tr.user_id::text <> p_user_id
       )
       or (
         p_project_id is null
         and coalesce(p_user_email, '') <> ''
-        and tr.user_id <> p_user_id
+        and tr.user_id::text <> p_user_id
         and tr.shared_with @> jsonb_build_array(p_user_email)
       )
     )
@@ -1071,7 +1319,7 @@ $$;
 create table if not exists public.tabular_review_chats (
   id uuid primary key default gen_random_uuid(),
   review_id uuid not null references public.tabular_reviews(id) on delete cascade,
-  user_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
   title text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -1583,7 +1831,7 @@ as $$
   select
     d.id,
     d.project_id,
-    d.user_id,
+    d.user_id::text as user_id,
     d.status,
     d.folder_id,
     d.library_kind,
@@ -1602,7 +1850,7 @@ as $$
   left join public.document_versions v
     on v.id = d.current_version_id
    and v.deleted_at is null
-  where d.user_id = p_user_id
+  where d.user_id::text = p_user_id
     and d.project_id is null
     and (
       (p_library_kind = 'file' and coalesce(d.library_kind, 'file') = 'file')
@@ -1655,7 +1903,7 @@ as $$
   left join public.document_versions v
     on v.id = d.current_version_id
    and v.deleted_at is null
-  where d.user_id = p_user_id
+  where d.user_id::text = p_user_id
     and d.project_id is null
     and (
       (p_library_kind = 'file' and coalesce(d.library_kind, 'file') = 'file')
@@ -1674,10 +1922,10 @@ as $$
   with visible_projects as (
     select p.user_id, nullif(trim(p.practice), '') as practice
     from public.projects p
-    where p.user_id = p_user_id
+    where p.user_id::text = p_user_id
        or (
          coalesce(p_user_email, '') <> ''
-         and p.user_id <> p_user_id
+         and p.user_id::text <> p_user_id
          and p.shared_with @> jsonb_build_array(p_user_email)
        )
   ),
@@ -1689,7 +1937,7 @@ as $$
     select
       o.user_id,
       case
-        when o.user_id = p_user_id then 'Me'
+        when o.user_id::text = p_user_id then 'Me'
         else coalesce(
           nullif(trim(up.display_name), ''),
           nullif(trim(up.email), ''),
@@ -1698,7 +1946,7 @@ as $$
       end as label
     from distinct_owners o
     left join public.user_profiles up
-      on up.user_id::text = o.user_id
+      on up.user_id::text = o.user_id::text
   )
   select
     coalesce(
@@ -1844,17 +2092,17 @@ as $$
     select p.*
     from public.projects p
     where (
-        p.user_id = p_user_id
+        p.user_id::text = p_user_id
         or (
           coalesce(p_user_email, '') <> ''
-          and p.user_id <> p_user_id
+          and p.user_id::text <> p_user_id
           and p.shared_with @> jsonb_build_array(p_user_email)
         )
       )
       and (
         coalesce(p_scope, 'all') = 'all'
-        or (p_scope = 'mine' and p.user_id = p_user_id)
-        or (p_scope = 'shared' and p.user_id <> p_user_id)
+        or (p_scope = 'mine' and p.user_id::text = p_user_id)
+        or (p_scope = 'shared' and p.user_id::text <> p_user_id)
       )
       and (
         p_search_term is null
@@ -1870,7 +2118,7 @@ as $$
           escape '\'
       )
       and (p_practice is null or p.practice = p_practice)
-      and (p_owner_user_id is null or p.user_id = p_owner_user_id)
+      and (p_owner_user_id is null or p.user_id::text = p_owner_user_id)
   ),
   document_counts as (
     select d.project_id, count(*)::integer as document_count
@@ -1892,14 +2140,14 @@ as $$
   )
   select
     vp.id,
-    vp.user_id,
+    vp.user_id::text as user_id,
     vp.name,
     vp.cm_number,
     vp.practice,
     vp.shared_with,
     vp.created_at,
     vp.updated_at,
-    vp.user_id = p_user_id as is_owner,
+    vp.user_id::text = p_user_id as is_owner,
     nullif(trim(up.display_name), '') as owner_display_name,
     null::text as owner_email,
     coalesce(dc.document_count, 0) as document_count,
@@ -1907,7 +2155,7 @@ as $$
     coalesce(rc.review_count, 0) as review_count
   from visible_projects vp
   left join public.user_profiles up
-    on up.user_id::text = vp.user_id
+    on up.user_id::text = vp.user_id::text
   left join document_counts dc
     on dc.project_id = vp.id
   left join chat_counts cc
@@ -1962,20 +2210,20 @@ returns table (
 language sql
 stable
 as $$
-  select p.id, p.user_id
+  select p.id, p.user_id::text as user_id
   from public.projects p
   where (
-      p.user_id = p_user_id
+      p.user_id::text = p_user_id
       or (
         coalesce(p_user_email, '') <> ''
-        and p.user_id <> p_user_id
+        and p.user_id::text <> p_user_id
         and p.shared_with @> jsonb_build_array(p_user_email)
       )
     )
     and (
       coalesce(p_scope, 'all') = 'all'
-      or (p_scope = 'mine' and p.user_id = p_user_id)
-      or (p_scope = 'shared' and p.user_id <> p_user_id)
+      or (p_scope = 'mine' and p.user_id::text = p_user_id)
+      or (p_scope = 'shared' and p.user_id::text <> p_user_id)
     )
     and (
       p_search_term is null
@@ -1991,7 +2239,7 @@ as $$
         escape '\'
     )
     and (p_practice is null or p.practice = p_practice)
-    and (p_owner_user_id is null or p.user_id = p_owner_user_id)
+    and (p_owner_user_id is null or p.user_id::text = p_owner_user_id)
   order by p.created_at desc, p.id asc
   limit greatest(coalesce(p_limit, 1000), 1)
   offset greatest(coalesce(p_offset, 0), 0);
@@ -2214,16 +2462,16 @@ stable
 as $$
   select
     p.id,
-    p.user_id,
+    p.user_id::text as user_id,
     p.name,
     p.created_at,
     p.updated_at,
-    p.user_id = p_user_id as is_owner
+    p.user_id::text = p_user_id as is_owner
   from public.projects p
-  where p.user_id = p_user_id
+  where p.user_id::text = p_user_id
      or (
        coalesce(p_user_email, '') <> ''
-       and p.user_id <> p_user_id
+       and p.user_id::text <> p_user_id
        and p.shared_with @> jsonb_build_array(p_user_email)
      )
   order by p.updated_at desc, p.created_at desc, p.id asc
@@ -2248,12 +2496,12 @@ returns table (
 language sql
 stable
 as $$
-  select d.id, d.user_id
+  select d.id, d.user_id::text as user_id
   from public.documents d
   left join public.document_versions v
     on v.id = d.current_version_id
    and v.deleted_at is null
-  where d.user_id = p_user_id
+  where d.user_id::text = p_user_id
     and d.project_id is null
     and (
       (p_library_kind = 'file' and coalesce(d.library_kind, 'file') = 'file')
@@ -2292,7 +2540,7 @@ $$;
 create table if not exists public.audit_events (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz not null default now(),
-  user_id uuid not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
   user_email text,
   action text not null,
   status text not null default 'completed',
@@ -2322,6 +2570,9 @@ revoke all on public.workflow_shares from anon, authenticated;
 revoke all on public.workflow_open_source_submissions from anon, authenticated;
 revoke all on public.chats from anon, authenticated;
 revoke all on public.chat_messages from anon, authenticated;
+revoke all on public.word_documents from anon, authenticated;
+revoke all on public.word_chats from anon, authenticated;
+revoke all on public.word_chat_messages from anon, authenticated;
 revoke all on public.tabular_reviews from anon, authenticated;
 revoke all on public.tabular_cells from anon, authenticated;
 revoke all on public.tabular_review_rows from anon, authenticated;
@@ -2337,6 +2588,20 @@ revoke all on public.user_mcp_tool_audit_logs from anon, authenticated;
 revoke all on public.courtlistener_citation_index from anon, authenticated;
 revoke all on public.courtlistener_opinion_cluster_index from anon, authenticated;
 revoke all on public.audit_events from anon, authenticated;
+revoke all on function public.install_missing_default_workflows(text, jsonb)
+  from public, anon, authenticated;
+
+grant select, insert, update, delete
+  on public.default_workflow_installations,
+     public.quick_actions,
+     public.workflow_addons,
+     public.workflow_reference_documents,
+     public.workflow_addon_reference_files
+  to service_role;
+
+grant execute
+  on function public.install_missing_default_workflows(text, jsonb)
+  to service_role;
 
 -- Tables created by this file are owned by the database bootstrap role. The
 -- backend connects as service_role, so grant it only the data privileges that

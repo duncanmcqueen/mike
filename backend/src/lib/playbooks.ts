@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
-import { jsonrepair } from "jsonrepair";
+const { jsonrepair } = require("jsonrepair") as {
+    jsonrepair: (text: string) => string;
+};
 import { z } from "zod";
 import {
   createServerDatabase,

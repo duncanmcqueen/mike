@@ -42,7 +42,6 @@ import type {
 import { AddColumnModal } from "./AddColumnModal";
 import { TRWorkflowModal } from "./TRWorkflowModal";
 import { AddDocumentsModal } from "../modals/AddDocumentsModal";
-import { AddProjectDocsModal } from "../modals/AddProjectDocsModal";
 import { PeopleModal } from "../modals/PeopleModal";
 import { OwnerOnlyPopup } from "../popups/OwnerOnlyPopup";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
@@ -1125,7 +1124,7 @@ export function TRView({ reviewId, projectId }: Props) {
             />
 
             {project ? (
-                <AddProjectDocsModal
+                <AddDocumentsModal
                     open={addDocsOpen}
                     onClose={() => setAddDocsOpen(false)}
                     onSelect={(docs: Document[]) => handleAddDocuments(docs)}
@@ -1140,7 +1139,10 @@ export function TRView({ reviewId, projectId }: Props) {
                         "Add Documents",
                     ]}
                     projectId={project.id}
-                    excludeDocIds={new Set(documents.map((d) => d.id))}
+                    projectDocumentsOnly
+                    disabledDocumentIds={new Set(
+                        documents.map((document) => document.id),
+                    )}
                 />
             ) : (
                 <AddDocumentsModal
@@ -1152,6 +1154,7 @@ export function TRView({ reviewId, projectId }: Props) {
                         ...(review ? [review.title || "Untitled Review"] : []),
                         "Add Documents",
                     ]}
+                    tabs={["files", "projects"]}
                 />
             )}
 

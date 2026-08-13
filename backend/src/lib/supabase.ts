@@ -1,4 +1,12 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
+let cachedAdminClient:
+  | {
+      url: string;
+      key: string;
+      client: SupabaseClient<any, "public", any>;
+    }
+  | undefined;
 
 /**
  * Server-side Supabase client using the service-role key.
@@ -15,7 +23,16 @@ export function createServerSupabase() {
       "SUPABASE_URL and SUPABASE_SECRET_KEY must be set when MIKE_DATABASE_PROVIDER=supabase",
     );
   }
-  return createClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false },
+  if (cachedAdminClient?.url === url && cachedAdminClient.key === key) {
+    return cachedAdminClient.client;
+  }
+
+  const client = createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
   });
+  cachedAdminClient = { url, key, client };
+  return client;
 }

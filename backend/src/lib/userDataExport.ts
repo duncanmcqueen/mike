@@ -80,6 +80,22 @@ async function loadUserChats(db: Db, userId: string) {
     return { chats, messages };
 }
 
+async function loadUserWordChats(db: Db, userId: string) {
+    const documents = await selectAll(db, "word_documents", (query) =>
+        query.eq("user_id", userId).order("created_at", { ascending: true }),
+    );
+    const chats = await selectAll(db, "word_chats", (query) =>
+        query.eq("user_id", userId).order("created_at", { ascending: true }),
+    );
+    const messages = await selectByIds(
+        db,
+        "word_chat_messages",
+        "chat_id",
+        idsFrom(chats),
+    );
+    return { documents, chats, messages };
+}
+
 async function loadUserTabularChats(db: Db, userId: string) {
     const chats = await selectAll(db, "tabular_review_chats", (query) =>
         query.eq("user_id", userId).order("created_at", { ascending: true }),
@@ -114,8 +130,9 @@ export async function buildUserChatsExport(
     userId: string,
     userEmail?: string | null,
 ) {
-    const [assistant, tabular] = await Promise.all([
+    const [assistant, wordAddin, tabular] = await Promise.all([
         loadUserChats(db, userId),
+        loadUserWordChats(db, userId),
         loadUserTabularChats(db, userId),
     ]);
 
@@ -123,6 +140,7 @@ export async function buildUserChatsExport(
         exported_at: new Date().toISOString(),
         user: { id: userId, email: userEmail ?? null },
         assistant_chats: assistant,
+        word_addin_chats: wordAddin,
         tabular_review_chats: tabular,
     };
 }
@@ -282,6 +300,9 @@ export async function buildUserAccountExport(
         projects,
         standaloneDocuments,
         workflows,
+        workflowReferenceDocuments,
+        defaultWorkflowInstallations,
+        quickActions,
         workflowOpenSourceSubmissions,
         hiddenWorkflows,
         workflowSharesByUser,
@@ -323,6 +344,15 @@ export async function buildUserAccountExport(
         ),
         selectAll(db, "workflows", (query) =>
             query.eq("user_id", userId).order("created_at", { ascending: true }),
+        ),
+        selectAll(db, "workflow_reference_documents", (query) =>
+            query.eq("user_id", userId).order("created_at", { ascending: true }),
+        ),
+        selectAll(db, "default_workflow_installations", (query) =>
+            query.eq("user_id", userId).order("installed_at", { ascending: true }),
+        ),
+        selectAll(db, "quick_actions", (query) =>
+            query.eq("user_id", userId).order("sort_order", { ascending: true }),
         ),
         selectAll(db, "workflow_open_source_submissions", (query) =>
             query
@@ -385,7 +415,11 @@ export async function buildUserAccountExport(
         userEmail
             ? selectAll(db, "projects", (query) =>
                   query
-                      .filter("shared_with", "cs", JSON.stringify([userEmail]))
+                      .filter(
+                          "shared_with",
+                          "cs",
+                          JSON.stringify([userEmail.trim().toLowerCase()]),
+                      )
                       .neq("user_id", userId)
                       .order("created_at", { ascending: true }),
                   "id, user_id, name, cm_number, created_at, updated_at",
@@ -437,6 +471,9 @@ export async function buildUserAccountExport(
         document_versions: versions,
         document_edits: edits,
         workflows,
+        workflow_reference_documents: workflowReferenceDocuments,
+        default_workflow_installations: defaultWorkflowInstallations,
+        quick_actions: quickActions,
         workflow_open_source_submissions: workflowOpenSourceSubmissions,
         hidden_workflows: hiddenWorkflows,
         workflow_shares_by_user: workflowSharesByUser,

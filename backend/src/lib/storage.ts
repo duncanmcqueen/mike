@@ -110,6 +110,16 @@ export function versionStorageKey(
   return `documents/${userId}/${docId}/versions/${versionSlug}${storageExtension(filename, ".bin")}`;
 }
 
+export function workflowReferenceKey(
+  userId: string,
+  workflowId: string,
+  referenceId: string,
+  contentHash: string,
+  filename: string,
+): string {
+  return `workflow-references/${userId}/${workflowId}/${referenceId}/${contentHash}${storageExtension(filename, ".bin")}`;
+}
+
 function storageExtension(filename: string, fallback: string): string {
   const extension = path.extname(filename).toLowerCase();
   return /^\.[a-z0-9]{1,16}$/.test(extension) ? extension : fallback;
