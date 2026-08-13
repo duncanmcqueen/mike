@@ -178,13 +178,15 @@ const readAll = async (response: Response) => {
     return text + decoder.decode();
 };
 
-const readBlobText = (blob: Blob) =>
-    new Promise<string>((resolve, reject) => {
+const readBlobText = (blob: Blob): Promise<string> => {
+    if (typeof blob.text === "function") return blob.text();
+    return new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result ?? ""));
         reader.onerror = () => reject(reader.error);
         reader.readAsText(blob);
     });
+};
 
 const lastFetchCall = () => {
     const call = fetchMock.mock.calls.at(-1);
