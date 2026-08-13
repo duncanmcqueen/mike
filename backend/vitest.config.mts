@@ -3,8 +3,16 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
     test: {
         environment: "node",
+        // Unit/integration tests use the self-contained local profile unless a
+        // provider-specific test overrides it explicitly.
+        env: {
+            MIKE_DATABASE_PROVIDER: "sqlite",
+            MIKE_STORAGE_PROVIDER: "sqlite",
+            MIKE_AUTH_PROVIDER: "local",
+        },
         include: ["src/**/*.test.ts"],
         exclude: ["dist/**", "node_modules/**"],
+        fileParallelism: false,
         // Generous timeouts so cold-start module transform/import latency
         // can't cause spurious timeout failures on a cold CI runner. Warm
         // tests finish in ~1s; this only guards the pathological cold case —
@@ -23,17 +31,17 @@ export default defineConfig({
             // documentTypes, chat prompts, systemWorkflows) AND the large,
             // still-untested feature libs (courtlistener, mcp, chat tool
             // dispatch, llm providers, spreadsheet handling), so the global
-            // number is still low. Measured on this tree: 23.88% statements,
-            // 17.98% branches, 23.06% functions, 23.79% lines. These floors
+            // number is still low. Measured on this tree: 43.26% statements,
+            // 36.95% branches, 46.00% functions, 44.83% lines. These floors
             // sit just below that (rounded down to whole percents) so CI
             // fails on a *drop*. Floors only go up: when you add tests, raise
             // them in the same PR. Backlog + per-area status:
             // docs/testing-coverage.md.
             thresholds: {
-                statements: 23,
-                branches: 17,
-                functions: 23,
-                lines: 23,
+                statements: 43,
+                branches: 36,
+                functions: 46,
+                lines: 44,
             },
         },
     },

@@ -14,10 +14,15 @@ import { userRouter } from "./routes/user";
 import { modelsRouter } from "./routes/models";
 import { downloadsRouter } from "./routes/downloads";
 import { caseLawRouter } from "./routes/caseLaw";
+import { ironcladRouter } from "./routes/ironclad";
+import { legalMonitorsRouter } from "./routes/legalMonitors";
+import { promptsRouter } from "./routes/prompts";
+import { playbooksRouter } from "./routes/playbooks";
+import { gmailRouter } from "./routes/gmail";
+import { requireDeploymentModule } from "./lib/deploymentModules";
 import { auditRouter } from "./routes/audit";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import { safeErrorLog } from "./lib/safeError";
-
 export const app = express();
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -92,6 +97,12 @@ const dataDeleteLimiter = makeLimiter({
   message: "Too many data deletion requests. Please try again later.",
 });
 
+const authLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_AUTH_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_AUTH_MAX", 30),
+  message: "Too many auth attempts. Please try again later.",
+});
+
 app.disable("x-powered-by");
 app.set("trust proxy", envInt("TRUST_PROXY_HOPS", 1));
 
@@ -139,6 +150,17 @@ app.use(
 
 app.use(generalLimiter);
 
+app.post("/user/auth/signup", authLimiter);
+app.post("/user/auth/login", authLimiter);
+app.post("/users/auth/signup", authLimiter);
+app.post("/users/auth/login", authLimiter);
+// TOTP codes are 6 digits — keep verification behind the strict auth
+// limiter so codes cannot be brute-forced at the general request rate.
+app.post("/user/mfa/verify", authLimiter);
+app.post("/users/mfa/verify", authLimiter);
+app.post("/user/mfa/challenge", authLimiter);
+app.post("/users/mfa/challenge", authLimiter);
+
 app.post("/chat", chatLimiter);
 app.post("/projects/:projectId/chat", chatLimiter);
 app.post("/tabular-review/:reviewId/chat", chatLimiter);
@@ -153,6 +175,11 @@ app.put(
   uploadLimiter,
 );
 app.post("/projects/:projectId/documents", uploadLimiter);
+app.post("/integrations/ironclad/import", uploadLimiter);
+app.post("/integrations/gmail/import", uploadLimiter);
+app.post("/legal-monitors/:monitorId/run", chatLimiter);
+app.post("/playbooks/import", uploadLimiter);
+app.post("/playbooks/:playbookId/review", chatLimiter);
 app.get("/projects/:projectId/export", exportLimiter);
 app.get("/user/export", exportLimiter);
 app.get("/user/chats/export", exportLimiter);
@@ -164,7 +191,6 @@ app.delete("/user/projects", dataDeleteLimiter);
 app.delete("/user/tabular-reviews", dataDeleteLimiter);
 
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
-
 app.use("/chat", chatRouter);
 app.use("/models", modelsRouter);
 app.use("/projects", projectsRouter);
@@ -177,6 +203,31 @@ app.use("/user", userRouter);
 app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
 app.use("/case-law", caseLawRouter);
+app.use(
+  "/integrations/ironclad",
+  requireDeploymentModule("ironclad"),
+  ironcladRouter,
+);
+app.use(
+  "/integrations/gmail",
+  requireDeploymentModule("gmail"),
+  gmailRouter,
+);
+app.use(
+  "/legal-monitors",
+  requireDeploymentModule("legalMonitors"),
+  legalMonitorsRouter,
+);
+app.use(
+  "/prompts",
+  requireDeploymentModule("promptLibrary"),
+  promptsRouter,
+);
+app.use(
+  "/playbooks",
+  requireDeploymentModule("playbooks"),
+  playbooksRouter,
+);
 app.use("/audit", auditRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -193,3 +244,23 @@ app.get("/manifest-signing-key", (_req, res) => {
     res.status(500).json({ detail: "Manifest signing key is misconfigured" });
   }
 });
+
+app.use(
+  (
+    err: unknown,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    console.error("[express] unhandled route error", {
+      path: _req.path,
+      error:
+        err instanceof Error && err.message ? err.message : String(err),
+    });
+    // Never echo raw error messages from unhandled exceptions — they can
+    // carry internal details (paths, connection strings, stack fragments).
+    if (!res.headersSent) {
+      res.status(500).json({ detail: "Internal server error" });
+    }
+  },
+);

@@ -8,6 +8,9 @@ const { getSessionMock } = vi.hoisted(() => ({
 }));
 vi.mock("@/app/lib/supabase", () => ({
     supabase: { auth: { getSession: getSessionMock } },
+    getBrowserSupabase: () => ({
+        auth: { getSession: getSessionMock },
+    }),
 }));
 
 import {
@@ -55,6 +58,7 @@ import {
     getLibraryFolderChildren,
     getMcpConnector,
     getOllamaModels,
+    getOpenRouterModels,
     getProject,
     getProjectDirectoryLevel,
   getProjectFilterOptions,
@@ -173,6 +177,14 @@ const readAll = async (response: Response) => {
     }
     return text + decoder.decode();
 };
+
+const readBlobText = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ""));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(blob);
+    });
 
 const lastFetchCall = () => {
     const call = fetchMock.mock.calls.at(-1);
@@ -367,6 +379,22 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
       "http://localhost:3001/chat?limit=5&offset=10",
     );
     });
+
+    it("loads the authenticated OpenRouter model catalog", async () => {
+        const models = [
+            {
+                id: "openrouter/anthropic/claude-sonnet-4",
+                label: "Claude Sonnet 4",
+                group: "OpenRouter" as const,
+            },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ models }));
+
+        await expect(getOpenRouterModels()).resolves.toEqual(models);
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/models/openrouter",
+        );
+    });
 });
 
 describe("blob requests (exportAccountData)", () => {
@@ -383,7 +411,7 @@ describe("blob requests (exportAccountData)", () => {
         const { blob, filename } = await exportAccountData();
 
         expect(filename).toBe("export.zip");
-        expect(await blob.text()).toBe("zip-bytes");
+        expect(await readBlobText(blob)).toBe("zip-bytes");
     });
 
     it("parses unquoted filenames and returns null when absent", async () => {
@@ -468,7 +496,7 @@ describe("audit history", () => {
             "http://localhost:3001/audit/export?q=agreement&action=document.edited&status=failed&surface=assistant&from=2026-07-01&to=2026-07-31&sort_by=created_at&sort_dir=desc",
         );
         expect(result.filename).toBe("history.csv");
-        expect(await result.blob.text()).toBe("history");
+        expect(await readBlobText(result.blob)).toBe("history");
     });
 
     it("omits every optional audit parameter when no filters are active", async () => {
@@ -492,7 +520,7 @@ describe("downloadDocumentsZip", () => {
 
         const blob = await downloadDocumentsZip(["d1", "d2"]);
 
-        expect(await blob.text()).toBe("zip");
+        expect(await readBlobText(blob)).toBe("zip");
         const { url, init } = lastFetchCall();
         expect(url).toBe("http://localhost:3001/single-documents/download-zip");
         expect(JSON.parse(init.body as string)).toEqual({
@@ -584,7 +612,7 @@ describe("getChat message mapping", () => {
         expect(messages[0].citations).toEqual([{ ref: 1 }]);
     });
 
-    it("maps a legacy string assistant body to empty content without events", async () => {
+    it("preserves a legacy string assistant body without events", async () => {
         fetchMock.mockResolvedValue(
             jsonResponse({
                 chat,
@@ -602,7 +630,7 @@ describe("getChat message mapping", () => {
 
         const { messages } = await getChat("c1");
 
-        expect(messages[0].content).toBe("");
+        expect(messages[0].content).toBe("plain string");
         expect(messages[0].events).toBeUndefined();
     });
 });
@@ -659,7 +687,7 @@ describe("mapTRMessages", () => {
         ]);
     });
 
-    it("degrades non-array assistant content to an empty string", () => {
+    it("preserves legacy string assistant content", () => {
         const mapped = mapTRMessages([
             {
                 id: "m1",
@@ -671,7 +699,7 @@ describe("mapTRMessages", () => {
         ]);
         expect(mapped[0]).toEqual({
             role: "assistant",
-            content: "",
+            content: "legacy",
             events: undefined,
             annotations: undefined,
         });
@@ -2180,7 +2208,7 @@ describe("unwrapping and blob wrappers", () => {
         const chats = await exportChatData();
     expect(lastFetchCall().url).toBe("http://localhost:3001/user/chats/export");
         expect(chats.filename).toBe("x.zip");
-        expect(await chats.blob.text()).toBe("bytes");
+        expect(await readBlobText(chats.blob)).toBe("bytes");
 
         await exportTabularReviewsData();
         expect(lastFetchCall().url).toBe(

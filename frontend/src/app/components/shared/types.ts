@@ -269,6 +269,50 @@ export type AssistantEvent =
       isStreaming?: boolean;
     }
   | {
+      type: "ironclad_search_contracts";
+      query: string;
+      result_count?: number;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
+      type: "ironclad_get_contract";
+      record_id: string | null;
+      name?: string | null;
+      attachment_count?: number;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
+      type: "ironclad_import_contract";
+      record_id: string;
+      attachment_key: string;
+      filename?: string;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
+      type: "gmail_search_messages";
+      query: string;
+      result_count?: number;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
+      type: "gmail_get_message";
+      message_id: string;
+      subject?: string;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
+      type: "gmail_import_message";
+      message_id: string;
+      filename?: string;
+      error?: string;
+      isStreaming?: boolean;
+    }
+  | {
       type: "case_citation";
       cluster_id: number | null;
       case_name: string | null;
@@ -314,6 +358,7 @@ export interface Message {
   content: string;
   files?: { filename: string; document_id?: string }[];
   workflow?: { id: string; title: string };
+  playbook?: { id: string; title: string; version: number; versionId: string };
   model?: string;
   citations?: Citation[];
   citationStatus?: "started" | "partial" | "final";
@@ -395,6 +440,11 @@ export function isSpreadsheetFilename(filename: string): boolean {
 export function isDocxFilename(filename: string): boolean {
   const ext = filename.split(".").pop()?.toLowerCase();
   return ext === "docx" || ext === "doc";
+}
+
+export function isMarkdownFilename(filename: string): boolean {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  return ext === "md" || ext === "markdown";
 }
 
 /**

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// supabase.ts creates its client at module load, so each test re-imports the
-// module fresh after adjusting the environment. vitest.config.mts supplies
-// valid dummy env values; these tests override them per-case.
+// supabase.ts creates its client lazily so the local-auth profile does not
+// require Supabase configuration. Each test resets the module cache after
+// adjusting the environment.
 
 afterEach(() => {
     vi.unstubAllEnvs();
@@ -13,26 +13,28 @@ describe("supabase client bootstrap", () => {
     it("exports a working client when both env vars are present", async () => {
         vi.resetModules();
 
-        const { supabase } = await import("./supabase");
+        const { getBrowserSupabase } = await import("./supabase");
+        const supabase = getBrowserSupabase();
 
         expect(supabase.auth).toBeDefined();
         expect(typeof supabase.auth.getSession).toBe("function");
     });
 
-    it("fails loudly at import when the Supabase URL is missing", async () => {
-        // The `|| ""` fallback hands createClient an empty URL, which throws.
-        // That is the desired behavior: a misconfigured build must crash at
-        // startup, not mint a client that fails on every auth call later.
+    it("fails loudly when the Supabase URL is missing", async () => {
         vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
         vi.resetModules();
 
-        await expect(import("./supabase")).rejects.toThrow(/supabaseUrl/i);
+        const { getBrowserSupabase } = await import("./supabase");
+        expect(() => getBrowserSupabase()).toThrow(/NEXT_PUBLIC_SUPABASE_URL/i);
     });
 
-    it("fails loudly at import when the publishable key is missing", async () => {
+    it("fails loudly when the publishable key is missing", async () => {
         vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY", "");
         vi.resetModules();
 
-        await expect(import("./supabase")).rejects.toThrow(/key/i);
+        const { getBrowserSupabase } = await import("./supabase");
+        expect(() => getBrowserSupabase()).toThrow(
+            /NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY/i,
+        );
     });
 });

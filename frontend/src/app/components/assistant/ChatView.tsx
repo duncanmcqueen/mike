@@ -21,6 +21,7 @@ import type {
 } from "../shared/types";
 import { useSidebar } from "@/app/contexts/SidebarContext";
 import { invalidateDocxBytes } from "@/app/hooks/useFetchDocxBytes";
+import { useSelectedModel } from "@/app/hooks/useSelectedModel";
 
 interface Props {
     chatId?: string | null;
@@ -59,6 +60,7 @@ export function ChatView({
     handleChat,
     cancel,
 }: Props) {
+    const [selectedModel] = useSelectedModel();
     const [tabs, setTabs] = useState<AssistantSidePanelTab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
     const [panelMounted, setPanelMounted] = useState(false);
@@ -189,9 +191,10 @@ export function ChatView({
         (tab: AssistantSidePanelTab) => {
             setTabs((prev) => {
                 const idx = prev.findIndex((t) =>
-                    tab.kind === "case"
+                    t.id === tab.id ||
+                    (tab.kind === "case"
                         ? t.kind === "case" && t.id === tab.id
-                        : t.kind !== "case" && t.documentId === tab.documentId,
+                        : t.kind !== "case" && t.documentId === tab.documentId),
                 );
                 if (idx >= 0) {
                     const existing = prev[idx];
@@ -224,6 +227,7 @@ export function ChatView({
             const showQuotes = options?.showQuotes ?? true;
             if (citation.kind === "case") {
                 if (!chatId) return;
+                if (citation.cluster_id == null) return;
                 upsertTab({
                     kind: "case",
                     id: `case:${citation.cluster_id}`,
@@ -507,7 +511,7 @@ export function ChatView({
                 `calc(100dvh - ${headerHeight + messageGap * 3 + userMessageHeight + paddingBottom}px)`,
             );
         }
-    }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [messages.length]);
 
     const updateScrollButton = useCallback(() => {
         const c = messagesContainerRef.current;
@@ -583,7 +587,7 @@ export function ChatView({
                 setMessagesVisible(true);
             }
         }
-    }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [messages]);
 
     useEffect(() => {
         if (panelMounted && window.innerWidth < 768) {
@@ -687,6 +691,7 @@ export function ChatView({
                                                 content={msg.content ?? ""}
                                                 files={msg.files}
                                                 workflow={msg.workflow}
+                                                playbook={msg.playbook}
                                             />
                                         ) : (
                                             <AssistantMessage
@@ -801,7 +806,12 @@ export function ChatView({
                                             return next;
                                         });
                                         void handleChat(
-                                            { role: "user", content, files },
+                                            {
+                                                role: "user",
+                                                content,
+                                                files,
+                                                model: selectedModel,
+                                            },
                                             {
                                                 askInputsResponse: response,
                                             },

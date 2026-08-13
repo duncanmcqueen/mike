@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/app/lib/supabase";
+import { signUpWithPassword } from "@/app/lib/auth";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import Link from "next/link";
@@ -33,9 +33,17 @@ export default function SignupPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
+    // Set once the form passes validation so the auth-redirect effect does
+    // not race away the post-signup confirmation screen.
+    const submittedRef = useRef(false);
 
     useEffect(() => {
-        if (!authLoading && isAuthenticated && !success) {
+        if (
+            !authLoading &&
+            isAuthenticated &&
+            !success &&
+            !submittedRef.current
+        ) {
             router.replace("/assistant");
         }
     }, [authLoading, isAuthenticated, router, success]);
@@ -60,28 +68,21 @@ export default function SignupPage() {
         }
 
         try {
-            const { data, error } = await supabase.auth.signUp({
-                email,
-                password,
-            });
-
-            if (error) throw error;
-
-            if (data.session) {
-                const trimmedName = name.trim();
-                const trimmedOrg = organisation.trim();
-                if (trimmedName || trimmedOrg) {
-                    try {
-                        await updateUserProfile({
-                            ...(trimmedName && { displayName: trimmedName }),
-                            ...(trimmedOrg && { organisation: trimmedOrg }),
-                        });
-                    } catch (profileError) {
-                        console.error(
-                            "[signup] failed to persist profile fields",
-                            profileError,
-                        );
-                    }
+            submittedRef.current = true;
+            await signUpWithPassword(email, password);
+            const trimmedName = name.trim();
+            const trimmedOrg = organisation.trim();
+            if (trimmedName || trimmedOrg) {
+                try {
+                    await updateUserProfile({
+                        ...(trimmedName && { displayName: trimmedName }),
+                        ...(trimmedOrg && { organisation: trimmedOrg }),
+                    });
+                } catch (profileError) {
+                    console.error(
+                        "[signup] failed to persist profile fields",
+                        profileError,
+                    );
                 }
             }
             setSuccess(true);
@@ -89,6 +90,7 @@ export default function SignupPage() {
                 router.push("/assistant");
             }, 2000);
         } catch (error: unknown) {
+            submittedRef.current = false;
             setError(
                 error instanceof Error
                     ? error.message

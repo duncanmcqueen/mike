@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { getCourtlistenerCaseOpinions } from "../lib/courtlistener";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import { getUserModelSettings } from "../lib/userSettings";
 
 export const caseLawRouter = Router();
@@ -43,7 +43,7 @@ caseLawRouter.post("/case-opinions", async (req, res) => {
         devLog("[case-law/case-opinions] loading sidepanel opinions", {
             clusterId,
         });
-        const db = createServerSupabase();
+        const db = createServerDatabase();
         const fetchKey = `${userId}:${clusterId}`;
         let fetchPromise = sidepanelOpinionFetches.get(fetchKey);
         if (fetchPromise) {

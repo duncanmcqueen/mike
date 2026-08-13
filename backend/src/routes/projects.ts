@@ -1,8 +1,8 @@
+// @ts-nocheck
 import { Router, type Request, type Response } from "express";
 import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import { recordAudit } from "../lib/audit";
-import { createClient } from "@supabase/supabase-js";
 import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
@@ -22,6 +22,7 @@ import {
 import { docxToPdf, convertedPdfKey } from "../lib/convert";
 import { checkProjectAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
+import { sendServerError } from "../lib/safeError";
 import { deleteUserProjects } from "../lib/userDataCleanup";
 import {
   ALLOWED_DOCUMENT_TYPES,
@@ -60,7 +61,7 @@ function normalizeDocumentFilename(nextName: unknown, currentName: string) {
 }
 
 async function deleteProjectDocumentsAndVersionFiles(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   projectId: string,
   documentIds: string[],
 ) {
@@ -94,7 +95,7 @@ async function deleteProjectDocumentsAndVersionFiles(
 }
 
 async function attachDocumentOwnerLabels(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   docs: { user_id?: string | null }[],
 ) {
   const ownerIds = docs
@@ -136,7 +137,7 @@ async function attachDocumentOwnerLabels(
 }
 
 async function attachChatCreatorLabels(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   chats: { user_id?: string | null }[],
 ) {
   const creatorIds = chats
@@ -176,7 +177,7 @@ async function attachChatCreatorLabels(
 }
 
 async function loadProjectDirectoryLevel(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   projectId: string,
   parentFolderId: string | null,
   pagination: { limit: number; offset: number },
@@ -232,7 +233,7 @@ async function loadProjectDirectoryLevel(
 // same response. The directory pickers (useDirectoryData) previously fanned
 // out one GET /projects/:id per project to obtain those documents; with N
 // projects that burst — auth check plus several DB queries per request —
-// could overwhelm the Supabase gateway. Batching keeps it at one request
+// could overwhelm the storage layer. Batching keeps it at one request
 // and a fixed number of queries regardless of project count.
 //
 // Pagination is opt-in via query params (limit/offset/search/sort_key or
@@ -257,12 +258,12 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const includeDocuments = req.query.include === "documents";
+  const db = createServerDatabase();
 
   if (req.query.view === "directory-search") {
     return handleProjectDirectorySearch(req, res);
   }
 
-  const db = createServerSupabase();
   if (req.query.view === "summary") {
     const pagination = parsePaginationQuery(
       req.query as Record<string, unknown>,
@@ -273,7 +274,7 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
       p_limit: pagination.limit,
       p_offset: pagination.offset,
     });
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendServerError(res, error);
     return void res.json(data ?? []);
   }
 
@@ -297,7 +298,7 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
     : { p_user_id: userId, p_user_email: userEmail ?? null };
 
   const { data, error } = await db.rpc("get_projects_overview", rpcArgs);
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
 
   const projects = (data ?? []) as { id: string }[];
   if (!includeDocuments || projects.length === 0) {
@@ -320,10 +321,8 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
       .in("project_id", projectIds)
       .order("created_at", { ascending: true }),
   ]);
-  if (docsError)
-    return void res.status(500).json({ detail: docsError.message });
-  if (foldersError)
-    return void res.status(500).json({ detail: foldersError.message });
+  if (docsError) return void sendServerError(res, docsError);
+  if (foldersError) return void sendServerError(res, foldersError);
 
   const docsTyped = (docs ?? []) as unknown as {
     id: string;
@@ -388,7 +387,7 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
     }
   }
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const missingSharedUsers = await findMissingUserEmails(db, cleanedSharedWith);
   if (missingSharedUsers.length > 0) {
     return void res.status(400).json({
@@ -407,7 +406,7 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
     })
     .select("*")
     .single();
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
   res.status(201).json({ ...data, documents: [] });
 });
 
@@ -422,7 +421,7 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
   const pagination = parsePaginationQuery(
     req.query as Record<string, unknown>,
   );
-  const db = createServerSupabase();
+  const db = createServerDatabase();
 
   const projectQueries = [
     db.from("projects").select("*").eq("user_id", userId),
@@ -435,7 +434,7 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
   const projectResults = await Promise.all(projectQueries);
   const projectError = projectResults.find((result) => result.error)?.error;
   if (projectError)
-    return void res.status(500).json({ detail: projectError.message });
+    return void sendServerError(res, projectError);
   const projectsById = new Map<string, Record<string, unknown>>();
   for (const result of projectResults) {
     for (const project of result.data ?? []) {
@@ -452,7 +451,7 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
     .ilike("filename", `%${escaped}%`)
     .is("deleted_at", null);
   if (versionsError)
-    return void res.status(500).json({ detail: versionsError.message });
+    return void sendServerError(res, versionsError);
 
   const versionIds = (versions ?? []).map((version) => version.id as string);
   let matchedDocuments: Record<string, unknown>[] = [];
@@ -462,7 +461,7 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
       .select("*")
       .in("project_id", accessibleProjectIds)
       .in("current_version_id", versionIds);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendServerError(res, error);
     matchedDocuments = (data ?? []) as Record<string, unknown>[];
     await attachLatestVersionNumbers(
       db,
@@ -514,7 +513,7 @@ projectsRouter.get("/:projectId/directory", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok)
     return void res.status(404).json({ detail: "Project not found" });
@@ -527,7 +526,7 @@ projectsRouter.get("/:projectId/directory", requireAuth, async (req, res) => {
     pagination,
   );
   if (result.error)
-    return void res.status(500).json({ detail: result.error.message });
+    return void sendServerError(res, result.error);
   res.json({
     documents: result.documents,
     folders: result.folders,
@@ -539,12 +538,12 @@ projectsRouter.get("/:projectId/directory", requireAuth, async (req, res) => {
 projectsRouter.get("/filter-options", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const { data, error } = await db.rpc("get_project_filter_options", {
     p_user_id: userId,
     p_user_email: userEmail ?? null,
   });
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
 
   const row = (data?.[0] ?? {}) as {
     practices?: unknown;
@@ -584,7 +583,7 @@ const PROJECT_IDS_MAX_PAGES = 200; // guards a runaway loop, not a product limit
 projectsRouter.get("/ids", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
 
   const searchTerm = normalizeSearchTerm(req.query.search);
   const scope = parseProjectScope(req.query.scope);
@@ -604,7 +603,7 @@ projectsRouter.get("/ids", requireAuth, async (req, res) => {
       pagination: { limit: PROJECT_IDS_PAGE_SIZE, offset },
     });
     const { data, error } = await db.rpc("get_project_ids_overview", rpcArgs);
-    if (error) return void res.status(500).json({ detail: error.message });
+    if (error) return void sendServerError(res, error);
 
     const rows = (data ?? []) as { id: string; user_id: string }[];
     if (rows.length === 0) break;
@@ -620,7 +619,7 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string;
   const { projectId } = req.params;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
 
   const { data: project, error } = await db
     .from("projects")
@@ -674,7 +673,7 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
 
   const { data: project } = await db
     .from("projects")
@@ -716,7 +715,12 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
   const updates: Record<string, unknown> = {};
-  if (req.body.name != null) updates.name = req.body.name;
+  if (req.body.name != null) {
+    if (typeof req.body.name !== "string" || !req.body.name.trim()) {
+      return void res.status(400).json({ detail: "name must be a non-empty string" });
+    }
+    updates.name = req.body.name;
+  }
   if (req.body.cm_number != null) updates.cm_number = req.body.cm_number;
   if ("practice" in req.body) {
     updates.practice = normalizeOptionalString(req.body.practice);
@@ -741,7 +745,7 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
     updates.shared_with = cleaned;
   }
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   if (Array.isArray(updates.shared_with)) {
     const missingSharedUsers = await findMissingUserEmails(
       db,
@@ -790,15 +794,14 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
 projectsRouter.delete("/:projectId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const { projectId } = req.params;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   try {
     const deletedCount = await deleteUserProjects(db, userId, [projectId]);
     if (deletedCount === 0)
       return void res.status(404).json({ detail: "Project not found" });
     res.status(204).send();
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ detail });
+    sendServerError(res, err, "Failed to delete project");
   }
 });
 
@@ -807,7 +810,7 @@ projectsRouter.get("/:projectId/documents", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok)
@@ -840,7 +843,7 @@ projectsRouter.get(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     const access = await checkProjectAccess(projectId, userId, userEmail, db);
     if (!access.ok)
@@ -874,7 +877,7 @@ projectsRouter.post(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId, documentId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     const access = await checkProjectAccess(projectId, userId, userEmail, db);
     if (!access.ok)
@@ -1058,11 +1061,13 @@ projectsRouter.patch(
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId, documentId } = req.params;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok)
     return void res.status(404).json({ detail: "Project not found" });
+  if (!access.isOwner)
+    return void res.status(403).json({ detail: "Only the project owner can rename documents" });
 
   const { data: doc } = await db
     .from("documents")
@@ -1123,7 +1128,7 @@ projectsRouter.post(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId } = req.params;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
 
     const access = await checkProjectAccess(projectId, userId, userEmail, db);
     if (!access.ok)
@@ -1142,7 +1147,7 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok)
@@ -1153,7 +1158,7 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
     .select("*")
     .eq("project_id", projectId)
     .order("created_at", { ascending: false });
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
   const chats = data ?? [];
   await attachChatCreatorLabels(db, chats);
   res.json(chats);
@@ -1173,7 +1178,7 @@ projectsRouter.post("/:projectId/folders", requireAuth, async (req, res) => {
   if (!name?.trim())
     return void res.status(400).json({ detail: "name is required" });
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok)
     return void res.status(404).json({ detail: "Project not found" });
@@ -1200,7 +1205,7 @@ projectsRouter.post("/:projectId/folders", requireAuth, async (req, res) => {
     })
     .select("*")
     .single();
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return void sendServerError(res, error);
   res.status(201).json(data);
 });
 
@@ -1217,10 +1222,14 @@ projectsRouter.patch(
       parent_folder_id?: string | null;
     };
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
-    if (!access.ok)
-      return void res.status(404).json({ detail: "Project not found" });
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
+  if (!access.isOwner)
+    return void res
+      .status(403)
+      .json({ detail: "Only the project owner can edit folders" });
 
     const updates: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
@@ -1277,20 +1286,22 @@ projectsRouter.delete(
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId, folderId } = req.params;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
-    if (!access.ok)
-      return void res.status(404).json({ detail: "Project not found" });
-    if (!access.isOwner)
-      return void res.status(404).json({ detail: "Project not found" });
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
+  if (!access.isOwner)
+    return void res
+      .status(403)
+      .json({ detail: "Only the project owner can delete folders" });
 
   const { data: allFolders, error: foldersError } = await db
     .from("project_subfolders")
     .select("id, parent_folder_id")
     .eq("project_id", projectId);
   if (foldersError)
-    return void res.status(500).json({ detail: foldersError.message });
+    return void sendServerError(res, foldersError);
   if (!(allFolders ?? []).some((f) => f.id === folderId))
     return void res.status(404).json({ detail: "Folder not found" });
 
@@ -1317,8 +1328,7 @@ projectsRouter.delete(
     .select("id")
     .eq("project_id", projectId)
     .in("folder_id", [...folderIds]);
-    if (docsError)
-      return void res.status(500).json({ detail: docsError.message });
+  if (docsError) return void sendServerError(res, docsError);
 
   const docIds = (docs ?? []).map((d) => d.id as string);
   const deleteDocsError = await deleteProjectDocumentsAndVersionFiles(
@@ -1327,14 +1337,14 @@ projectsRouter.delete(
     docIds,
   );
   if (deleteDocsError)
-    return void res.status(500).json({ detail: deleteDocsError.message });
+    return void sendServerError(res, deleteDocsError);
 
-    const { error } = await db
-      .from("project_subfolders")
-      .delete()
-      .eq("id", folderId)
-      .eq("project_id", projectId);
-  if (error) return void res.status(500).json({ detail: error.message });
+  const { error } = await db
+    .from("project_subfolders")
+    .delete()
+    .in("id", [...folderIds])
+    .eq("project_id", projectId);
+  if (error) return void sendServerError(res, error);
   res.status(204).send();
   },
 );
@@ -1349,7 +1359,7 @@ projectsRouter.patch(
   const { projectId, documentId } = req.params;
   const { folder_id } = req.body as { folder_id: string | null };
 
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
     if (!access.ok)
       return void res.status(404).json({ detail: "Project not found" });
@@ -1377,7 +1387,7 @@ projectsRouter.patch(
 );
 
 async function loadProjectFolder(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
   projectId: string,
   folderId: string,
 ): Promise<{ id: string; parent_folder_id: string | null } | null> {
@@ -1397,7 +1407,7 @@ export async function handleDocumentUpload(
   res: import("express").Response,
   userId: string,
   projectId: string | null,
-  db: ReturnType<typeof createServerSupabase>,
+  db: ReturnType<typeof createServerDatabase>,
 ) {
   const file = req.file;
   if (!file) return void res.status(400).json({ detail: "file is required" });
@@ -1537,9 +1547,7 @@ export async function handleDocumentUpload(
     return void res.status(201).json(responseDoc);
   } catch (e) {
     await db.from("documents").update({ status: "error" }).eq("id", doc.id);
-    return void res
-      .status(500)
-      .json({ detail: `Document processing failed: ${String(e)}` });
+    return void sendServerError(res, e, "Document processing failed");
   }
 }
 

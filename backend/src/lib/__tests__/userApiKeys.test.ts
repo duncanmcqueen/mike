@@ -14,6 +14,10 @@ describe("normalizeApiKeyProvider", () => {
         expect(normalizeApiKeyProvider("gemini")).toBe("gemini");
     });
 
+    it('returns "kimi" for "kimi"', () => {
+        expect(normalizeApiKeyProvider("kimi")).toBe("kimi");
+    });
+
     it("returns null for unknown provider strings", () => {
         expect(normalizeApiKeyProvider("unknown")).toBeNull();
         expect(normalizeApiKeyProvider("")).toBeNull();
@@ -28,6 +32,7 @@ describe("hasEnvApiKey", () => {
         "CLAUDE_API_KEY",
         "OPENAI_API_KEY",
         "GEMINI_API_KEY",
+        "KIMI_API_KEY",
     ];
 
     // Clear before AND after each test so keys exported in the developer's
@@ -60,10 +65,16 @@ describe("hasEnvApiKey", () => {
         expect(hasEnvApiKey("gemini")).toBe(true);
     });
 
+    it("returns true for kimi when KIMI_API_KEY is set", () => {
+        process.env.KIMI_API_KEY = "kimi-key-test";
+        expect(hasEnvApiKey("kimi")).toBe(true);
+    });
+
     it("returns false when no env key is set for the provider", () => {
         expect(hasEnvApiKey("claude")).toBe(false);
         expect(hasEnvApiKey("openai")).toBe(false);
         expect(hasEnvApiKey("gemini")).toBe(false);
+        expect(hasEnvApiKey("kimi")).toBe(false);
     });
 
     it("ignores whitespace-only env values", () => {

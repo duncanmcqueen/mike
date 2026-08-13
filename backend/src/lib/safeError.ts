@@ -1,3 +1,5 @@
+import type { Response } from "express";
+
 const SECRET_CONTEXT_PATTERNS = [
   /(Incorrect API key provided:\s*)([^.\s]+)(\.?)/gi,
   /(api[_ -]?key|x-api-key|token|secret|authorization|bearer)\s*(?:provided\s*)?(?:is|:|=)\s*["']?([A-Za-z0-9._\-]{6,})["']?/gi,
@@ -38,6 +40,27 @@ export function safeErrorMessage(
         ? error
         : fallback;
   return redactSensitiveText(message);
+}
+
+/**
+ * Log the real error server-side (redacted) and answer the request with a
+ * generic 500 detail. Internal error messages — database driver errors,
+ * storage failures, provider SDK exceptions — must never reach the client:
+ * they can carry table/column names, file paths, or connection details.
+ */
+export function sendServerError(
+  res: Response,
+  error: unknown,
+  detail = "Internal server error",
+): void {
+  const req = res.req;
+  console.error(
+    `[500] ${req?.method ?? ""} ${req?.originalUrl?.split("?")[0] ?? ""}`.trim(),
+    safeErrorLog(error),
+  );
+  if (!res.headersSent) {
+    res.status(500).json({ detail });
+  }
 }
 
 export function safeErrorLog(error: unknown): {

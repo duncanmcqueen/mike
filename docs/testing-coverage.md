@@ -15,11 +15,11 @@ npm run test:coverage # same, plus the per-file coverage table + floor check
 
 Tests live in `backend/src/lib/__tests__/*.test.ts`. Read a couple of the
 existing suites first (`access.test.ts`, `userDataCleanup.test.ts`) and match
-their conventions: plain in-memory Supabase query mocks (no network, no real
+their conventions: plain in-memory DB query mocks (no network, no real
 database), one `describe` block per exported function, and tests that assert
 current behavior.
 
-## Current coverage (measured 2026-07)
+## Current coverage (measured 2026-08)
 
 Per-area statement coverage from `npm run test:coverage`:
 
@@ -30,6 +30,8 @@ Per-area statement coverage from `npm run test:coverage`:
 | `lib/llm/models.ts` | 100 | ✓ |
 | `lib/documentTypes.ts` | 100 | ✓ |
 | `lib/chat/prompts.ts` | 100 | ✓ |
+| `lib/chat/requestValidation.ts` | 86 | ✓ |
+| `lib/chat/verifyCitations.ts` | 89 | ✓ |
 | `lib/systemWorkflows.ts` | 100 | ✓ |
 | `lib/documentVersions.ts` | 98 | ✓ |
 | `lib/chat/citations.ts` | 98 | ✓ |
@@ -49,7 +51,7 @@ Per-area statement coverage from `npm run test:coverage`:
 | `lib/llm/**` (providers, tools, index, rawStreamLog) | ~4 | ✗ (only models.ts) |
 | `lib/mcp/**` (client, servers, oauth, types) | 0 | ✗ |
 
-Global: **23.88% statements / 17.98% branches / 23.06% functions / 23.79%
+Global: **43.26% statements / 36.95% branches / 46.00% functions / 44.83%
 lines**. The global number is low because `src/lib/**` includes several very
 large feature libs (toolDispatcher, documentOps, courtlistener) that dominate
 the line count.
@@ -65,7 +67,7 @@ Size is a rough guess: S ≈ an hour, M ≈ an afternoon.
 - [x] `lib/chat/prompts.ts` — pure prompt builders; assert key instructions and
       interpolated values appear in the output strings. (S)
 - [ ] `lib/userSettings.ts` — title/tabular model resolution from which API
-      keys a user has; reuse the Supabase mock pattern from
+      keys a user has; reuse the DB mock pattern from
       `userLookup.test.ts`. (S)
 - [ ] `lib/upload.ts` — multer wrapper: assert LIMIT_FILE_SIZE maps to a 413
       with the right message and other errors pass through. (S)
@@ -74,7 +76,7 @@ Size is a rough guess: S ≈ an hour, M ≈ an afternoon.
 - [ ] `lib/chat/tools/toolSchemas.ts` — assert every tool schema has a name,
       description, and well-formed parameters (guards against schema drift). (S)
 - [ ] `lib/userApiKeys.ts` (rest) — encrypt/decrypt round-trip and DB
-      load/store paths with a mocked Supabase client. (M)
+      load/store paths with a mocked database client. (M)
 - [ ] `lib/storage.ts` (rest) — S3 upload/download/list/delete wrappers with a
       mocked AWS SDK client. (M)
 - [ ] `lib/userDataExport.ts` — export assembly: given seeded mock tables,
@@ -113,7 +115,7 @@ better exercised by the e2e suite.
 ## Ratchet policy
 
 `backend/vitest.config.mts` enforces global coverage **floors** (currently
-statements 23 / branches 17 / functions 23 / lines 23). They are a
+statements 42 / branches 36 / functions 45 / lines 44). They are a
 no-regression ratchet, not a target:
 
 - **Floors only go up.** Never lower them to get a PR green — that means your

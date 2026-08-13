@@ -5,6 +5,7 @@ import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { Input } from "@/app/components/ui/input";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { refreshOllamaModels } from "@/app/hooks/useOllamaModels";
+import { refreshOpenRouterModels } from "@/app/hooks/useOpenRouterModels";
 import {
     MfaVerificationPopup,
     needsMfaVerification,
@@ -23,6 +24,11 @@ const MODEL_API_KEY_FIELDS = [
         placeholder: "sk-ant-...",
     },
     {
+        provider: "kimi",
+        label: "Moonshot (Kimi) API Key",
+        placeholder: "sk-...",
+    },
+    {
         provider: "gemini",
         label: "Google (Gemini) API Key",
         placeholder: "AI...",
@@ -36,6 +42,8 @@ const MODEL_API_KEY_FIELDS = [
         provider: "openrouter",
         label: "OpenRouter API Key",
         placeholder: "sk-or-...",
+        description:
+            "After saving, choose any available OpenRouter model from the searchable model picker.",
     },
 ] as const;
 
@@ -56,7 +64,11 @@ export default function ApiKeysPage() {
     const handleRefresh = async () => {
         setRefreshing(true);
         try {
-            await Promise.all([reloadProfile(), refreshOllamaModels()]);
+            await Promise.all([
+                reloadProfile(),
+                refreshOllamaModels(),
+                refreshOpenRouterModels(),
+            ]);
         } finally {
             setRefreshing(false);
         }
@@ -73,7 +85,7 @@ export default function ApiKeysPage() {
                     onClick={handleRefresh}
                     disabled={refreshing}
                     className="flex items-center gap-1.5 text-xs font-medium text-gray-600 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
-                    title="Re-check API keys and detect local (Ollama) models"
+                    title="Re-check API keys and refresh available models"
                 >
                     <RefreshCw
                         className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
@@ -91,6 +103,11 @@ export default function ApiKeysPage() {
                     <div key={field.provider}>
                         <ApiKeyField
                             label={field.label}
+                            description={
+                                "description" in field
+                                    ? field.description
+                                    : undefined
+                            }
                             placeholder={field.placeholder}
                             hasSavedKey={
                                 !!profile?.apiKeys[field.provider].configured
@@ -188,7 +205,7 @@ function ApiKeyField({
             if (isMfaRequiredError(error)) {
                 setPendingMfaAction("save");
             } else {
-                alert(`Failed to save ${label}.`);
+                alert(apiKeyErrorMessage(error, `Failed to save ${label}.`));
             }
         } finally {
             setIsSaving(false);
@@ -208,7 +225,7 @@ function ApiKeyField({
             if (isMfaRequiredError(error)) {
                 setPendingMfaAction("remove");
             } else {
-                alert(`Failed to remove ${label}.`);
+                alert(apiKeyErrorMessage(error, `Failed to remove ${label}.`));
             }
         } finally {
             setIsSaving(false);
@@ -308,4 +325,8 @@ function ApiKeyField({
             />
         </>
     );
+}
+
+function apiKeyErrorMessage(error: unknown, fallback: string): string {
+    return error instanceof Error && error.message ? error.message : fallback;
 }

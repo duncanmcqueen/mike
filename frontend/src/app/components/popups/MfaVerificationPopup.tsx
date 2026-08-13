@@ -8,7 +8,7 @@ import {
     type KeyboardEvent,
 } from "react";
 import { Loader2 } from "lucide-react";
-import { supabase } from "@/app/lib/supabase";
+import { localAuth } from "@/app/lib/auth";
 import { Modal } from "../modals/Modal";
 
 type MfaFactor = {
@@ -24,7 +24,7 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 
 export async function needsMfaVerification() {
     const { data, error } =
-        await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        await localAuth.mfa.getAuthenticatorAssuranceLevel();
     if (error) throw error;
     return data.nextLevel === "aal2" && data.currentLevel !== "aal2";
 }
@@ -66,7 +66,7 @@ export function MfaVerificationPopup({
             setError(null);
             setCode("");
             const { data, error: listError } =
-                await supabase.auth.mfa.listFactors();
+                await localAuth.mfa.listFactors();
             if (cancelled) return;
             if (listError) {
                 devLog("[mfa-popup] list factors failed", {
@@ -100,7 +100,7 @@ export function MfaVerificationPopup({
         setError(null);
         devLog("[mfa-popup] verifying code", { factorId: selectedFactorId });
         const { error: verifyError } =
-            await supabase.auth.mfa.challengeAndVerify({
+            await localAuth.mfa.challengeAndVerify({
                 factorId: selectedFactorId,
                 code: code.trim(),
             });
@@ -213,13 +213,16 @@ export function VerificationCodeInput({
     useEffect(() => {
         if (!autoFocus || disabled) return;
         const focusTimer = window.setTimeout(() => {
-            const firstEmptyIndex = digits.findIndex((digit) => !digit);
+            const firstEmptyIndex = Array.from(
+                { length: 6 },
+                (_, index) => value[index] ?? "",
+            ).findIndex((digit) => !digit);
             inputsRef.current[
                 firstEmptyIndex === -1 ? 0 : firstEmptyIndex
             ]?.focus();
         }, 0);
         return () => window.clearTimeout(focusTimer);
-    }, [autoFocus, disabled]);
+    }, [autoFocus, disabled, value]);
 
     function updateDigit(index: number, nextValue: string) {
         const digit = nextValue.replace(/\D/g, "").slice(-1);

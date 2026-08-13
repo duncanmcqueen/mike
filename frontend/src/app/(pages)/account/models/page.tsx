@@ -17,6 +17,7 @@ import type { ApiKeyState } from "@/app/lib/mikeApi";
 import {
     MODELS,
     SETTINGS_MODELS,
+    useConfiguredModelOptions,
     type ModelOption,
 } from "@/app/components/assistant/ModelToggle";
 import {
@@ -28,13 +29,13 @@ import {
     accountGlassInputClassName,
 } from "../accountStyles";
 import { AccountSection } from "../AccountSection";
-import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 
 type ModelPreferenceField = "titleModel" | "tabularModel";
 
 export default function ModelPreferencesPage() {
     const { profile, updateModelPreference } = useUserProfile();
-    const ollamaModels = useOllamaModels();
+    const settingsOptions = useConfiguredModelOptions(SETTINGS_MODELS);
+    const chatOptions = useConfiguredModelOptions(MODELS);
     const [savingField, setSavingField] = useState<ModelPreferenceField | null>(
         null,
     );
@@ -97,7 +98,7 @@ export default function ModelPreferencesPage() {
                             profile?.titleModel ??
                             "gemini-3.1-flash-lite-preview"
                         }
-                        options={[...SETTINGS_MODELS, ...ollamaModels]}
+                        options={settingsOptions}
                         apiKeys={profile?.apiKeys}
                         isSaving={savingField === "titleModel"}
                         isSaved={savedField === "titleModel"}
@@ -119,7 +120,7 @@ export default function ModelPreferencesPage() {
                             profile?.tabularModel ??
                             "gemini-3-flash-preview"
                         }
-                        options={[...MODELS, ...ollamaModels]}
+                        options={chatOptions}
                         apiKeys={profile?.apiKeys}
                         isSaving={savingField === "tabularModel"}
                         isSaved={savedField === "tabularModel"}
@@ -147,17 +148,34 @@ function ModelPreferenceDropdown({
     isSaved?: boolean;
 }) {
     const [isOpen, setIsOpen] = useState(false);
+    const [query, setQuery] = useState("");
     const selected = options.find((m) => m.id === value);
     const selectedAvailable = apiKeys ? isModelAvailable(value, apiKeys) : true;
+    const normalizedQuery = query.trim().toLowerCase();
+    const visibleOptions = normalizedQuery
+        ? options.filter(
+              (model) =>
+                  model.label.toLowerCase().includes(normalizedQuery) ||
+                  model.id.toLowerCase().includes(normalizedQuery),
+          )
+        : options;
     const groups: ModelOption["group"][] = [
+        "Committee",
+        "Local",
         "Anthropic",
+        "Moonshot",
         "Google",
         "OpenAI",
-        "Local",
+        "OpenRouter",
     ];
 
     return (
-        <DropdownMenu onOpenChange={setIsOpen}>
+        <DropdownMenu
+            onOpenChange={(open) => {
+                setIsOpen(open);
+                if (!open) setQuery("");
+            }}
+        >
             <DropdownMenuTrigger asChild>
                 <button
                     type="button"
@@ -184,12 +202,24 @@ function ModelPreferenceDropdown({
                 </button>
             </DropdownMenuTrigger>
             <LiquidDropdownContent
-                className="z-50"
+                className="z-50 max-h-[min(70vh,32rem)] overflow-y-auto"
                 style={{ width: "var(--radix-dropdown-menu-trigger-width)" }}
                 align="start"
             >
+                <div className="sticky top-0 z-10 bg-white/95 p-1 backdrop-blur">
+                    <input
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key !== "Escape") event.stopPropagation();
+                        }}
+                        placeholder="Search models..."
+                        aria-label="Search models"
+                        className="h-8 w-full rounded-lg border border-gray-200 bg-white px-2.5 text-sm text-gray-800 outline-none placeholder:text-gray-400 focus:border-gray-400"
+                    />
+                </div>
                 {groups.map((group, gi) => {
-                    const items = options.filter((m) => m.group === group);
+                    const items = visibleOptions.filter((m) => m.group === group);
                     if (items.length === 0) return null;
                     return (
                         <div key={group}>
@@ -214,9 +244,14 @@ function ModelPreferenceDropdown({
                                         }
                                     >
                                         <span
-                                            className={`flex-1 ${available ? "" : "text-gray-400"}`}
+                                            className={`min-w-0 flex-1 ${available ? "" : "text-gray-400"}`}
                                         >
-                                            {m.label}
+                                            <span className="block truncate">{m.label}</span>
+                                            {m.group === "OpenRouter" && (
+                                                <span className="block truncate text-[10px] text-gray-400">
+                                                    {m.id.replace(/^openrouter\//, "")}
+                                                </span>
+                                            )}
                                         </span>
                                         {!available && (
                                             <AlertCircle className="h-3.5 w-3.5 text-red-500 ml-1" />
@@ -230,6 +265,11 @@ function ModelPreferenceDropdown({
                         </div>
                     );
                 })}
+                {visibleOptions.length === 0 && (
+                    <p className="px-3 py-4 text-center text-xs text-gray-400">
+                        No models found.
+                    </p>
+                )}
             </LiquidDropdownContent>
         </DropdownMenu>
     );

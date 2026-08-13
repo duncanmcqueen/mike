@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, Check, AlertCircle } from "lucide-react";
 import {
     DropdownMenu,
@@ -13,13 +13,23 @@ import {
     LiquidDropdownItem,
 } from "@/app/components/ui/liquid-dropdown";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
-import type { ApiKeyState } from "@/app/lib/mikeApi";
+import { getConfiguredModels, type ApiKeyState } from "@/app/lib/mikeApi";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { featureEnabled } from "@/app/lib/featureFlags";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
+import { useOpenRouterModels } from "@/app/hooks/useOpenRouterModels";
 
 export interface ModelOption {
     id: string;
     label: string;
-    group: "Anthropic" | "Google" | "OpenAI" | "Local";
+    group:
+        | "Anthropic"
+        | "Moonshot"
+        | "Google"
+        | "OpenAI"
+        | "OpenRouter"
+        | "Local"
+        | "Committee";
 }
 
 export const MODELS: ModelOption[] = [
@@ -30,6 +40,8 @@ export const MODELS: ModelOption[] = [
     { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", group: "Google" },
     { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", group: "Google" },
     { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", group: "Google" },
+    { id: "kimi-k3", label: "Kimi K3", group: "Moonshot" },
+    { id: "kimi-k3-256k", label: "Kimi K3 256K", group: "Moonshot" },
     { id: "gpt-5.5", label: "GPT-5.5", group: "OpenAI" },
     { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
     // Local (Ollama) models are appended dynamically — see useOllamaModels.
@@ -50,9 +62,80 @@ export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
 
 export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
-const GROUP_ORDER: ModelOption["group"][] = ["Anthropic", "Google", "OpenAI", "Local"];
+const GROUP_ORDER: ModelOption["group"][] = [
+    "Committee",
+    "Local",
+    "Anthropic",
+    "Moonshot",
+    "Google",
+    "OpenAI",
+    "OpenRouter",
+];
 const itemClassName =
     "rounded-xl px-2.5 py-1.5 text-gray-700 focus:bg-app-surface-hover focus:text-gray-900 data-[highlighted]:bg-app-surface-hover data-[highlighted]:text-gray-900";
+
+export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
+    const { profile } = useUserProfile();
+    const ollamaModels = useOllamaModels();
+    const openRouterModels = useOpenRouterModels(
+        profile?.apiKeys.openrouter.configured === true,
+    );
+    const [options, setOptions] = useState<ModelOption[]>(base);
+    const localModelsEnabled = featureEnabled(
+        profile?.featureFlags,
+        "localModels",
+        profile?.deploymentModules,
+    );
+    const committeeModelsEnabled = featureEnabled(
+        profile?.featureFlags,
+        "committeeModels",
+        profile?.deploymentModules,
+    );
+
+    useEffect(() => {
+        let cancelled = false;
+        getConfiguredModels()
+            .then((configured) => {
+                if (cancelled || configured.length === 0) return;
+                const extra = configured.map((model): ModelOption => {
+                    const group =
+                        model.location === "committee"
+                            ? "Committee"
+                            : model.location === "local"
+                              ? "Local"
+                              : model.id.startsWith("openrouter/")
+                                ? "OpenRouter"
+                              : model.provider === "claude"
+                                ? "Anthropic"
+                                : model.id.startsWith("kimi-")
+                                  ? "Moonshot"
+                                : model.provider === "gemini"
+                                  ? "Google"
+                                  : "OpenAI";
+                    return { id: model.id, label: model.label, group };
+                }).filter(
+                    (model) =>
+                        (model.group !== "Local" || localModelsEnabled) &&
+                        (model.group !== "Committee" ||
+                            committeeModelsEnabled),
+                );
+                const merged = new Map<string, ModelOption>();
+                [...base, ...extra].forEach((model) => merged.set(model.id, model));
+                setOptions(Array.from(merged.values()));
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+        };
+    }, [base, localModelsEnabled, committeeModelsEnabled]);
+
+    const merged = new Map(options.map((model) => [model.id, model]));
+    if (localModelsEnabled) {
+        ollamaModels.forEach((model) => merged.set(model.id, model));
+    }
+    openRouterModels.forEach((model) => merged.set(model.id, model));
+    return Array.from(merged.values());
+}
 
 interface Props {
     value: string;
@@ -61,17 +144,61 @@ interface Props {
 }
 
 export function ModelToggle({ value, onChange, apiKeys }: Props) {
+    const { profile } = useUserProfile();
     const [isOpen, setIsOpen] = useState(false);
-    const ollamaModels = useOllamaModels();
-    const models = [...MODELS, ...ollamaModels];
-    const selected = models.find((m) => m.id === value);
+    const [query, setQuery] = useState("");
+    const options = useConfiguredModelOptions(MODELS);
+    const normalizedQuery = query.trim().toLowerCase();
+    const visibleOptions = normalizedQuery
+        ? options.filter(
+              (model) =>
+                  model.label.toLowerCase().includes(normalizedQuery) ||
+                  model.id.toLowerCase().includes(normalizedQuery),
+          )
+        : options;
+    const selected = options.find((m) => m.id === value);
     const selectedLabel = selected?.label ?? "Model";
     const selectedAvailable = apiKeys
         ? isModelAvailable(value, apiKeys)
         : true;
+    const selectedLocalModelsEnabled = featureEnabled(
+        profile?.featureFlags,
+        "localModels",
+        profile?.deploymentModules,
+    );
+    const selectedCommitteeModelsEnabled = featureEnabled(
+        profile?.featureFlags,
+        "committeeModels",
+        profile?.deploymentModules,
+    );
+
+    useEffect(() => {
+        if (
+            (selected?.group === "Local" &&
+                !selectedLocalModelsEnabled) ||
+            (selected?.group === "Committee" &&
+                !selectedCommitteeModelsEnabled) ||
+            (value.startsWith("openrouter/") &&
+                profile?.apiKeys.openrouter.configured !== true)
+        ) {
+            onChange(DEFAULT_MODEL_ID);
+        }
+    }, [
+        onChange,
+        selected?.group,
+        selectedCommitteeModelsEnabled,
+        selectedLocalModelsEnabled,
+        profile?.apiKeys.openrouter.configured,
+        value,
+    ]);
 
     return (
-        <DropdownMenu onOpenChange={setIsOpen}>
+        <DropdownMenu
+            onOpenChange={(open) => {
+                setIsOpen(open);
+                if (!open) setQuery("");
+            }}
+        >
             <DropdownMenuTrigger asChild>
                 <button
                     type="button"
@@ -92,12 +219,24 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                 </button>
             </DropdownMenuTrigger>
             <LiquidDropdownContent
-                className="z-50 w-56 p-1.5 text-gray-700"
+                className="z-50 max-h-[min(70vh,32rem)] w-72 overflow-y-auto p-1.5 text-gray-700"
                 side="top"
                 align="end"
             >
+                <div className="sticky top-0 z-10 bg-white/95 p-1 backdrop-blur">
+                    <input
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key !== "Escape") event.stopPropagation();
+                        }}
+                        placeholder="Search models..."
+                        aria-label="Search models"
+                        className="h-8 w-full rounded-lg border border-gray-200 bg-white px-2.5 text-sm text-gray-800 outline-none placeholder:text-gray-400 focus:border-gray-400"
+                    />
+                </div>
                 {GROUP_ORDER.map((group, gi) => {
-                    const items = models.filter((m) => m.group === group);
+                    const items = visibleOptions.filter((m) => m.group === group);
                     if (items.length === 0) return null;
                     return (
                         <div key={group}>
@@ -118,9 +257,14 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                                         onSelect={() => onChange(m.id)}
                                     >
                                         <span
-                                            className={`flex-1 ${available ? "" : "text-gray-400"}`}
+                                            className={`min-w-0 flex-1 ${available ? "" : "text-gray-400"}`}
                                         >
-                                            {m.label}
+                                            <span className="block truncate">{m.label}</span>
+                                            {m.group === "OpenRouter" && (
+                                                <span className="block truncate text-[10px] text-gray-400">
+                                                    {m.id.replace(/^openrouter\//, "")}
+                                                </span>
+                                            )}
                                         </span>
                                         {!available && (
                                             <AlertCircle
@@ -137,6 +281,11 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                         </div>
                     );
                 })}
+                {visibleOptions.length === 0 && (
+                    <p className="px-2.5 py-3 text-center text-xs text-gray-400">
+                        No models found.
+                    </p>
+                )}
             </LiquidDropdownContent>
         </DropdownMenu>
     );

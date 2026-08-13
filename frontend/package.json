@@ -4,7 +4,7 @@
     "private": true,
     "scripts": {
         "dev": "next dev",
-        "build": "next build",
+        "build": "next build --webpack",
         "start": "next start",
         "lint": "eslint",
         "test": "vitest run",
@@ -27,7 +27,7 @@
         "@radix-ui/react-slot": "^1.2.4",
         "@supabase/auth-helpers-nextjs": "^0.10.0",
         "@supabase/auth-js": "^2.101.1",
-        "@supabase/supabase-js": "^2.81.1",
+        "@supabase/supabase-js": "^2.111.0",
         "@tiptap/core": "^3.22.3",
         "@tiptap/extension-table": "^3.22.3",
         "@tiptap/pm": "^3.22.3",

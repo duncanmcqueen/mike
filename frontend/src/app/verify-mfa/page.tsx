@@ -6,7 +6,7 @@ import { Loader2 } from "lucide-react";
 import { SiteLogo } from "@/app/components/site-logo";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { supabase } from "@/app/lib/supabase";
+import { localAuth } from "@/app/lib/auth";
 import {
     needsMfaVerification,
     VerificationCodeInput,
@@ -59,7 +59,7 @@ export default function VerifyMfaPage() {
                 }
 
                 const { data, error: factorError } =
-                    await supabase.auth.mfa.listFactors();
+                    await localAuth.mfa.listFactors();
                 if (cancelled) return;
                 if (factorError) throw factorError;
 
@@ -96,7 +96,7 @@ export default function VerifyMfaPage() {
         setVerifying(true);
         setError(null);
         const { error: verifyError } =
-            await supabase.auth.mfa.challengeAndVerify({
+            await localAuth.mfa.challengeAndVerify({
                 factorId: selectedFactorId,
                 code: code.trim(),
             });

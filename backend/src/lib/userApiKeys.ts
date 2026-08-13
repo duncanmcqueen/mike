@@ -1,10 +1,11 @@
 import crypto from "crypto";
-import { createServerSupabase } from "./supabase";
+import { createServerDatabase } from "./database";
 import type { UserApiKeys } from "./llm";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ReturnType<typeof createServerDatabase>;
 export type ApiKeyProvider =
     | "claude"
+    | "kimi"
     | "gemini"
     | "openai"
     | "openrouter"
@@ -23,6 +24,7 @@ type EncryptedKeyRow = {
 
 const PROVIDERS: ApiKeyProvider[] = [
     "claude",
+    "kimi",
     "gemini",
     "openai",
     "openrouter",
@@ -39,6 +41,8 @@ function envApiKey(provider: ApiKeyProvider): string | null {
             );
         case "gemini":
             return process.env.GEMINI_API_KEY?.trim() || null;
+        case "kimi":
+            return process.env.KIMI_API_KEY?.trim() || null;
         case "openai":
             return process.env.OPENAI_API_KEY?.trim() || null;
         case "openrouter":
@@ -108,16 +112,18 @@ export function normalizeApiKeyProvider(value: string): ApiKeyProvider | null {
 
 export async function getUserApiKeyStatus(
     userId: string,
-    db: Db = createServerSupabase(),
+    db: Db = createServerDatabase(),
 ): Promise<ApiKeyStatus> {
     const status: ApiKeyStatus = {
         claude: false,
+        kimi: false,
         gemini: false,
         openai: false,
         openrouter: false,
         courtlistener: false,
         sources: {
             claude: null,
+            kimi: null,
             gemini: null,
             openai: null,
             openrouter: null,
@@ -151,10 +157,11 @@ export async function getUserApiKeyStatus(
 
 export async function getUserApiKeys(
     userId: string,
-    db: Db = createServerSupabase(),
+    db: Db = createServerDatabase(),
 ): Promise<UserApiKeys> {
     const apiKeys: UserApiKeys = {
         claude: envApiKey("claude"),
+        kimi: envApiKey("kimi"),
         gemini: envApiKey("gemini"),
         openai: envApiKey("openai"),
         openrouter: envApiKey("openrouter"),
@@ -181,7 +188,7 @@ export async function saveUserApiKey(
     userId: string,
     provider: ApiKeyProvider,
     value: string | null,
-    db: Db = createServerSupabase(),
+    db: Db = createServerDatabase(),
 ): Promise<void> {
     const normalized = value?.trim() || null;
     if (!normalized) {

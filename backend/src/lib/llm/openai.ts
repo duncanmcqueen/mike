@@ -229,16 +229,25 @@ export async function streamOpenAI(
   });
 
   try {
-    for (let iter = 0; iter < maxIter; iter++) {
+    // `maxIter` limits tool-use rounds. If every allowed round requests
+    // more tools, make one additional request without tool declarations so
+    // the user still receives a visible conclusion (mirrors the Gemini
+    // provider's force-final-answer pass). The forced pass also runs when
+    // the model ends a turn with no visible text.
+    let forcedPassConsumed = false;
+    for (let iter = 0; iter <= maxIter + 1; iter++) {
       throwIfAborted(params.abortSignal);
+      const forceFinalAnswer = iter === maxIter || forcedPassConsumed;
       const response = await createResponse({
         model,
-        instructions: responseInstructions(
-          systemPrompt,
-          needsCourtlistenerCitationReminder,
-        ),
+        instructions: forceFinalAnswer
+          ? `${systemPrompt}\n\nFINAL RESPONSE REQUIRED:\nYou have reached the tool-use limit. Do not call or request any more tools. Give the user a concise final answer using only relevant information already obtained. If the available tools or results cannot verify the request, say that clearly and explain what source capability is missing. Do not present unrelated tool results as responsive evidence.`
+          : responseInstructions(
+              systemPrompt,
+              needsCourtlistenerCitationReminder,
+            ),
         input,
-        tools: responseTools,
+        tools: forceFinalAnswer ? [] : responseTools,
         stream: true,
         previousResponseId,
         reasoningSummary: !!enableThinking,
@@ -341,6 +350,12 @@ export async function streamOpenAI(
       throwIfAborted(params.abortSignal);
 
       if (!toolCalls.length || !runTools) {
+        // The model closed its turn without any visible text. Give it one
+        // forced no-tools answer pass before giving up.
+        if (!fullText.trim() && !forcedPassConsumed) {
+          forcedPassConsumed = true;
+          continue;
+        }
         break;
       }
 

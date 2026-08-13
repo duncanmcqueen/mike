@@ -181,25 +181,35 @@ export async function streamGemini(
   });
 
   try {
-    for (let iter = 0; iter < maxIter; iter++) {
+    // `maxIter` limits tool-use rounds. If every allowed round requests more
+    // tools, make one additional request without tool declarations so the
+    // user still receives a visible conclusion instead of a reasoning-only
+    // response. The same forced pass also runs when the model ends a turn
+    // with no visible text at all (e.g. a thinking-only response).
+    let forcedPassConsumed = false;
+    for (let iter = 0; iter <= maxIter + 1; iter++) {
       throwIfAborted(params.abortSignal);
+      const forceFinalAnswer = iter === maxIter || forcedPassConsumed;
+      const finalAnswerInstruction = forceFinalAnswer
+        ? `${systemPrompt}\n\nFINAL RESPONSE REQUIRED:\nYou have reached the tool-use limit. Do not call or request any more tools. Give the user a concise final answer using only relevant information already obtained. If the available tools or results cannot verify the request, say that clearly and explain what source capability is missing. Do not present unrelated tool results as responsive evidence.`
+        : systemPrompt;
       let stream: AsyncIterable<unknown>;
       try {
         stream = await ai.models.generateContentStream({
           model,
           contents: contents as never,
           config: {
-            systemInstruction: systemPrompt,
-            tools: functionDeclarations.length
+            systemInstruction: finalAnswerInstruction,
+            tools: !forceFinalAnswer && functionDeclarations.length
               ? [{ functionDeclarations } as never]
               : undefined,
-            // When enabled, ask Gemini to surface thought summaries.
-            // When disabled, explicitly zero the thinking budget so the
-            // model skips thinking entirely (saves tokens and latency
-            // for bulk extraction jobs).
-            thinkingConfig: enableThinking
-              ? { includeThoughts: true }
-              : { thinkingBudget: 0 },
+            // On the forced final pass, disable thinking so the model must
+            // answer directly instead of spending the turn on thought parts.
+            thinkingConfig: forceFinalAnswer
+              ? { thinkingBudget: 0 }
+              : enableThinking
+                ? { includeThoughts: true }
+                : { thinkingBudget: 0 },
           },
         });
       } catch (error) {
@@ -289,7 +299,14 @@ export async function streamGemini(
 
       fullText += textParts.join("");
 
-      if (!toolCalls.length || !runTools) {
+      if (forceFinalAnswer || !toolCalls.length || !runTools) {
+        // The model closed its turn without any visible text (e.g. a
+        // thinking-only response). Give it one forced no-tools answer pass
+        // before giving up.
+        if (!fullText.trim() && !forcedPassConsumed) {
+          forcedPassConsumed = true;
+          continue;
+        }
         break;
       }
 
@@ -318,6 +335,12 @@ export async function streamGemini(
           };
         }),
       });
+    }
+
+    if (!fullText.trim()) {
+      throw new Error(
+        "Gemini completed without a final answer. Try again, or connect a source that can answer the request.",
+      );
     }
 
     await rawStreamRecorder?.flush("completed");

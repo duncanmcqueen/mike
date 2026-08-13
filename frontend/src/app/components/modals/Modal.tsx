@@ -14,7 +14,7 @@ type ModalAction = Omit<
 > & {
     label: ReactNode;
     icon?: ReactNode;
-    variant?: "primary" | "secondary" | "danger";
+    variant?: "primary" | "secondary" | "blue" | "danger";
 };
 
 interface ModalProps {
@@ -83,6 +83,8 @@ export function Modal({
             onClick={onClose}
         >
             <div
+                role="dialog"
+                aria-modal="true"
                 className={cn(
                     "w-full rounded-3xl flex h-[600px] flex-col",
                     sizeClassName[size],
@@ -202,6 +204,8 @@ function ModalActionButton({
     const tone =
         variant === "danger"
             ? "danger"
+            : variant === "blue"
+              ? "blue"
             : fallbackVariant === "secondary" && variant === "secondary"
               ? "blue"
               : variant === "primary"

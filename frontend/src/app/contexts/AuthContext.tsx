@@ -7,8 +7,12 @@ import React, {
     useState,
     ReactNode,
 } from "react";
-import type { User as SupabaseUser } from "@supabase/supabase-js";
-import { supabase } from "@/app/lib/supabase";
+import {
+    getCurrentUser,
+    signOut as localSignOut,
+    updateEmail as updateLocalEmail,
+    type AuthUser,
+} from "@/app/lib/auth";
 
 interface User {
     id: string;
@@ -26,11 +30,11 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-function toUser(user: SupabaseUser): User {
+function toUser(user: AuthUser): User {
     return {
         id: user.id,
         email: user.email || "",
-        pendingEmail: user.new_email ?? null,
+        pendingEmail: user.pendingEmail ?? user.new_email ?? null,
     };
 }
 
@@ -40,53 +44,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         const checkUser = async () => {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-
-            if (session?.user) {
-                setUser(toUser(session.user));
-            }
+            const current = await getCurrentUser();
+            setUser(current ? toUser(current) : null);
             setAuthLoading(false);
         };
 
         checkUser();
 
-        const {
-            data: { subscription },
-        } = supabase.auth.onAuthStateChange(async (_event, session) => {
-            if (session?.user) {
-                setUser(toUser(session.user));
-            } else {
-                setUser(null);
-            }
-            setAuthLoading(false);
-        });
+        window.addEventListener("mike-auth-change", checkUser);
 
         return () => {
-            subscription.unsubscribe();
+            window.removeEventListener("mike-auth-change", checkUser);
         };
     }, []);
 
     const signOut = async () => {
-        await supabase.auth.signOut({ scope: "local" });
+        await localSignOut();
         setUser(null);
     };
 
     const updateEmail = async (email: string) => {
-        const redirectTo =
-            typeof window === "undefined"
-                ? undefined
-                : `${window.location.origin}/account`;
-        const { data, error } = await supabase.auth.updateUser(
-            { email },
-            redirectTo ? { emailRedirectTo: redirectTo } : undefined,
-        );
-
-        if (error) throw error;
-        if (!data.user) throw new Error("Unable to update email");
-
-        const nextUser = toUser(data.user);
+        const nextUser = toUser(await updateLocalEmail(email));
         setUser(nextUser);
         return nextUser;
     };

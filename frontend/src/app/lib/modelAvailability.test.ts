@@ -27,6 +27,10 @@ describe("getModelProvider", () => {
         expect(getModelProvider("claude-haiku-4-5")).toBe("claude");
         expect(getModelProvider("gemini-3-flash-preview")).toBe("gemini");
         expect(getModelProvider("gpt-5.4-lite")).toBe("openai");
+        expect(getModelProvider("ollama/qwen3.6")).toBe("ollama");
+        expect(getModelProvider("openrouter/anthropic/claude-sonnet-4")).toBe(
+            "openrouter",
+        );
     });
 
     it("resolves any ollama/-prefixed id without consulting SETTINGS_MODELS", () => {
@@ -57,13 +61,32 @@ describe("isModelAvailable", () => {
         ).toBe(false);
     });
 
-    it("is false for an unknown model regardless of keys", () => {
+    it("allows an unknown model so server-managed dynamic models can resolve", () => {
         expect(
             isModelAvailable(
                 "not-a-model",
                 keys({ claude: true, gemini: true, openai: true }),
             ),
+        ).toBe(true);
+    });
+
+    it("allows dynamic Ollama models without an API key", () => {
+        expect(isModelAvailable("ollama/qwen3.6", keys({}))).toBe(true);
+    });
+
+    it("requires the configured OpenRouter key for dynamic models", () => {
+        const withoutKey = keys({});
+        const withKey = keys({}) as ApiKeyState;
+        withKey.openrouter = { configured: true, source: "user" };
+        expect(
+            isModelAvailable(
+                "openrouter/anthropic/claude-sonnet-4",
+                withoutKey,
+            ),
         ).toBe(false);
+        expect(
+            isModelAvailable("openrouter/anthropic/claude-sonnet-4", withKey),
+        ).toBe(true);
     });
 
     it("is true for ollama models even with no keys configured", () => {
@@ -99,6 +122,8 @@ describe("providerLabel", () => {
         expect(providerLabel("openai")).toBe("OpenAI");
         expect(providerLabel("ollama")).toBe("Local (Ollama)");
         expect(providerLabel("gemini")).toBe("Google (Gemini)");
+        expect(providerLabel("ollama")).toBe("Local (Ollama)");
+        expect(providerLabel("openrouter")).toBe("OpenRouter");
     });
 });
 
@@ -106,7 +131,8 @@ describe("modelGroupToProvider", () => {
     it("maps every model group to its provider id", () => {
         expect(modelGroupToProvider("Anthropic")).toBe("claude");
         expect(modelGroupToProvider("OpenAI")).toBe("openai");
-        expect(modelGroupToProvider("Local")).toBe("ollama");
+        expect(modelGroupToProvider("Local")).toBe("local");
         expect(modelGroupToProvider("Google")).toBe("gemini");
+        expect(modelGroupToProvider("OpenRouter")).toBe("openrouter");
     });
 });

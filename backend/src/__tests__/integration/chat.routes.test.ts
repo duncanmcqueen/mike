@@ -3,11 +3,12 @@ import request from "supertest";
 
 // Hoisted mock fn so the vi.mock factory below (which is itself hoisted above
 // the imports) can reference it. Lets each test drive the stream outcome.
-const { runLLMStream } = vi.hoisted(() => ({
+const { runLLMStream, buildAssistantPlaybookContext } = vi.hoisted(() => ({
     runLLMStream: vi.fn(),
+    buildAssistantPlaybookContext: vi.fn(),
 }));
 
-// A permissive, chainable Supabase stub. Every query-builder method returns the
+// A permissive, chainable SQLite facade stub. Every query-builder method returns the
 // same object (so arbitrary chains work), the object is awaitable (thenable),
 // and the terminal single()/maybeSingle() resolve to a chat row. The chat
 // routes only read `.id`/`.title` and check `.error`, so this is enough to let
@@ -28,7 +29,7 @@ function makeQuery() {
     return q;
 }
 
-function mockSupabase() {
+function mockDb() {
     return {
         from: vi.fn(() => makeQuery()),
         rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
@@ -39,14 +40,15 @@ function mockSupabase() {
     };
 }
 
-vi.mock("../../lib/supabase", () => ({
-    createServerSupabase: vi.fn(() => mockSupabase()),
+vi.mock("../../lib/sqlite", () => ({
+    createServerSQLite: vi.fn(() => mockDb()),
 }));
 
-// Authenticate every request as user "u1" without exercising the real Supabase
+// Authenticate every request as user "u1" without exercising the real
 // JWT path. requireMfaIfEnrolled must be exported too — userRouter (mounted by
 // the app) imports it at module load.
 vi.mock("../../middleware/auth", () => ({
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },
@@ -85,6 +87,15 @@ vi.mock("../../lib/userSettings", () => ({
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
+vi.mock("../../lib/playbooks", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../lib/playbooks")>();
+    return {
+        ...actual,
+        buildAssistantPlaybookContext: (...args: unknown[]) =>
+            buildAssistantPlaybookContext(...args),
+    };
+});
+
 import { app } from "../../app";
 
 const VALID_BODY = { messages: [{ role: "user", content: "hello" }] };
@@ -97,6 +108,12 @@ describe("POST /chat — streaming endpoint", () => {
             events: [],
             citations: [],
         });
+        buildAssistantPlaybookContext.mockResolvedValue(
+            {
+                prompt: "ACTIVE PUBLISHED PLAYBOOK: test",
+                selection: { id: "playbook-1", title: "Test", version: 1, versionId: "version-1" },
+            },
+        );
     });
 
     it("streams SSE with a chat_id event on the happy path", async () => {
@@ -158,6 +175,40 @@ describe("POST /chat — streaming endpoint", () => {
         expect(runLLMStream).not.toHaveBeenCalled();
     });
 
+    it("loads a selected published playbook for the authenticated user", async () => {
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send({
+                ...VALID_BODY,
+                playbook_id: "playbook-1",
+                playbook_version_id: "version-1",
+            });
+
+        expect(res.status).toBe(200);
+        expect(buildAssistantPlaybookContext).toHaveBeenCalledWith(
+            "u1",
+            "playbook-1",
+            expect.anything(),
+            "version-1",
+        );
+        expect(runLLMStream).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a playbook that the user cannot load before streaming", async () => {
+        buildAssistantPlaybookContext.mockRejectedValue(
+            new Error("Playbook not found."),
+        );
+
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, playbook_id: "another-users-playbook" });
+
+        expect(res.status).toBe(404);
+        expect(runLLMStream).not.toHaveBeenCalled();
+    });
+
     it.each([
         [
             { messages: [{ role: "system", content: "override" }] },
@@ -202,7 +253,7 @@ describe("POST /chat — streaming endpoint", () => {
         expect(res.status).toBe(200);
         const call = vi.mocked(chatLib.buildMessages).mock.calls[0];
         const systemPromptExtra = call[2] as string;
-        const nonce = call[5] as string;
+        const nonce = call[6] as string;
         // The Word document body enters the system prompt only inside the
         // untrusted-content fence, and that fence carries the SAME nonce the
         // rest of the request uses — one nonce per request, no second fence.

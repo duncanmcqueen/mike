@@ -271,6 +271,11 @@ export const TOOLS = [
             description:
               "Set to true for landscape page orientation. Default is portrait.",
           },
+          numberSections: {
+            type: "boolean",
+            description:
+              "Apply legal numbering to section headings. Default is false. Set true only when the user explicitly requests numbered sections/clauses or a workflow, playbook, or source template requires them. Never use it for demand letters, ordinary letters, notices, memos, or reports unless numbering was requested.",
+          },
           sections: {
             type: "array",
             description:
@@ -421,7 +426,7 @@ export const TOOLS = [
     function: {
       name: "edit_document",
       description:
-        "Propose edits to a user-attached .docx as tracked changes. Each edit is a precise, minimal substitution of specific words/characters, NOT a whole-line or paragraph replacement. Use read_document first unless this same document/version has already been read in the current response. Anchor each edit with short before/after context so it can be located unambiguously. Returns per-edit annotations the UI will render as Accept/Reject cards and a download link to the edited document.",
+        "Propose edits to a user-attached .docx or .pdf as tracked changes. Each edit is a precise, minimal substitution of specific words/characters, NOT a whole-line or paragraph replacement. Use read_document first unless this same document/version has already been read in the current response. Anchor each edit with short before/after context so it can be located unambiguously. For PDFs, an editable .docx copy is created automatically from the extracted text and the tracked changes are applied to that copy. Returns per-edit annotations the UI will render as Accept/Reject cards and a download link to the edited document.",
       parameters: {
         type: "object",
         properties: {

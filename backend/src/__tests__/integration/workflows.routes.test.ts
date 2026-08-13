@@ -82,11 +82,12 @@ function mockSupabase() {
     };
 }
 
-vi.mock("../../lib/supabase", () => ({
-    createServerSupabase: vi.fn(() => mockSupabase()),
+vi.mock("../../lib/sqlite", () => ({
+    createServerSQLite: vi.fn(() => mockSupabase()),
 }));
 
 vi.mock("../../middleware/auth", () => ({
+    localAuthOnly: (_req: unknown, _res: unknown, next: () => void) => next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },
@@ -123,7 +124,7 @@ vi.mock("../../lib/documentVersions", () => ({
 }));
 
 import { app } from "../../app";
-import { createServerSupabase } from "../../lib/supabase";
+import { createServerSQLite } from "../../lib/sqlite";
 
 const AUTH = ["Authorization", "Bearer test"] as const;
 
@@ -132,7 +133,7 @@ function captureRpcArgs(): { args: unknown; name: string | undefined } {
         args: undefined,
         name: undefined,
     };
-    vi.mocked(createServerSupabase).mockImplementationOnce(() => {
+    vi.mocked(createServerSQLite).mockImplementationOnce(() => {
         const db = mockSupabase();
         const originalRpc = db.rpc;
         db.rpc = vi.fn((name: string, args: unknown) => {
@@ -140,7 +141,7 @@ function captureRpcArgs(): { args: unknown; name: string | undefined } {
             captured.args = args;
             return originalRpc(name, args as never);
         });
-        return db as unknown as ReturnType<typeof createServerSupabase>;
+        return db as unknown as ReturnType<typeof createServerSQLite>;
     });
     return captured;
 }
@@ -236,20 +237,21 @@ describe("workflows.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("boom");
+            expect(res.body.detail).toBe("Internal server error");
+            expect(JSON.stringify(res.body)).not.toContain("boom");
         });
     });
 
     // ── GET /workflows/system ──────────────────────────────────────────────
     describe("GET /workflows/system", () => {
         it("returns only system workflows, filtered by type, with no RPC call", async () => {
-            // Deliberately does NOT touch createServerSupabase's mock at
+            // Deliberately does NOT touch createServerSQLite's mock at
             // all — this route makes no DB call whatsoever, so overriding
             // it here (even just to assert non-invocation) would leave a
             // queued mockImplementationOnce that the route never consumes,
             // shifting every later test's mock by one call. The fact that
             // this route resolves correctly using only the untouched
-            // module-level createServerSupabase mock (never called) is
+            // module-level createServerSQLite mock (never called) is
             // itself the proof no RPC/DB access happened.
             const res = await request(app)
                 .get("/workflows/system?type=assistant")
@@ -264,7 +266,7 @@ describe("workflows.routes", () => {
                 w.is_system && w.metadata.type === "assistant",
         ),
       ).toBe(true);
-            expect(createServerSupabase).not.toHaveBeenCalled();
+            expect(createServerSQLite).not.toHaveBeenCalled();
         });
     });
 
@@ -278,10 +280,10 @@ describe("workflows.routes", () => {
                     error: null,
                 })
                 .mockResolvedValueOnce({ data: [], error: null });
-            vi.mocked(createServerSupabase).mockImplementationOnce(() => {
+            vi.mocked(createServerSQLite).mockImplementationOnce(() => {
                 const db = mockSupabase();
                 db.rpc = rpcMock;
-                return db as unknown as ReturnType<typeof createServerSupabase>;
+                return db as unknown as ReturnType<typeof createServerSQLite>;
             });
 
       const res = await request(app)
@@ -302,7 +304,8 @@ describe("workflows.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("boom");
+            expect(res.body.detail).toBe("Internal server error");
+            expect(JSON.stringify(res.body)).not.toContain("boom");
         });
     });
 
