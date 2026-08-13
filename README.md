@@ -15,7 +15,8 @@ Website: [mikeoss.com](https://mikeoss.com)
 
 - **Document review, drafting, and research** — project and standalone
   document chat, tabular review, workflows, document versions, and
-  DOCX/PDF/Markdown handling. Redlining works on PDFs too: the assistant
+  DOCX/PDF/Markdown handling (Markdown documents render formatted in the
+  preview panels). Redlining works on PDFs too: the assistant
   asks for the original Word file, or converts the PDF into an editable
   `.docx` copy (original untouched) using layout-preserving text
   extraction, then applies tracked changes to the copy.
@@ -26,8 +27,9 @@ Website: [mikeoss.com](https://mikeoss.com)
 - **Optional deployment modules** — enable only the product surfaces you
   want with the `MIKE_ENABLED_MODULES` allow-list.
 - **Model orchestration** — Anthropic, Gemini, OpenAI, and Kimi cloud
-  models, local OpenAI-compatible servers (with streaming tool calling and
-  reasoning channels), and multi-model committee orchestration. If the
+  models, the full OpenRouter catalog with a per-user API key, local
+  OpenAI-compatible servers (with streaming tool calling and reasoning
+  channels), and multi-model committee orchestration. If the
   requested or default model has no usable API key, chat automatically
   falls back to a configured model that does. See
   [model orchestration](docs/model-orchestration.md).
