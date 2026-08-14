@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("live backend exposes the authenticated Gmail status route", async ({ page }) => {
-    await page.goto("/account/features");
+    await page.goto("/settings/features");
     const result = await page.evaluate(async () => {
         const token = window.localStorage.getItem("mike_auth_token");
         const response = await fetch("http://localhost:3001/integrations/gmail/status", {
@@ -63,7 +63,7 @@ test("configured Gmail integration is visible and connected in account features"
         }),
     );
 
-    await page.goto("/account/features");
+    await page.goto("/settings/features");
 
     await expect(page.getByRole("heading", { name: "Email Integration" })).toBeVisible();
     await expect(page.getByText("legal@example.com")).toBeVisible();

@@ -613,10 +613,10 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
     };
 
     const db = createServerDatabase();
-    if (!Array.isArray(columns_config) || columns_config.length === 0)
+    if (!Array.isArray(columns_config))
         return void res
             .status(400)
-            .json({ detail: "columns_config must be a non-empty array" });
+            .json({ detail: "columns_config must be an array" });
     if (project_id) {
     const access = await checkProjectAccess(project_id, userId, userEmail, db);
         if (!access.ok)

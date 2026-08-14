@@ -57,7 +57,7 @@ test("provisions and displays the managed USPTO connector", async ({ page }) => 
         },
     );
 
-    await page.goto("/account/connectors");
+    await page.goto("/settings/connectors");
     await page.getByRole("button", { name: "USPTO" }).click();
 
     const dialog = page.getByRole("dialog");
