@@ -120,6 +120,8 @@ jobs:
           {
             echo "PORT=3001"
             echo "FRONTEND_URL=http://localhost:3000"
+            echo "MIKE_DATABASE_PROVIDER=sqlite"
+            echo "MIKE_AUTH_PROVIDER=local"
             echo "SQLITE_DB_PATH=$RUNNER_TEMP/mike-e2e.sqlite"
             echo "SQLITE_STORAGE_PATH=$RUNNER_TEMP/mike-e2e-files.sqlite"
             # Both secrets are consumed lazily by download-token signing and API-key
@@ -147,6 +149,7 @@ jobs:
           # before the "Build web" step below.
           {
             echo "NEXT_PUBLIC_API_BASE_URL=http://localhost:3001"
+            echo "NEXT_PUBLIC_MIKE_AUTH_PROVIDER=local"
           } > frontend/.env.local
 
       # Serve a PRODUCTION build, not `next dev`. Two reasons the dev server makes
