@@ -52,9 +52,13 @@ let dbState: {
     adminDeleteUser: { error: unknown };
 };
 let lastDbUpdate: unknown = null;
+let profileSelectResults: QueryResult[] = [];
+let profileSelects: string[] = [];
 
 function resetDbState() {
     lastDbUpdate = null;
+    profileSelectResults = [];
+    profileSelects = [];
     dbState = {
         tables: {},
         adminGetUserById: {
@@ -70,6 +74,13 @@ function resultForTable(table: string): QueryResult {
     return dbState.tables[table] ?? { data: null, error: null };
 }
 
+function resultForQuery(table: string): QueryResult {
+    if (table === "user_profiles" && profileSelectResults.length > 0) {
+        return profileSelectResults.shift()!;
+    }
+    return resultForTable(table);
+}
+
 function makeQuery(table: string) {
     const q: Record<string, unknown> = {};
     const chain = [
@@ -78,16 +89,20 @@ function makeQuery(table: string) {
         "filter", "order", "limit", "range", "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
+    q.select = vi.fn((columns: string) => {
+        if (table === "user_profiles") profileSelects.push(columns);
+        return q;
+    });
     q.update = vi.fn((value: unknown) => {
         lastDbUpdate = value;
         return q;
     });
-    q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
-    q.maybeSingle = vi.fn(() => Promise.resolve(resultForTable(table)));
+    q.single = vi.fn(() => Promise.resolve(resultForQuery(table)));
+    q.maybeSingle = vi.fn(() => Promise.resolve(resultForQuery(table)));
     q.then = (
         resolve: (v: unknown) => unknown,
         reject?: (e: unknown) => unknown,
-    ) => Promise.resolve(resultForTable(table)).then(resolve, reject);
+    ) => Promise.resolve(resultForQuery(table)).then(resolve, reject);
     return q;
 }
 
@@ -273,6 +288,32 @@ describe("user.routes", () => {
             });
             // Presence-only key status — never plaintext.
             expect(JSON.stringify(res.body)).not.toContain("sk-");
+        });
+
+        it("preserves dark mode when a different newer column is missing", async () => {
+            profileSelectResults.push(
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message: "column feature_flags does not exist",
+                    },
+                },
+                {
+                    data: profileRow({ dark_mode: true }),
+                    error: null,
+                },
+            );
+
+            const res = await request(app).get("/user/profile").set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body.darkMode).toBe(true);
+            expect(res.body.featureFlags).toEqual(expect.any(Object));
+            expect(profileSelects).toHaveLength(2);
+            expect(profileSelects[0]).toContain("feature_flags");
+            expect(profileSelects[1]).not.toContain("feature_flags");
+            expect(profileSelects[1]).toContain("dark_mode");
         });
 
         it("is NOT guarded by requireMfaIfEnrolled (bootstrap route)", async () => {

@@ -287,12 +287,24 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     const updateDarkMode = useCallback(
         async (enabled: boolean): Promise<void> => {
             if (!user) throw new Error("Sign in to update Dark Mode.");
-            const updated = await updateUserProfile({ darkMode: enabled });
-            setProfile((prev) =>
-                prev ? { ...prev, ...toProfile(updated) } : null,
-            );
+            const previous = profile?.darkMode === true;
+            // Apply immediately so the toggle is responsive even while the
+            // profile request is in flight. Roll back if persistence fails.
+            applyDarkMode(enabled);
+            try {
+                const updated = await updateUserProfile({ darkMode: enabled });
+                const normalized = toProfile(updated);
+                setProfile((prev) =>
+                    prev
+                        ? { ...prev, ...normalized, darkMode: enabled }
+                        : null,
+                );
+            } catch (error) {
+                applyDarkMode(previous);
+                throw error;
+            }
         },
-        [user],
+        [user, profile?.darkMode],
     );
 
     const updateFeatureFlag = useCallback(

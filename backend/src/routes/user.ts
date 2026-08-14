@@ -468,18 +468,14 @@ function mcpOAuthPopupCsp(nonce: string) {
 
 const PROFILE_SELECT =
     "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, email_integration_enabled, dark_mode, feature_flags";
-const PROFILE_SELECT_NO_DARK_MODE =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, email_integration_enabled, feature_flags";
-const PROFILE_SELECT_NO_FEATURE_FLAGS =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, email_integration_enabled";
-const PROFILE_SELECT_NO_EMAIL =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, feature_flags";
-const PROFILE_SELECT_NO_LEGAL =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login";
-const LEGACY_PROFILE_SELECT =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model";
-const LEGACY_PROFILE_MODEL_SELECT =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model";
+const OPTIONAL_PROFILE_COLUMN_DEFAULTS: Record<string, unknown> = {
+    feature_flags: {},
+    dark_mode: false,
+    email_integration_enabled: false,
+    legal_research_us: true,
+    mfa_on_login: false,
+    title_model: null,
+};
 
 function isMissingProfileColumn(error: unknown, column: string): boolean {
     const record =
@@ -497,142 +493,37 @@ async function selectProfile(
     userId: string,
     mode: "maybe" | "single",
 ) {
-    const fullQuery = db
-        .from("user_profiles")
-        .select(PROFILE_SELECT)
-        .eq("user_id", userId);
-    const full =
-        mode === "single"
-            ? await fullQuery.single()
-            : await fullQuery.maybeSingle();
-    if (!full.error) return full;
+    const columns = PROFILE_SELECT.split(", ");
+    const defaults: Record<string, unknown> = {};
 
-    if (isMissingProfileColumn(full.error, "dark_mode")) {
-        const noDarkQuery = db
+    while (true) {
+        const query = db
             .from("user_profiles")
-            .select(PROFILE_SELECT_NO_DARK_MODE)
+            .select(columns.join(", "))
             .eq("user_id", userId);
-        const noDark = mode === "single"
-            ? await noDarkQuery.single()
-            : await noDarkQuery.maybeSingle();
-        if (!noDark.error) {
-            if (noDark.data && typeof noDark.data === "object") {
-                Object.assign(noDark.data as Record<string, unknown>, {
-                    dark_mode: false,
-                });
-            }
-            return noDark;
-        }
-    }
-
-    const noFlagsQuery = db
-        .from("user_profiles")
-        .select(PROFILE_SELECT_NO_FEATURE_FLAGS)
-        .eq("user_id", userId);
-    const noFlags = mode === "single"
-        ? await noFlagsQuery.single()
-        : await noFlagsQuery.maybeSingle();
-    if (!noFlags.error) {
-        if (noFlags.data && typeof noFlags.data === "object") {
-            Object.assign(noFlags.data as Record<string, unknown>, {
-                feature_flags: {},
-            });
-        }
-        return noFlags;
-    }
-
-    const noEmailQuery = db
-        .from("user_profiles")
-        .select(PROFILE_SELECT_NO_EMAIL)
-        .eq("user_id", userId);
-    const noEmail = mode === "single"
-        ? await noEmailQuery.single()
-        : await noEmailQuery.maybeSingle();
-    if (!noEmail.error) {
-        if (noEmail.data && typeof noEmail.data === "object") {
-            Object.assign(noEmail.data as Record<string, unknown>, {
-                email_integration_enabled: false,
-            });
-        }
-        return noEmail;
-    }
-
-    const legacy = await selectProfileLegacy(db, userId, mode);
-    if (legacy.data && typeof legacy.data === "object") {
-        const row = legacy.data as Record<string, unknown>;
-        if (!("legal_research_us" in row)) {
-            Object.assign(row, { legal_research_us: true });
-        }
-        Object.assign(row, { email_integration_enabled: false });
-    }
-    return legacy;
-}
-
-async function selectProfileLegacy(
-    db: ServerDatabase,
-    userId: string,
-    mode: "maybe" | "single",
-) {
-    const query = db
-        .from("user_profiles")
-        .select(PROFILE_SELECT_NO_LEGAL)
-        .eq("user_id", userId);
-    const result =
-        mode === "single" ? await query.single() : await query.maybeSingle();
-    if (!result.error) {
-        return result;
-    }
-
-    const missingMfaOnLogin = isMissingProfileColumn(
-        result.error,
-        "mfa_on_login",
-    );
-    if (missingMfaOnLogin) {
-        const modelQuery = db
-            .from("user_profiles")
-            .select(LEGACY_PROFILE_MODEL_SELECT)
-            .eq("user_id", userId);
-        const modelLegacy =
+        const result =
             mode === "single"
-                ? await modelQuery.single()
-                : await modelQuery.maybeSingle();
-        if (
-            !modelLegacy.error ||
-            !isMissingProfileColumn(modelLegacy.error, "title_model")
-        ) {
-            if (modelLegacy.data && typeof modelLegacy.data === "object") {
-                const row = modelLegacy.data as Record<string, unknown>;
-                Object.assign(row, {
-                    mfa_on_login: false,
-                });
+                ? await query.single()
+                : await query.maybeSingle();
+        if (!result.error) {
+            if (result.data && typeof result.data === "object") {
+                Object.assign(result.data as Record<string, unknown>, defaults);
             }
-            return modelLegacy;
+            return result;
         }
-    }
 
-    if (
-        !missingMfaOnLogin &&
-        !isMissingProfileColumn(result.error, "title_model")
-    ) {
-        return result;
-    }
+        const missingColumn = Object.keys(
+            OPTIONAL_PROFILE_COLUMN_DEFAULTS,
+        ).find(
+            (column) =>
+                columns.includes(column) &&
+                isMissingProfileColumn(result.error, column),
+        );
+        if (!missingColumn) return result;
 
-    const legacyQuery = db
-        .from("user_profiles")
-        .select(LEGACY_PROFILE_SELECT)
-        .eq("user_id", userId);
-    const legacy =
-        mode === "single"
-            ? await legacyQuery.single()
-            : await legacyQuery.maybeSingle();
-    if (legacy.data && typeof legacy.data === "object") {
-        const row = legacy.data as Record<string, unknown>;
-        Object.assign(row, {
-            title_model: null,
-            mfa_on_login: false,
-        });
+        columns.splice(columns.indexOf(missingColumn), 1);
+        defaults[missingColumn] = OPTIONAL_PROFILE_COLUMN_DEFAULTS[missingColumn];
     }
-    return legacy;
 }
 
 function serializeProfile(row: UserProfileRow, apiKeyStatus?: ApiKeyStatus) {
