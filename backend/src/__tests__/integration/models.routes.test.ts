@@ -29,7 +29,10 @@ vi.mock("../../lib/database", () => ({
     createServerDatabase: vi.fn(() => ({})),
 }));
 
-import { openRouterModelsHandler } from "../../routes/models";
+import {
+    openRouterModelsHandler,
+    openCodeGoModelsHandler,
+} from "../../routes/models";
 
 const originalFetch = global.fetch;
 
@@ -64,6 +67,12 @@ function responseHarness() {
 async function invokeHandler() {
     const harness = responseHarness();
     await openRouterModelsHandler({} as Request, harness.res);
+    return harness.result();
+}
+
+async function invokeOpenCodeGoHandler() {
+    const harness = responseHarness();
+    await openCodeGoModelsHandler({} as Request, harness.res);
     return harness.result();
 }
 
@@ -134,6 +143,73 @@ describe("GET /models/openrouter", () => {
         expect(response.statusCode).toBe(502);
         expect(response.body).toEqual({
             detail: "Unable to load the OpenRouter model catalog.",
+        });
+    });
+});
+
+describe("GET /models/opencode-go", () => {
+    it("loads and normalizes models with the authenticated user's key", async () => {
+        getUserApiKeys.mockResolvedValue({ opencodego: "ocg-user" });
+        const fetchMock = vi.fn().mockResolvedValue(
+            new Response(
+                JSON.stringify({
+                    object: "list",
+                    data: [{ id: "qwen3.8-max", object: "model" }],
+                }),
+                { status: 200 },
+            ),
+        );
+        global.fetch = fetchMock;
+
+        const response = await invokeOpenCodeGoHandler();
+
+        expect(response.statusCode).toBe(200);
+        expect(response.body).toEqual({
+            models: [
+                {
+                    id: "opencode-go/qwen3.8-max",
+                    label: "qwen3.8-max",
+                    group: "OpenCode Go",
+                },
+            ],
+        });
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://opencode.ai/zen/go/v1/models",
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    Authorization: "Bearer ocg-user",
+                }),
+            }),
+        );
+    });
+
+    it("does not contact OpenCode Go when no key is configured", async () => {
+        getUserApiKeys.mockResolvedValue({ opencodego: null });
+        const fetchMock = vi.fn();
+        global.fetch = fetchMock;
+
+        const response = await invokeOpenCodeGoHandler();
+
+        expect(response.statusCode).toBe(400);
+        expect(response.body).toEqual({
+            detail: "OpenCode Go API key is not configured.",
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("maps upstream catalog failures to a safe gateway error", async () => {
+        getUserApiKeys.mockResolvedValue({ opencodego: "ocg-user" });
+        global.fetch = vi
+            .fn()
+            .mockResolvedValue(
+                new Response("provider details", { status: 401 }),
+            );
+
+        const response = await invokeOpenCodeGoHandler();
+
+        expect(response.statusCode).toBe(502);
+        expect(response.body).toEqual({
+            detail: "Unable to load the OpenCode Go model catalog.",
         });
     });
 });

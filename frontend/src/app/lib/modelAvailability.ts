@@ -7,12 +7,14 @@ export type ModelProvider =
     | "gemini"
     | "openai"
     | "openrouter"
+    | "opencodego"
     | "local"
     | "committee"
     | "ollama";
 
 export function getModelProvider(modelId: string): ModelProvider | null {
     if (modelId.startsWith("openrouter/")) return "openrouter";
+    if (modelId.startsWith("opencode-go/")) return "opencodego";
     if (modelId.startsWith("ollama/")) return "ollama"; // dynamic, not in the static list
     const model = SETTINGS_MODELS.find((m) => m.id === modelId);
     if (!model) return null;
@@ -49,6 +51,7 @@ export function providerLabel(provider: ModelProvider): string {
     if (provider === "kimi") return "Moonshot (Kimi)";
     if (provider === "openai") return "OpenAI";
     if (provider === "openrouter") return "OpenRouter";
+    if (provider === "opencodego") return "OpenCode Go";
     if (provider === "ollama") return "Local (Ollama)";
     return "Google (Gemini)";
 }
@@ -62,5 +65,6 @@ export function modelGroupToProvider(
     if (group === "Moonshot") return "kimi";
     if (group === "OpenAI") return "openai";
     if (group === "OpenRouter") return "openrouter";
+    if (group === "OpenCode Go") return "opencodego";
     return "gemini";
 }

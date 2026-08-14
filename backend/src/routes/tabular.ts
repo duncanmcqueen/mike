@@ -472,6 +472,7 @@ function providerLabel(provider: Provider | keyof UserApiKeys): string {
     if (provider === "claude") return "Anthropic";
     if (provider === "openai") return "OpenAI";
     if (provider === "openrouter") return "OpenRouter";
+    if (provider === "opencodego") return "OpenCode Go";
     if (provider === "kimi") return "Moonshot (Kimi)";
     if (provider === "openai-compatible") return "OpenAI-compatible";
     if (provider === "ollama") return "Ollama";

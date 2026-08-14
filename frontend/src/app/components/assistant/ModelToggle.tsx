@@ -18,6 +18,7 @@ import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { featureEnabled } from "@/app/lib/featureFlags";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 import { useOpenRouterModels } from "@/app/hooks/useOpenRouterModels";
+import { useOpenCodeGoModels } from "@/app/hooks/useOpenCodeGoModels";
 
 export interface ModelOption {
     id: string;
@@ -28,6 +29,7 @@ export interface ModelOption {
         | "Google"
         | "OpenAI"
         | "OpenRouter"
+        | "OpenCode Go"
         | "Local"
         | "Committee";
 }
@@ -70,6 +72,7 @@ const GROUP_ORDER: ModelOption["group"][] = [
     "Google",
     "OpenAI",
     "OpenRouter",
+    "OpenCode Go",
 ];
 const itemClassName =
     "rounded-xl px-2.5 py-1.5 text-gray-700 focus:bg-app-surface-hover focus:text-gray-900 data-[highlighted]:bg-app-surface-hover data-[highlighted]:text-gray-900";
@@ -79,6 +82,9 @@ export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
     const ollamaModels = useOllamaModels();
     const openRouterModels = useOpenRouterModels(
         profile?.apiKeys.openrouter.configured === true,
+    );
+    const openCodeGoModels = useOpenCodeGoModels(
+        profile?.apiKeys.opencodego.configured === true,
     );
     const [options, setOptions] = useState<ModelOption[]>(base);
     const localModelsEnabled = featureEnabled(
@@ -105,7 +111,9 @@ export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
                               ? "Local"
                               : model.id.startsWith("openrouter/")
                                 ? "OpenRouter"
-                              : model.provider === "claude"
+                                : model.id.startsWith("opencode-go/")
+                                  ? "OpenCode Go"
+                                : model.provider === "claude"
                                 ? "Anthropic"
                                 : model.id.startsWith("kimi-")
                                   ? "Moonshot"
@@ -134,6 +142,7 @@ export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
         ollamaModels.forEach((model) => merged.set(model.id, model));
     }
     openRouterModels.forEach((model) => merged.set(model.id, model));
+    openCodeGoModels.forEach((model) => merged.set(model.id, model));
     return Array.from(merged.values());
 }
 
@@ -179,7 +188,9 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
             (selected?.group === "Committee" &&
                 !selectedCommitteeModelsEnabled) ||
             (value.startsWith("openrouter/") &&
-                profile?.apiKeys.openrouter.configured !== true)
+                profile?.apiKeys.openrouter.configured !== true) ||
+            (value.startsWith("opencode-go/") &&
+                profile?.apiKeys.opencodego.configured !== true)
         ) {
             onChange(DEFAULT_MODEL_ID);
         }
@@ -189,6 +200,7 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
         selectedCommitteeModelsEnabled,
         selectedLocalModelsEnabled,
         profile?.apiKeys.openrouter.configured,
+        profile?.apiKeys.opencodego.configured,
         value,
     ]);
 
@@ -263,6 +275,11 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                                             {m.group === "OpenRouter" && (
                                                 <span className="block truncate text-[10px] text-gray-400">
                                                     {m.id.replace(/^openrouter\//, "")}
+                                                </span>
+                                            )}
+                                            {m.group === "OpenCode Go" && (
+                                                <span className="block truncate text-[10px] text-gray-400">
+                                                    {m.id.replace(/^opencode-go\//, "")}
                                                 </span>
                                             )}
                                         </span>

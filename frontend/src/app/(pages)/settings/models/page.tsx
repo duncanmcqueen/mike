@@ -165,6 +165,7 @@ function ModelPreferenceDropdown({
         "Google",
         "OpenAI",
         "OpenRouter",
+        "OpenCode Go",
     ];
 
     return (
@@ -248,6 +249,11 @@ function ModelPreferenceDropdown({
                                             {m.group === "OpenRouter" && (
                                                 <span className="block truncate text-[10px] text-gray-400">
                                                     {m.id.replace(/^openrouter\//, "")}
+                                                </span>
+                                            )}
+                                            {m.group === "OpenCode Go" && (
+                                                <span className="block truncate text-[10px] text-gray-400">
+                                                    {m.id.replace(/^opencode-go\//, "")}
                                                 </span>
                                             )}
                                         </span>

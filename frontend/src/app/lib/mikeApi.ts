@@ -657,6 +657,7 @@ export type ApiKeyProvider =
     | "gemini"
     | "openai"
     | "openrouter"
+    | "opencodego"
     | "courtlistener";
 export type ApiKeySource = "user" | "env" | null;
 export type ApiKeyState = Record<
@@ -687,6 +688,12 @@ export interface OpenRouterModelOption {
     group: "OpenRouter";
 }
 
+export interface OpenCodeGoModelOption {
+    id: string;
+    label: string;
+    group: "OpenCode Go";
+}
+
 export async function getOllamaModels(): Promise<OllamaModelOption[]> {
     const { models } = await apiRequest<{ models: OllamaModelOption[] }>(
         "/models/ollama",
@@ -697,6 +704,15 @@ export async function getOllamaModels(): Promise<OllamaModelOption[]> {
 export async function getOpenRouterModels(): Promise<OpenRouterModelOption[]> {
     const { models } = await apiRequest<{ models: OpenRouterModelOption[] }>(
         "/models/openrouter",
+    );
+    return models;
+}
+
+export async function getOpenCodeGoModels(): Promise<
+    OpenCodeGoModelOption[]
+> {
+    const { models } = await apiRequest<{ models: OpenCodeGoModelOption[] }>(
+        "/models/opencode-go",
     );
     return models;
 }

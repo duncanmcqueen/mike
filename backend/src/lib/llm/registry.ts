@@ -4,6 +4,11 @@ import {
   OPENROUTER_API_BASE_URL,
   openRouterApiModel,
 } from "./openrouterCatalog";
+import {
+  isOpenCodeGoModelId,
+  OPENCODE_GO_API_BASE_URL,
+  openCodeGoApiModel,
+} from "./openCodeGoCatalog";
 
 type ModelRegistryConfig = {
   models?: ConfiguredModel[];
@@ -90,16 +95,29 @@ export function getConfiguredModel(id: string): ConfiguredModel | null {
   const configured =
     loadModelRegistry().models?.find((model) => model.id === id) ?? null;
   if (configured) return configured;
-  if (!isOpenRouterModelId(id)) return null;
-  return {
-    id,
-    label: openRouterApiModel(id) ?? id,
-    provider: "openai-compatible",
-    location: "cloud",
-    apiModel: openRouterApiModel(id) ?? id,
-    baseUrl: OPENROUTER_API_BASE_URL,
-    apiKeyProvider: "openrouter",
-  };
+  if (isOpenRouterModelId(id)) {
+    return {
+      id,
+      label: openRouterApiModel(id) ?? id,
+      provider: "openai-compatible",
+      location: "cloud",
+      apiModel: openRouterApiModel(id) ?? id,
+      baseUrl: OPENROUTER_API_BASE_URL,
+      apiKeyProvider: "openrouter",
+    };
+  }
+  if (isOpenCodeGoModelId(id)) {
+    return {
+      id,
+      label: openCodeGoApiModel(id) ?? id,
+      provider: "openai-compatible",
+      location: "cloud",
+      apiModel: openCodeGoApiModel(id) ?? id,
+      baseUrl: OPENCODE_GO_API_BASE_URL,
+      apiKeyProvider: "opencodego",
+    };
+  }
+  return null;
 }
 
 export function getCommitteeModel(id: string): CommitteeModel | null {

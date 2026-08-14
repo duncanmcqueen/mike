@@ -440,6 +440,7 @@ function providerDisplayName(provider: keyof UserApiKeys): string {
   if (provider === "kimi") return "Moonshot (Kimi)";
   if (provider === "openai") return "OpenAI";
   if (provider === "openrouter") return "OpenRouter";
+  if (provider === "opencodego") return "OpenCode Go";
   return "CourtListener";
 }
 

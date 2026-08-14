@@ -7,6 +7,10 @@ import {
     OPENROUTER_API_BASE_URL,
     parseOpenRouterModelOptions,
 } from "../lib/llm/openrouterCatalog";
+import {
+    OPENCODE_GO_API_BASE_URL,
+    parseOpenCodeGoModelOptions,
+} from "../lib/llm/openCodeGoCatalog";
 import { safeErrorLog } from "../lib/safeError";
 
 export const modelsRouter = Router();
@@ -75,3 +79,47 @@ export async function openRouterModelsHandler(
 }
 
 modelsRouter.get("/openrouter", requireAuth, openRouterModelsHandler);
+
+// Catalog visible to the authenticated user's OpenCode Go subscription. The
+// API key stays server-side; only model ids and display labels are returned.
+export async function openCodeGoModelsHandler(
+    _req: Request,
+    res: Response,
+): Promise<void> {
+    const userId = res.locals.userId as string;
+    try {
+        const db = createServerDatabase();
+        const apiKeys = await getUserApiKeys(userId, db);
+        const apiKey = apiKeys.opencodego?.trim();
+        if (!apiKey) {
+            return void res.status(400).json({
+                detail: "OpenCode Go API key is not configured.",
+            });
+        }
+
+        const response = await fetch(`${OPENCODE_GO_API_BASE_URL}/models`, {
+            signal: AbortSignal.timeout(15_000),
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                Accept: "application/json",
+            },
+        });
+        if (!response.ok) {
+            return void res.status(502).json({
+                detail: "Unable to load the OpenCode Go model catalog.",
+            });
+        }
+        const models = parseOpenCodeGoModelOptions(await response.json());
+        res.json({ models });
+    } catch (error) {
+        console.error(
+            "[models/opencode-go] catalog request failed",
+            safeErrorLog(error),
+        );
+        res.status(502).json({
+            detail: "Unable to load the OpenCode Go model catalog.",
+        });
+    }
+}
+
+modelsRouter.get("/opencode-go", requireAuth, openCodeGoModelsHandler);

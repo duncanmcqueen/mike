@@ -7,6 +7,7 @@ import { ApiKeyField } from "@/app/components/settings/ApiKeyField";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { refreshOllamaModels } from "@/app/hooks/useOllamaModels";
 import { refreshOpenRouterModels } from "@/app/hooks/useOpenRouterModels";
+import { refreshOpenCodeGoModels } from "@/app/hooks/useOpenCodeGoModels";
 import { SettingsSection } from "../SettingsSection";
 
 const MODEL_API_KEY_FIELDS = [
@@ -37,6 +38,13 @@ const MODEL_API_KEY_FIELDS = [
         description:
             "After saving, choose any available OpenRouter model from the searchable model picker.",
     },
+    {
+        provider: "opencodego",
+        label: "OpenCode Go API Key",
+        placeholder: "API key...",
+        description:
+            "OpenCode Go is a low-cost subscription for open coding models. After saving, choose any available OpenCode Go model from the searchable model picker.",
+    },
 ] as const;
 
 const OTHER_API_KEY_FIELDS = [
@@ -60,6 +68,7 @@ export default function ApiKeysPage() {
                 reloadProfile(),
                 refreshOllamaModels(),
                 refreshOpenRouterModels(),
+                refreshOpenCodeGoModels(),
             ]);
         } finally {
             setRefreshing(false);

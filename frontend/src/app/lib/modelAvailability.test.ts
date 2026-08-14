@@ -19,6 +19,7 @@ const keys = (configured: {
         gemini: { configured: !!configured.gemini, source: null },
         openai: { configured: !!configured.openai, source: null },
         openrouter: { configured: false, source: null },
+        opencodego: { configured: false, source: null },
         courtlistener: { configured: false, source: null },
     }) as ApiKeyState;
 
@@ -30,6 +31,9 @@ describe("getModelProvider", () => {
         expect(getModelProvider("ollama/qwen3.6")).toBe("ollama");
         expect(getModelProvider("openrouter/anthropic/claude-sonnet-4")).toBe(
             "openrouter",
+        );
+        expect(getModelProvider("opencode-go/qwen3.8-max")).toBe(
+            "opencodego",
         );
     });
 
@@ -89,6 +93,18 @@ describe("isModelAvailable", () => {
         ).toBe(true);
     });
 
+    it("requires the configured OpenCode Go key for dynamic models", () => {
+        const withoutKey = keys({});
+        const withKey = keys({}) as ApiKeyState;
+        withKey.opencodego = { configured: true, source: "user" };
+        expect(
+            isModelAvailable("opencode-go/qwen3.8-max", withoutKey),
+        ).toBe(false);
+        expect(
+            isModelAvailable("opencode-go/qwen3.8-max", withKey),
+        ).toBe(true);
+    });
+
     it("is true for ollama models even with no keys configured", () => {
         expect(isModelAvailable("ollama/llama3.2", keys({}))).toBe(true);
     });
@@ -126,6 +142,7 @@ describe("providerLabel", () => {
         expect(providerLabel("ollama")).toBe("Local (Ollama)");
         expect(providerLabel("gemini")).toBe("Google (Gemini)");
         expect(providerLabel("openrouter")).toBe("OpenRouter");
+        expect(providerLabel("opencodego")).toBe("OpenCode Go");
     });
 });
 
@@ -138,5 +155,6 @@ describe("modelGroupToProvider", () => {
         expect(modelGroupToProvider("Committee")).toBe("committee");
         expect(modelGroupToProvider("Google")).toBe("gemini");
         expect(modelGroupToProvider("OpenRouter")).toBe("openrouter");
+        expect(modelGroupToProvider("OpenCode Go")).toBe("opencodego");
     });
 });

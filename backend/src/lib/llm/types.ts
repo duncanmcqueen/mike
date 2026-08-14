@@ -47,6 +47,7 @@ export type UserApiKeys = {
     gemini?: string | null;
     openai?: string | null;
     openrouter?: string | null;
+    opencodego?: string | null;
     courtlistener?: string | null;
 };
 
