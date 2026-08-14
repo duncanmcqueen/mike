@@ -119,7 +119,12 @@ describe("trademark connector result handling", () => {
             id: String(90_000_000 + index),
             wordmark: `ACME ${String(index).padStart(2, "0")}`,
             registrationId: String(8_000_000 + index),
-            registrationDate: "2026-07-30",
+            // Keep the date inside the test's 14-day lookback window — a
+            // hardcoded date silently ages out of the window and the
+            // collector then finds zero records.
+            registrationDate: new Date(
+                Date.now() - 2 * 24 * 60 * 60 * 1000,
+            ).toISOString().slice(0, 10),
             ownerName: [`Owner ${index} ${"x".repeat(500)}`],
             internationalClass: ["IC 009"],
             statusDescription: "REGISTERED",
