@@ -78,6 +78,14 @@ function defaultConfiguredModels(): ConfiguredModel[] {
       apiKeyProvider: "kimi",
       extraBody: { reasoning_effort: "high" },
     },
+    {
+      id: "qwen3.8-local",
+      label: "Qwen 3.8 (local)",
+      provider: "openai-compatible",
+      location: "local",
+      apiModel: "/home/dwmcqueen/vulcan/models/frosty40-qwen3.8-27b/Qwen3.8-27B-Q6_K-OQ8-MTP.gguf",
+      baseUrl: "http://192.168.9.142:9091/v1",
+    },
   ];
 }
 
