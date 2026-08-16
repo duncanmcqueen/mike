@@ -174,15 +174,17 @@ describe("resolveUsableModel", () => {
         ).toBe("kimi-k3");
     });
 
-    it("retains the resolved model when no provider has a key", () => {
+    it("falls back to a keyless configured model when no provider keys are set", () => {
         vi.stubEnv("GEMINI_API_KEY", "");
         vi.stubEnv("ANTHROPIC_API_KEY", "");
         vi.stubEnv("CLAUDE_API_KEY", "");
         vi.stubEnv("OPENAI_API_KEY", "");
         vi.stubEnv("KIMI_API_KEY", "");
 
+        // qwen3.8-local requires no API key, so it is the only usable
+        // configured model once every provider key is absent.
         expect(resolveUsableModel(undefined, DEFAULT_MAIN_MODEL, {})).toBe(
-            DEFAULT_MAIN_MODEL,
+            "qwen3.8-local",
         );
     });
 });

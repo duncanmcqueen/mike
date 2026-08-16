@@ -111,6 +111,9 @@ export function modelHasApiKey(
             ? apiKeys?.[configured.apiKeyProvider]?.trim()
             : undefined;
         if (userKey) return true;
+        // A configured openai-compatible model with no key source at all
+        // (e.g. a local server) requires no API key.
+        if (!configured.apiKeyProvider && !configured.apiKeyEnv) return true;
         return configured.apiKeyEnv
             ? !!process.env[configured.apiKeyEnv]?.trim()
             : false;
