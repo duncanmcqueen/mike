@@ -69,6 +69,12 @@ export function ChatView({
     const [workflowModalInitialId, setWorkflowModalInitialId] = useState<
         string | undefined
     >();
+    // Owned by ChatView (not ChatInput) so the selected playbook survives the
+    // ask_inputs continuation, where ChatInput is unmounted/remounted and
+    // would otherwise lose its local selection state.
+    const [selectedPlaybook, setSelectedPlaybook] = useState<
+        import("./PlaybookPickerModal").AssistantPlaybookSelection | null
+    >(null);
     const [hiddenAskInputKeys, setHiddenAskInputKeys] = useState<Set<string>>(
         () => new Set(),
     );
@@ -832,6 +838,8 @@ export function ChatView({
                                     onSubmit={handleChat}
                                     onCancel={cancel}
                                     isLoading={isResponseLoading}
+                                    selectedPlaybook={selectedPlaybook}
+                                    onPlaybookChange={setSelectedPlaybook}
                                 />
                             )}
                         </div>

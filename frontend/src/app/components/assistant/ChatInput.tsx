@@ -86,6 +86,11 @@ interface Props {
     projectCmNumber?: string | null;
     projectId?: string;
     onDocumentsUploaded?: (documents: Document[]) => void;
+    /** Controlled playbook selection (optional). When provided, ownership
+     *  lives with the parent so it survives transient remounts (e.g. the
+     *  ask_inputs continuation) instead of being lost with this component. */
+    selectedPlaybook?: AssistantPlaybookSelection | null;
+    onPlaybookChange?: (playbook: AssistantPlaybookSelection | null) => void;
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
@@ -99,6 +104,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         projectCmNumber,
         projectId,
         onDocumentsUploaded,
+        selectedPlaybook: selectedPlaybookProp,
+        onPlaybookChange,
     }: Props,
     ref,
 ) {
@@ -108,7 +115,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         id: string;
         title: string;
     } | null>(null);
-    const [storedSelectedPlaybook, setSelectedPlaybook] =
+    const [storedSelectedPlaybook, setStoredSelectedPlaybook] =
         useState<AssistantPlaybookSelection | null>(null);
     const [model, setModel] = useSelectedModel();
     const { profile } = useUserProfile();
@@ -123,9 +130,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         "playbooks",
         profile?.deploymentModules,
     );
+    // When the parent owns the selection (controlled props), honor it so a
+    // transient remount (ask_inputs continuation) doesn't lose the choice.
+    const isControlled =
+        selectedPlaybookProp !== undefined || onPlaybookChange !== undefined;
     const selectedPlaybook = playbooksEnabled
-        ? storedSelectedPlaybook
+        ? isControlled
+            ? selectedPlaybookProp ?? null
+            : storedSelectedPlaybook
         : null;
+    const setSelectedPlaybook = useCallback(
+        (playbook: AssistantPlaybookSelection | null) => {
+            if (onPlaybookChange) onPlaybookChange(playbook);
+            setStoredSelectedPlaybook(playbook);
+        },
+        [onPlaybookChange],
+    );
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const controlsRef = useRef<HTMLDivElement>(null);
     const [compactControls, setCompactControls] = useState(false);
