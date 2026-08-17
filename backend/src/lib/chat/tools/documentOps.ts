@@ -2171,10 +2171,13 @@ export function clearTurnReadsForDocument(
 }
 
 // Cap how much document text a single read_document call returns, so a large
-// document can't blow a small-context model's window (the full text still
-// stays reachable via find_in_document). ~12k tokens of the document is
-// enough to work on any clause; the rest is searched on demand.
-export const MAX_READ_DOCUMENT_CHARS = 50_000;
+// document can't blow the model's context window (the full text still stays
+// reachable via find_in_document). ~100k chars is ~50k tokens of legal text,
+// which fits a 131k-context server alongside history and a second document.
+// Override per deployment with MAX_READ_DOCUMENT_CHARS.
+export const MAX_READ_DOCUMENT_CHARS = Number(
+    process.env.MAX_READ_DOCUMENT_CHARS,
+) || 100_000;
 
 export async function readDocumentContent(
   docLabel: string,

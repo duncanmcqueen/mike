@@ -359,7 +359,7 @@ describe("active Word document context", () => {
     });
 
     it("truncates oversized read_document output with a find_in_document note", async () => {
-        const bigBody = "X".repeat(60_000);
+        const bigBody = "X".repeat(150_000);
         const store: DocStore = new Map([
             [
                 ACTIVE_WORD_DOCUMENT_LABEL,
