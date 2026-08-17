@@ -762,7 +762,7 @@ async function streamLocalToolsWithoutSse(
           model: modelName,
           messages,
           tools: forceFinalAnswer ? undefined : tools,
-          max_tokens: 4096,
+          max_tokens: 8192,
           stream: false,
         }),
       ),
@@ -790,6 +790,11 @@ async function streamLocalToolsWithoutSse(
       throw new Error("OpenAI-compatible response did not include a message.");
     }
     const content = message.content ?? "";
+    if (process.env.DEBUG_LLM_TOOL_CALLS === "1") {
+      console.error(
+        `[openai-compatible local] iter=${iter} forceFinal=${forceFinalAnswer} finish=${json.choices?.[0]?.finish_reason ?? "?"} content=${content.length} reasoning=${(message.reasoning_content ?? "").length} tool_calls=${(message.tool_calls ?? []).length}`,
+      );
+    }
     const structuredCalls = (message.tool_calls ?? []).flatMap(
       (call, index): NormalizedToolCall[] => {
         const name = call.function?.name?.trim() ?? "";
