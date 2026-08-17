@@ -67,6 +67,33 @@ function requestTimeoutMs(value?: number): number {
   return DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
+// A long local-model generation can occasionally drop the connection
+// (undici "fetch failed", ECONNRESET) while the server is still working.
+// Retrying the same payload a few times rides through those transient
+// network failures. Never retry on AbortError (caller cancelled) or on an
+// HTTP error response (the server answered — the payload is fine).
+const RETRYABLE_FETCH_FAILURES = 2;
+
+async function fetchWithRetry(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+): Promise<Response> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= RETRYABLE_FETCH_FAILURES; attempt++) {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      if (attempt === RETRYABLE_FETCH_FAILURES) throw error;
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      lastError = error;
+      await new Promise((resolve) =>
+        setTimeout(resolve, 500 * (attempt + 1)),
+      );
+    }
+  }
+  throw lastError;
+}
+
 const COURTLISTENER_CITATION_REMINDER_TOOL_NAMES = new Set([
   "courtlistener_find_in_case",
   "courtlistener_read_case",
@@ -122,7 +149,7 @@ export async function completeOpenAICompatibleText(params: {
   responseFormat?: Record<string, unknown>;
   plugins?: Array<{ id: string }>;
 }): Promise<string> {
-  const response = await fetch(`${baseUrl(params.model)}/chat/completions`, {
+  const response = await fetchWithRetry(`${baseUrl(params.model)}/chat/completions`, {
     method: "POST",
     signal: AbortSignal.timeout(requestTimeoutMs(params.requestTimeoutMs)),
     headers: {
@@ -750,7 +777,7 @@ async function streamLocalToolsWithoutSse(
           AbortSignal.timeout(requestTimeoutMs(params.requestTimeoutMs)),
         ])
       : AbortSignal.timeout(requestTimeoutMs(params.requestTimeoutMs));
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       signal: requestSignal,
       headers: {
@@ -926,7 +953,7 @@ export async function streamOpenAICompatible(
           AbortSignal.timeout(requestTimeoutMs(params.requestTimeoutMs)),
         ])
       : AbortSignal.timeout(requestTimeoutMs(params.requestTimeoutMs));
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       signal: requestSignal,
       headers: {

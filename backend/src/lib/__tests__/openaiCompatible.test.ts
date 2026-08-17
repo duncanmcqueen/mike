@@ -381,7 +381,7 @@ describe("local OpenAI-compatible tool orchestration", () => {
         for (const [, options] of fetchMock.mock.calls) {
             const body = JSON.parse(String(options?.body));
             expect(body.stream).toBe(false);
-            expect(body.max_tokens).toBe(4096);
+            expect(body.max_tokens).toBe(8192);
         }
         expect(runTools).toHaveBeenCalledTimes(1);
         expect(runTools).toHaveBeenCalledWith([
@@ -946,5 +946,51 @@ describe("local OpenAI-compatible tool orchestration", () => {
             },
         ]);
         expect(result.fullText).toContain("search completed");
+    });
+
+    it("retries transient fetch failures before giving up", async () => {
+        // First two calls drop the connection (undici "fetch failed"); the
+        // third succeeds. The local tool loop should retry and still work.
+        const fetchMock = vi
+            .fn()
+            .mockRejectedValueOnce(new TypeError("fetch failed"))
+            .mockRejectedValueOnce(new TypeError("fetch failed"))
+            .mockResolvedValueOnce(
+                new Response(
+                    JSON.stringify({
+                        choices: [
+                            {
+                                finish_reason: "stop",
+                                message: {
+                                    role: "assistant",
+                                    content: "Retried successfully.",
+                                },
+                            },
+                        ],
+                    }),
+                    { status: 200 },
+                ),
+            );
+        global.fetch = fetchMock;
+
+        const result = await streamOpenAICompatible({
+            model: "test-local-qwen",
+            systemPrompt: "Run the review.",
+            messages: [{ role: "user", content: "Review the doc." }],
+            tools: [
+                {
+                    type: "function",
+                    function: {
+                        name: "read_document",
+                        description: "Read a document",
+                        parameters: { type: "object" },
+                    },
+                },
+            ],
+            runTools: async () => [],
+        });
+
+        expect(result.fullText).toContain("Retried successfully.");
+        expect(fetchMock).toHaveBeenCalledTimes(3);
     });
 });
