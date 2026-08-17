@@ -2170,6 +2170,12 @@ export function clearTurnReadsForDocument(
   }
 }
 
+// Cap how much document text a single read_document call returns, so a large
+// document can't blow a small-context model's window (the full text still
+// stays reachable via find_in_document). ~12k tokens of the document is
+// enough to work on any clause; the rest is searched on demand.
+export const MAX_READ_DOCUMENT_CHARS = 50_000;
+
 export async function readDocumentContent(
   docLabel: string,
   docStore: DocStore,
@@ -2221,6 +2227,9 @@ export async function readDocumentContent(
         `[read_document] using request-scoped inline text (chars=${docInfo.inline_text.length}) for filename="${docInfo.filename}"`,
       );
       emitDocRead();
+      if (docInfo.inline_text.length > MAX_READ_DOCUMENT_CHARS) {
+        return `${docInfo.inline_text.slice(0, MAX_READ_DOCUMENT_CHARS)}\n\n[Document truncated: shown ${MAX_READ_DOCUMENT_CHARS} of ${docInfo.inline_text.length} characters. Use find_in_document for targeted searches of the remaining content.]`;
+      }
       return docInfo.inline_text;
     }
 
@@ -2350,6 +2359,9 @@ export async function readDocumentContent(
       `[read_document] DONE filename="${docInfo.filename}" finalTextLength=${text.length} firstChars=${JSON.stringify(text.slice(0, 120))}`,
     );
     emitDocRead();
+    if (text.length > MAX_READ_DOCUMENT_CHARS) {
+      return `${text.slice(0, MAX_READ_DOCUMENT_CHARS)}\n\n[Document truncated: shown ${MAX_READ_DOCUMENT_CHARS} of ${text.length} characters. Use find_in_document for targeted searches of the remaining content.]`;
+    }
     return text;
   } catch (err) {
     devLog(

@@ -13,7 +13,7 @@ export const PROJECT_EXTRA_TOOLS = [
     function: {
       name: "fetch_documents",
       description:
-        "Read the full text content of multiple documents in a single call. Use this instead of calling read_document repeatedly when you need to read several documents at once. In one response, fetch each document/version at most once; after it has been fetched, use the prior tool result or find_in_document for targeted checks.",
+        "Read the full text content of multiple documents in a single call. Use this instead of calling read_document repeatedly when you need to read several documents at once. In one response, fetch each document/version at most once; after it has been fetched, use the prior tool result or find_in_document for targeted checks. Large documents may be truncated in the result; use find_in_document for targeted searches of the remaining content.",
       parameters: {
         type: "object",
         properties: {
@@ -208,7 +208,7 @@ export const TOOLS = [
     function: {
       name: "read_document",
       description:
-        "Read the full text content of an available document. Always call this before answering questions about, summarising, citing from, or editing a document, but call it at most once per document/version in a single response. After this returns, use the prior tool result or find_in_document for targeted checks instead of reading the same document/version again.",
+        "Read the full text content of an available document. Always call this before answering questions about, summarising, citing from, or editing a document, but call it at most once per document/version in a single response. After this returns, use the prior tool result or find_in_document for targeted checks instead of reading the same document/version again. Very large documents are truncated in the result; use find_in_document to search the remaining content.",
       parameters: {
         type: "object",
         properties: {
