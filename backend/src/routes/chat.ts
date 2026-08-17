@@ -726,6 +726,12 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             // This route first makes the advertised assistant ID durable.
             // It emits [DONE] only after the reserved row has been populated.
             emitDone: false,
+            playbookChunkDocumentIds:
+                selectedPlaybook && lastUser?.files?.length
+                    ? lastUser.files
+                          .map((file) => file.document_id)
+                          .filter((id): id is string => typeof id === "string")
+                    : undefined,
         });
 
         devLog("[chat/stream] LLM stream finished", {

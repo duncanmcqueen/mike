@@ -85,6 +85,10 @@ function defaultConfiguredModels(): ConfiguredModel[] {
       location: "local",
       apiModel: "/home/dwmcqueen/vulcan/models/frosty40-qwen3.8-27b/Qwen3.8-27B-Q6_K-OQ8-MTP.gguf",
       baseUrl: "http://192.168.9.142:9091/v1",
+      // Qwen's reasoning mode can consume the entire local generation budget
+      // on large document reviews before producing visible content.
+      extraBody: { chat_template_kwargs: { enable_thinking: false } },
+      playbookChunking: true,
     },
   ];
 }

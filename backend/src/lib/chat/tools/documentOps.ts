@@ -2185,9 +2185,10 @@ export async function readDocumentContent(
   write: (s: string) => void,
   docIndex?: DocIndex,
   db?: ReturnType<typeof createServerDatabase>,
-  opts?: { emitEvents?: boolean },
+  opts?: { emitEvents?: boolean; maxChars?: number },
 ): Promise<string> {
   const emitEvents = opts?.emitEvents ?? true;
+  const maxChars = opts?.maxChars ?? MAX_READ_DOCUMENT_CHARS;
   devLog(`[read_document] called with docLabel="${docLabel}"`);
   const docInfo = docStore.get(docLabel);
   if (!docInfo) {
@@ -2230,8 +2231,8 @@ export async function readDocumentContent(
         `[read_document] using request-scoped inline text (chars=${docInfo.inline_text.length}) for filename="${docInfo.filename}"`,
       );
       emitDocRead();
-      if (docInfo.inline_text.length > MAX_READ_DOCUMENT_CHARS) {
-        return `${docInfo.inline_text.slice(0, MAX_READ_DOCUMENT_CHARS)}\n\n[Document truncated: shown ${MAX_READ_DOCUMENT_CHARS} of ${docInfo.inline_text.length} characters. Use find_in_document for targeted searches of the remaining content.]`;
+      if (docInfo.inline_text.length > maxChars) {
+        return `${docInfo.inline_text.slice(0, maxChars)}\n\n[Document truncated: shown ${maxChars} of ${docInfo.inline_text.length} characters. Use find_in_document for targeted searches of the remaining content.]`;
       }
       return docInfo.inline_text;
     }
@@ -2362,8 +2363,8 @@ export async function readDocumentContent(
       `[read_document] DONE filename="${docInfo.filename}" finalTextLength=${text.length} firstChars=${JSON.stringify(text.slice(0, 120))}`,
     );
     emitDocRead();
-    if (text.length > MAX_READ_DOCUMENT_CHARS) {
-      return `${text.slice(0, MAX_READ_DOCUMENT_CHARS)}\n\n[Document truncated: shown ${MAX_READ_DOCUMENT_CHARS} of ${text.length} characters. Use find_in_document for targeted searches of the remaining content.]`;
+    if (text.length > maxChars) {
+      return `${text.slice(0, maxChars)}\n\n[Document truncated: shown ${maxChars} of ${text.length} characters. Use find_in_document for targeted searches of the remaining content.]`;
     }
     return text;
   } catch (err) {

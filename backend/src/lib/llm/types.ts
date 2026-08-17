@@ -93,6 +93,8 @@ export type ConfiguredModel = {
     apiKeyProvider?: keyof UserApiKeys;
     apiKey?: string;
     extraBody?: Record<string, unknown>;
+    /** Enable chunked Assistant playbook passes for this model. */
+    playbookChunking?: boolean;
 };
 
 export type CommitteeModel = {

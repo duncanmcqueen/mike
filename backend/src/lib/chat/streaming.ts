@@ -55,6 +55,9 @@ import {
   type TurnReadState,
 } from "./tools/documentOps";
 import { verifyDocumentCitations } from "./verifyCitations";
+import { getConfiguredModel } from "../llm/registry";
+import { analyzePlaybookChunks } from "./playbookChunking";
+import { spotlight } from "./contextBuilders";
 
 function isDingDuffMcpTool(tool: OpenAIToolSchema): boolean {
   const haystack = [
@@ -202,6 +205,8 @@ export async function runLLMStream(params: {
    *  here so that the same nonce fences both the system-prompt filenames
    *  (added by buildMessages) and the document bodies returned by tools. */
   nonce?: string;
+  /** Attached documents to analyze in isolated passes for local playbooks. */
+  playbookChunkDocumentIds?: string[];
 }): Promise<{
   fullText: string;
   events: AssistantEvent[];
@@ -228,6 +233,7 @@ export async function runLLMStream(params: {
     projectId,
     userEmail,
     nonce,
+    playbookChunkDocumentIds,
   } = params;
   const userFeatures = await getUserFeatures(userId, db);
   const ironcladTools =
@@ -407,7 +413,70 @@ Use the available DingDuff MCP tool(s) for case retrieval, case reading, and cas
 
   const selectedModel = resolveUsableModel(model, DEFAULT_MAIN_MODEL, apiKeys);
 
+  const shouldChunkPlaybook =
+    playbookChunkDocumentIds?.length &&
+    getConfiguredModel(selectedModel)?.playbookChunking === true;
+
   try {
+    if (shouldChunkPlaybook) {
+      const documents = await Promise.all(
+        playbookChunkDocumentIds.map(async (docId) => ({
+          id: docId,
+          filename: docStore.get(docId)?.filename ?? docId,
+          text: await readDocumentContent(
+            docId,
+            docStore,
+            write,
+            docIndex,
+            db,
+            { maxChars: Number.MAX_SAFE_INTEGER },
+          ),
+        })),
+      );
+      for (const document of documents) {
+        events.push({
+          type: "doc_read",
+          filename: document.filename,
+          document_id: docIndex[document.id]?.document_id,
+        });
+      }
+      const chunkSummaries = await analyzePlaybookChunks({
+        documents,
+        signal,
+        runPass: async ({ documentId, filename, index, total, text }) => {
+          let summary = "";
+          await streamChatWithTools({
+            model: selectedModel,
+            systemPrompt: `${systemPrompt}\n\nCHUNKED PLAYBOOK REVIEW: Analyze only the supplied document chunk. Do not call document-reading tools. Return a concise factual analysis with exact quotes and locations relevant to the user's request. This is an intermediate result, not the final answer.`,
+            messages: [
+              ...chatMessages,
+              {
+                role: "user",
+                content: `DOCUMENT CHUNK ${index + 1} OF ${total} (${filename}, ${documentId}):\n${nonce ? spotlight(text, nonce) : text}`,
+              },
+            ],
+            tools: [],
+            maxIterations: 0,
+            apiKeys,
+            enableThinking: true,
+            abortSignal: signal,
+            callbacks: {
+              onContentDelta: (delta) => {
+                summary += delta;
+              },
+            },
+          });
+          return summary;
+        },
+      });
+      if (chunkSummaries.length) {
+        chatMessages.push({
+          role: "user",
+          content: `The attached document was analyzed in independent chunks. Use these intermediate results to produce one coherent final answer. Do not call read_document or fetch_documents for the chunked attached document; doing so would reintroduce the full document into context. You may still use other available tools when needed.\n\n${chunkSummaries.join("\n\n")}`,
+        });
+      }
+    }
+
     throwIfAborted(signal);
     await streamChatWithTools({
       model: selectedModel,
@@ -636,6 +705,7 @@ Use the available DingDuff MCP tool(s) for case retrieval, case reading, and cas
         pending = label
           ? readDocumentContent(label, docStore, () => {}, docIndex, db, {
               emitEvents: false,
+              maxChars: Number.MAX_SAFE_INTEGER,
             })
           : Promise.resolve("");
         sourceTextByDocId.set(docId, pending);
