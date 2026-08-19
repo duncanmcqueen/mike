@@ -83,7 +83,7 @@ function defaultConfiguredModels(): ConfiguredModel[] {
       label: "Qwen 3.8 (local)",
       provider: "openai-compatible",
       location: "local",
-      apiModel: "/home/dwmcqueen/vulcan/models/frosty40-qwen3.8-27b/Qwen3.8-27B-Q6_K-OQ8-MTP.gguf",
+      apiModel: "/home/dwmcqueen/vulcan/models/jackrong-qwen3.8-27b/Qwen3.8-27B-MTP-Q4_K_M.gguf",
       baseUrl: "http://192.168.9.142:9091/v1",
       // Qwen's reasoning mode can consume the entire local generation budget
       // on large document reviews before producing visible content.
