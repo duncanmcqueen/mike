@@ -5,6 +5,7 @@ import {
   isModelAvailable,
   modelDisplayName,
   openRouterModelOptions,
+  syntheticModelOptions,
   vercelModelOptions,
   STATIC_MODELS,
   type ModelGroup,
@@ -24,6 +25,7 @@ const GROUPS: ModelGroup[] = [
   "OpenAI",
   "OpenRouter",
   "Vercel AI Gateway",
+  "Synthetic",
   "Local",
 ];
 
@@ -34,6 +36,7 @@ export function ModelToggle({
   keyStatusLoading = false,
   openRouterModels,
   vercelModels,
+  syntheticModels,
 }: {
   value: string;
   onChange: (model: string) => void;
@@ -43,6 +46,7 @@ export function ModelToggle({
   keyStatusLoading?: boolean;
   openRouterModels: string[];
   vercelModels: string[];
+  syntheticModels: string[];
 }): React.ReactElement {
   const [open, setOpen] = useState(false);
   const [expandedGroup, setExpandedGroup] = useState<ModelGroup | null>(null);
@@ -63,15 +67,28 @@ export function ModelToggle({
   const models = useMemo(() => {
     const openRouterOptions = openRouterModelOptions(openRouterModels);
     const vercelOptions = vercelModelOptions(vercelModels);
+    const syntheticOptions = syntheticModelOptions(syntheticModels);
     const localOptions = ollamaModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),
     }));
-    return [...STATIC_MODELS, ...openRouterOptions, ...vercelOptions, ...localOptions].filter(
+    return [
+      ...STATIC_MODELS,
+      ...openRouterOptions,
+      ...vercelOptions,
+      ...syntheticOptions,
+      ...localOptions,
+    ].filter(
       (model) =>
         model.group === "Local" || isModelAvailable(model.id, keyStatus),
     );
-  }, [keyStatus, ollamaModels, openRouterModels, vercelModels]);
+  }, [
+    keyStatus,
+    ollamaModels,
+    openRouterModels,
+    vercelModels,
+    syntheticModels,
+  ]);
   const availableGroups = useMemo(
     () =>
       GROUPS.filter((group) =>

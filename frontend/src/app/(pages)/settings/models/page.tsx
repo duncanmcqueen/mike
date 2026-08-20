@@ -20,6 +20,7 @@ import {
     canonicalModelId,
     openRouterModelOptions,
     useConfiguredModelOptions,
+    syntheticModelOptions,
     vercelModelOptions,
     type ModelOption,
 } from "@/app/components/assistant/ModelToggle";
@@ -53,6 +54,9 @@ export default function ModelPreferencesPage() {
     const selectedOpenRouterOptions =
         openRouterModelOptions(openRouterSelection);
     const selectedVercelOptions = vercelModelOptions(vercelSelection);
+    const selectedSyntheticOptions = syntheticModelOptions(
+        profile?.syntheticModels ?? [],
+    );
 
     useEffect(() => {
         return () => {
@@ -110,6 +114,7 @@ export default function ModelPreferencesPage() {
                                 ...settingsOptions,
                                 ...selectedOpenRouterOptions,
                                 ...selectedVercelOptions,
+                                ...selectedSyntheticOptions,
                                 ...ollamaModels,
                             ]}
                             apiKeys={profile?.apiKeys}
@@ -138,6 +143,7 @@ export default function ModelPreferencesPage() {
                                 ...chatOptions,
                                 ...selectedOpenRouterOptions,
                                 ...selectedVercelOptions,
+                                ...selectedSyntheticOptions,
                                 ...ollamaModels,
                             ]}
                             apiKeys={profile?.apiKeys}
@@ -186,6 +192,7 @@ function ModelPreferenceDropdown({
         "OpenRouter",
         "Vercel AI Gateway",
         "OpenCode Go",
+        "Synthetic",
     ];
     const availableGroups = groups.flatMap((group) => {
         const items = availableOptions.filter((model) => model.group === group);

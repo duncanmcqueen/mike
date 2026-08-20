@@ -485,6 +485,7 @@ function providerLabel(provider: Provider | keyof UserApiKeys): string {
     if (provider === "kimi") return "Moonshot (Kimi)";
     if (provider === "openai-compatible") return "OpenAI-compatible";
     if (provider === "vercel") return "Vercel AI Gateway";
+    if (provider === "synthetic") return "Synthetic";
     if (provider === "ollama") return "Ollama";
     return "Gemini";
 }

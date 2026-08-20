@@ -12,6 +12,7 @@ import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextIn
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
     getOpenRouterModels,
+    getSyntheticModels,
     getVercelModels,
     type RouterCatalogModel,
 } from "@/app/lib/mikeApi";
@@ -55,30 +56,57 @@ const CATALOG_MODEL_ID_RE = /^[^\s/]+\/[^\s]+$/;
  */
 export const MAX_MODEL_ID_LENGTH = 200;
 
+type RouterSlug = "openrouter" | "vercel" | "synthetic";
+
+/**
+ * A router's catalog-id shape, and how the placeholder/error text names it.
+ * OpenRouter and Vercel publish vendor/model pairs; Synthetic publishes
+ * "syn:large:text" and "hf:zai-org/GLM-5.2". Mirrors the backend's
+ * ROUTER_MODEL_ID_RE in routes/user.ts.
+ */
+const ROUTER_MODEL_ID: Record<
+    RouterSlug,
+    { pattern: RegExp; shape: string; example: string }
+> = {
+    openrouter: {
+        pattern: CATALOG_MODEL_ID_RE,
+        shape: "vendor/model",
+        example: "anthropic/claude-sonnet-5",
+    },
+    vercel: {
+        pattern: CATALOG_MODEL_ID_RE,
+        shape: "vendor/model",
+        example: "anthropic/claude-sonnet-5",
+    },
+    synthetic: {
+        pattern: /^[^\s]+$/,
+        shape: "a model name with no spaces",
+        example: "hf:zai-org/GLM-5.2",
+    },
+};
+
 /**
  * The id a typed string would become, before it is validated. The router slug
- * is stripped only when the remainder is still a full vendor/model id: some
+ * is stripped only when the remainder is still a valid catalog id: some
  * catalog ids legitimately start with the router's own slug (OpenRouter's
  * "openrouter/auto", Vercel's "vercel/v0-1.5-md") and must be kept verbatim —
  * mirrors the backend's normalizeRouterModels.
  */
-function typedModelCandidate(
-    input: string,
-    provider: "openrouter" | "vercel",
-): string {
+function typedModelCandidate(input: string, provider: RouterSlug): string {
     const raw = input.trim();
+    const { pattern } = ROUTER_MODEL_ID[provider];
     const stripped = raw.replace(new RegExp(`^${provider}/`), "");
-    return CATALOG_MODEL_ID_RE.test(stripped) ? stripped : raw;
+    return pattern.test(stripped) ? stripped : raw;
 }
 
 /** Canonical form of a hand-typed model id, or null when it is not usable. */
 export function normalizeTypedModelId(
     input: string,
-    provider: "openrouter" | "vercel",
+    provider: RouterSlug,
 ): string | null {
     const model = typedModelCandidate(input, provider);
     if (model.length > MAX_MODEL_ID_LENGTH) return null;
-    return CATALOG_MODEL_ID_RE.test(model) ? model : null;
+    return ROUTER_MODEL_ID[provider].pattern.test(model) ? model : null;
 }
 
 function catalogModelMatches(model: RouterCatalogModel, query: string) {
@@ -94,12 +122,16 @@ export function RouterSettingsSection() {
         profile,
         updateOpenRouterModels,
         updateVercelModels,
+        updateSyntheticModels,
     } = useUserProfile();
     const openRouterConfigured =
         profile?.apiKeys.openrouter.configured === true;
     const vercelConfigured = profile?.apiKeys.vercel.configured === true;
+    const syntheticConfigured = profile?.apiKeys.synthetic.configured === true;
 
-    if (!openRouterConfigured && !vercelConfigured) return null;
+    if (!openRouterConfigured && !vercelConfigured && !syntheticConfigured) {
+        return null;
+    }
 
     return (
         <section className="space-y-3">
@@ -125,6 +157,15 @@ export function RouterSettingsSection() {
                         onSave={updateVercelModels}
                     />
                 )}
+                {syntheticConfigured && (
+                    <RouterModelsSetting
+                        provider="synthetic"
+                        label="Synthetic"
+                        selection={profile?.syntheticModels ?? []}
+                        loadCatalog={getSyntheticModels}
+                        onSave={updateSyntheticModels}
+                    />
+                )}
             </SettingsSection>
         </section>
     );
@@ -137,7 +178,7 @@ function RouterModelsSetting({
     loadCatalog,
     onSave,
 }: {
-    provider: "openrouter" | "vercel";
+    provider: RouterSlug;
     label: string;
     selection: string[];
     loadCatalog: () => Promise<RouterCatalogModel[]>;
@@ -224,7 +265,7 @@ function RouterModelsSetting({
             setError(
                 candidate.length > MAX_MODEL_ID_LENGTH
                     ? `Model IDs are at most ${MAX_MODEL_ID_LENGTH} characters.`
-                    : `"${candidate}" is not a model ID — pick one from the list, or type it as vendor/model.`,
+                    : `"${candidate}" is not a model ID — pick one from the list, or type it as ${ROUTER_MODEL_ID[provider].shape}.`,
             );
             return;
         }
@@ -373,7 +414,7 @@ function RouterModelsSetting({
                         }
                         value={input}
                         disabled={saving}
-                        placeholder="e.g. anthropic/claude-sonnet-5"
+                        placeholder={`e.g. ${ROUTER_MODEL_ID[provider].example}`}
                         className="h-full min-w-0 flex-1 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
                         onChange={(event) => {
                             setInput(event.target.value);

@@ -46,6 +46,7 @@ interface UserProfile {
     quickActionsVisible: boolean;
     openRouterModels: string[];
     vercelModels: string[];
+    syntheticModels: string[];
     apiKeys: ApiKeyState;
 }
 
@@ -79,6 +80,7 @@ interface UserProfileContextType {
     updateQuickActionsVisible: (visible: boolean) => Promise<boolean>;
     updateOpenRouterModels: (models: string[]) => Promise<boolean>;
     updateVercelModels: (models: string[]) => Promise<boolean>;
+    updateSyntheticModels: (models: string[]) => Promise<boolean>;
     updateApiKey: (
         provider: ApiKeyProvider,
         value: string | null,
@@ -99,6 +101,7 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
     "openrouter",
     "vercel",
     "opencodego",
+    "synthetic",
     "courtlistener",
 ];
 
@@ -111,6 +114,7 @@ function emptyApiKeys(): ApiKeyState {
         openrouter: { configured: false, source: null },
         vercel: { configured: false, source: null },
         opencodego: { configured: false, source: null },
+        synthetic: { configured: false, source: null },
         courtlistener: { configured: false, source: null },
     };
 }
@@ -143,6 +147,9 @@ function toProfile(data: ApiUserProfile): UserProfile {
             : [],
         vercelModels: Array.isArray(profile.vercelModels)
             ? profile.vercelModels
+            : [],
+        syntheticModels: Array.isArray(profile.syntheticModels)
+            ? profile.syntheticModels
             : [],
         apiKeys,
     };
@@ -197,6 +204,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 quickActionsVisible: true,
                 openRouterModels: [],
                 vercelModels: [],
+                syntheticModels: [],
                 apiKeys: emptyApiKeys(),
             });
         } finally {
@@ -422,6 +430,22 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [user],
     );
 
+    const updateSyntheticModels = useCallback(
+        async (syntheticModels: string[]): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const updated = await updateUserProfile({ syntheticModels });
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user],
+    );
+
     const updateApiKey = useCallback(
         async (
             provider: ApiKeyProvider,
@@ -490,6 +514,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateQuickActionsVisible,
                 updateOpenRouterModels,
                 updateVercelModels,
+                updateSyntheticModels,
                 updateApiKey,
                 reloadProfile,
                 incrementMessageCredits,

@@ -7,6 +7,8 @@ import {
     completeOpenRouterText,
     streamVercel,
     completeVercelText,
+    streamSynthetic,
+    completeSyntheticText,
 } from "./openrouter";
 import { providerForModel } from "./models";
 import { completeOpenAICompatibleText, streamOpenAICompatible } from "./openaiCompatible";
@@ -27,6 +29,7 @@ export async function streamChatWithTools(
     if (provider === "openai-compatible") return streamOpenAICompatible(params);
     if (provider === "openrouter") return streamOpenRouter(params);
     if (provider === "vercel") return streamVercel(params);
+    if (provider === "synthetic") return streamSynthetic(params);
     if (provider === "ollama") return streamOllama(params);
     return streamGemini(params);
 }
@@ -64,6 +67,7 @@ export async function completeText(params: {
     }
     if (provider === "openrouter") return completeOpenRouterText(params);
     if (provider === "vercel") return completeVercelText(params);
+    if (provider === "synthetic") return completeSyntheticText(params);
     if (provider === "ollama") return completeOllamaText(params);
     return completeGeminiText(params);
 }

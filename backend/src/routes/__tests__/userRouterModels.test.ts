@@ -4,11 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
     getUserApiKeyStatus,
-    getUserRouterModels,
+    getAllUserRouterModels,
     replaceUserRouterModels,
 } = vi.hoisted(() => ({
     getUserApiKeyStatus: vi.fn(),
-    getUserRouterModels: vi.fn(),
+    getAllUserRouterModels: vi.fn(),
     replaceUserRouterModels: vi.fn(),
 }));
 
@@ -63,7 +63,9 @@ vi.mock("../../lib/userApiKeys", () => ({
     saveUserApiKey: vi.fn(),
 }));
 vi.mock("../../lib/routerModels", () => ({
-    getUserRouterModels: (...args: unknown[]) => getUserRouterModels(...args),
+    ROUTER_SLUGS: ["openrouter", "vercel", "synthetic"],
+    getAllUserRouterModels: (...args: unknown[]) =>
+        getAllUserRouterModels(...args),
     replaceUserRouterModels: (...args: unknown[]) =>
         replaceUserRouterModels(...args),
 }));
@@ -116,6 +118,7 @@ const API_KEY_STATUS = {
     openai: false,
     openrouter: true,
     vercel: true,
+    synthetic: true,
     courtlistener: false,
     sources: {
         claude: null,
@@ -123,6 +126,7 @@ const API_KEY_STATUS = {
         openai: null,
         openrouter: "user",
         vercel: "user",
+        synthetic: "user",
         courtlistener: null,
     },
 };
@@ -130,7 +134,11 @@ const API_KEY_STATUS = {
 beforeEach(() => {
     vi.clearAllMocks();
     getUserApiKeyStatus.mockResolvedValue(API_KEY_STATUS);
-    getUserRouterModels.mockResolvedValue([]);
+    getAllUserRouterModels.mockResolvedValue({
+        openrouter: [],
+        vercel: [],
+        synthetic: [],
+    });
     replaceUserRouterModels.mockResolvedValue(undefined);
 });
 
@@ -209,6 +217,27 @@ describe("PATCH /user/profile router model selections", () => {
 
         expect(response.status).toBe(400);
         expect(replaceUserRouterModels).not.toHaveBeenCalled();
+    });
+});
+
+describe("PATCH /user/profile Synthetic selections", () => {
+    it("keeps colon-bearing catalog ids whole", async () => {
+        const response = await request(app)
+            .patch("/user/profile")
+            .send({
+                syntheticModels: [
+                    "syn:large:text",
+                    "synthetic/hf:zai-org/GLM-5.2",
+                ],
+            });
+
+        expect(response.status).toBe(200);
+        expect(replaceUserRouterModels).toHaveBeenCalledWith(
+            "user-1",
+            "synthetic",
+            ["syn:large:text", "hf:zai-org/GLM-5.2"],
+            expect.anything(),
+        );
     });
 });
 

@@ -29,6 +29,7 @@ export interface ModelOption {
         | "OpenRouter"
         | "Vercel AI Gateway"
         | "OpenCode Go"
+        | "Synthetic"
         | "Local"
         | "Committee";
 }
@@ -97,7 +98,7 @@ const MODEL_NAME_ACRONYMS: Record<string, string> = {
 
 export function modelDisplayName(modelId: string): string {
     const normalized = modelId
-        .replace(/^(?:openrouter|vercel|ollama)\//, "")
+        .replace(/^(?:openrouter|vercel|synthetic|ollama)\//, "")
         .split("/")
         .at(-1)!
         .replace(/(\d)-(\d)/g, "$1.$2");
@@ -133,6 +134,7 @@ const GROUP_ORDER: ModelOption["group"][] = [
     "OpenRouter",
     "Vercel AI Gateway",
     "OpenCode Go",
+    "Synthetic",
 ];
 const itemClassName =
     "rounded-xl px-2.5 py-1.5 text-gray-700 focus:bg-app-surface-hover focus:text-gray-900 data-[highlighted]:bg-app-surface-hover data-[highlighted]:text-gray-900";
@@ -232,6 +234,7 @@ interface Props {
     apiKeysLoading?: boolean;
     openRouterModels?: string[];
     vercelModels?: string[];
+    syntheticModels?: string[];
     compact?: boolean;
 }
 
@@ -251,6 +254,31 @@ export function vercelModelOptions(models: string[]): ModelOption[] {
     }));
 }
 
+/**
+ * Synthetic ids come in two families and neither survives the generic helper:
+ * a pinned "hf:<vendor>/<model>" (the "hf:" is noise once the group header
+ * says Synthetic) and a floating alias "syn:<size>:<capability>", whose colons
+ * the generic helper reads as a variant suffix — "syn:large:text" rendered as
+ * "Syn (Large:text)". Aliases are labelled from their own segments instead.
+ */
+export function syntheticModelDisplayName(model: string): string {
+    if (model.startsWith("syn:")) {
+        const [size, ...rest] = model.slice("syn:".length).split(":");
+        if (!size) return model;
+        const name = modelDisplayName(size);
+        return rest.length ? `${name} (${rest.join(", ")})` : name;
+    }
+    return modelDisplayName(model.replace(/^hf:/, ""));
+}
+
+export function syntheticModelOptions(models: string[]): ModelOption[] {
+    return models.map((model) => ({
+        id: `synthetic/${model}`,
+        label: syntheticModelDisplayName(model),
+        group: "Synthetic",
+    }));
+}
+
 export function ModelToggle({
     value,
     onChange,
@@ -258,6 +286,7 @@ export function ModelToggle({
     apiKeysLoading = false,
     openRouterModels = [],
     vercelModels = [],
+    syntheticModels = [],
     compact = false,
 }: Props) {
     const [isOpen, setIsOpen] = useState(false);
@@ -269,6 +298,7 @@ export function ModelToggle({
         ...configuredModels,
         ...openRouterModelOptions(openRouterModels),
         ...vercelModelOptions(vercelModels),
+        ...syntheticModelOptions(syntheticModels),
     ];
     const availableModels = models.filter((model) => {
         // Local and committee models are served without a hosted API key.

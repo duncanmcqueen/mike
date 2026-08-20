@@ -9,6 +9,7 @@ const { getOpenRouterModels, updateOpenRouterModels } = vi.hoisted(() => ({
 vi.mock("@/app/lib/mikeApi", () => ({
     getOpenRouterModels,
     getVercelModels: vi.fn().mockResolvedValue([]),
+    getSyntheticModels: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/app/contexts/UserProfileContext", () => ({
@@ -17,12 +18,15 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
             apiKeys: {
                 openrouter: { configured: true, source: "user" },
                 vercel: { configured: false, source: null },
+                synthetic: { configured: false, source: null },
             },
             openRouterModels: ["anthropic/claude-sonnet-4.5"],
             vercelModels: [],
+            syntheticModels: [],
         },
         updateOpenRouterModels,
         updateVercelModels: vi.fn(),
+        updateSyntheticModels: vi.fn(),
     }),
 }));
 

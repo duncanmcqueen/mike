@@ -3,13 +3,24 @@ import { resolveModel } from "./llm/models";
 
 type Db = ReturnType<typeof createServerDatabase>;
 
-export type RouterSlug = "openrouter" | "vercel";
+export type RouterSlug = "openrouter" | "vercel" | "synthetic";
+
+/**
+ * Every router, in the order the settings UI lists them. A router's slug is
+ * also its model-id prefix and its API-key provider name.
+ */
+export const ROUTER_SLUGS: readonly RouterSlug[] = [
+    "openrouter",
+    "vercel",
+    "synthetic",
+];
+
+/** One saved model selection per router. */
+export type RouterModelSelections = Record<RouterSlug, string[]>;
 
 /** The router a namespaced app-level model id routes through, if any. */
 export function routerForModelId(model: string): RouterSlug | null {
-    if (model.startsWith("openrouter/")) return "openrouter";
-    if (model.startsWith("vercel/")) return "vercel";
-    return null;
+    return ROUTER_SLUGS.find((slug) => model.startsWith(`${slug}/`)) ?? null;
 }
 
 /**
@@ -19,21 +30,18 @@ export function routerForModelId(model: string): RouterSlug | null {
  */
 export function isRouterModelSelected(
     model: string,
-    openRouterModels: string[],
-    vercelModels: string[],
+    selections: RouterModelSelections,
 ): boolean {
     const router = routerForModelId(model);
     if (!router) return true;
-    const catalogId = model.slice(router.length + 1);
-    const selection =
-        router === "openrouter" ? openRouterModels : vercelModels;
-    return selection.includes(catalogId);
+    return selections[router].includes(model.slice(router.length + 1));
 }
 
 /** Router labels as the settings UI names them, for user-facing messages. */
 const ROUTER_LABELS: Record<RouterSlug, string> = {
     openrouter: "OpenRouter",
     vercel: "Vercel AI Gateway",
+    synthetic: "Synthetic",
 };
 
 /**
@@ -103,6 +111,19 @@ function isMissingRouterModelsTable(error: unknown): boolean {
 }
 
 let warnedMissingTable = false;
+
+/** Every router's saved selection for a user, in one round of queries. */
+export async function getAllUserRouterModels(
+    userId: string,
+    db: Db = createServerDatabase(),
+): Promise<RouterModelSelections> {
+    const selections = await Promise.all(
+        ROUTER_SLUGS.map((slug) => getUserRouterModels(userId, slug, db)),
+    );
+    return Object.fromEntries(
+        ROUTER_SLUGS.map((slug, index) => [slug, selections[index]]),
+    ) as RouterModelSelections;
+}
 
 export async function getUserRouterModels(
     userId: string,

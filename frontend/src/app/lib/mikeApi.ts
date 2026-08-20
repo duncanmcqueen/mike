@@ -530,6 +530,7 @@ export interface UserProfile {
     quickActionsVisible: boolean;
     openRouterModels: string[];
     vercelModels: string[];
+    syntheticModels: string[];
     apiKeyStatus: ApiKeyStatus;
 }
 
@@ -638,6 +639,7 @@ export async function updateUserProfile(payload: {
     quickActionsVisible?: boolean;
     openRouterModels?: string[];
     vercelModels?: string[];
+    syntheticModels?: string[];
 }): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile", {
         method: "PATCH",
@@ -678,6 +680,7 @@ export type ApiKeyProvider =
     | "openrouter"
     | "vercel"
     | "opencodego"
+    | "synthetic"
     | "courtlistener";
 export type ApiKeySource = "user" | "env" | null;
 export type ApiKeyState = Record<
@@ -729,6 +732,13 @@ export async function getOllamaModels(): Promise<OllamaModelOption[]> {
 export async function getOpenRouterModels(): Promise<RouterCatalogModel[]> {
     const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
         "/models/openrouter",
+    );
+    return models;
+}
+
+export async function getSyntheticModels(): Promise<RouterCatalogModel[]> {
+    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
+        "/models/synthetic",
     );
     return models;
 }

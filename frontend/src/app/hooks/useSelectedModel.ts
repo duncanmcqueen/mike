@@ -21,7 +21,8 @@ export function isAllowedModelId(id: string): boolean {
         id.startsWith("ollama/") ||
         id.startsWith("openrouter/") ||
         id.startsWith("vercel/") ||
-        id.startsWith("opencode-go/")
+        id.startsWith("opencode-go/") ||
+        id.startsWith("synthetic/")
     );
 }
 
@@ -78,11 +79,13 @@ export function useSelectedModel(
     routerSelections?: {
         openRouterModels: string[];
         vercelModels: string[];
+        syntheticModels: string[];
     } | null,
 ): [string, (id: string) => void] {
     const [model, setModelState] = useState<string>(DEFAULT_MODEL_ID);
     const openRouterModels = routerSelections?.openRouterModels;
     const vercelModels = routerSelections?.vercelModels;
+    const syntheticModels = routerSelections?.syntheticModels;
 
     useEffect(() => {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- hydration-safe localStorage read; SSR must render the default model
@@ -90,7 +93,7 @@ export function useSelectedModel(
     }, []);
 
     useEffect(() => {
-        if (!openRouterModels || !vercelModels) return;
+        if (!openRouterModels || !vercelModels || !syntheticModels) return;
         // eslint-disable-next-line react-hooks/set-state-in-effect -- reconciles state with data that arrives asynchronously (the loaded router lists); the functional update is a no-op unless the stored selection is genuinely stale, so it cannot cascade
         setModelState((current) => {
             const router = current.startsWith("openrouter/")
@@ -100,14 +103,18 @@ export function useSelectedModel(
                   : null;
             if (!router) return current;
             const selection =
-                router === "openrouter" ? openRouterModels : vercelModels;
+                router === "openrouter"
+                    ? openRouterModels
+                    : router === "vercel"
+                      ? vercelModels
+                      : syntheticModels;
             if (selection.includes(current.slice(router.length + 1))) {
                 return current;
             }
             persist(DEFAULT_MODEL_ID);
             return DEFAULT_MODEL_ID;
         });
-    }, [openRouterModels, vercelModels]);
+    }, [openRouterModels, vercelModels, syntheticModels]);
 
     const setModel = useCallback((id: string) => {
         const canonical = canonicalModelId(id);

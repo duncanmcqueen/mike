@@ -429,7 +429,13 @@ type ModelAvailability =
   | { available: false; reason: string };
 
 function providerKeyName(
-  provider: "claude" | "gemini" | "openai" | "openrouter" | "vercel",
+  provider:
+    | "claude"
+    | "gemini"
+    | "openai"
+    | "openrouter"
+    | "vercel"
+    | "synthetic",
 ): keyof UserApiKeys {
   return provider;
 }
@@ -442,6 +448,7 @@ function providerDisplayName(provider: keyof UserApiKeys): string {
   if (provider === "openrouter") return "OpenRouter";
   if (provider === "vercel") return "Vercel AI Gateway";
   if (provider === "opencodego") return "OpenCode Go";
+  if (provider === "synthetic") return "Synthetic";
   return "CourtListener";
 }
 

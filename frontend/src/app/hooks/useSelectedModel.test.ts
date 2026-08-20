@@ -39,6 +39,7 @@ describe("useSelectedModel", () => {
             useSelectedModel({
                 openRouterModels: ["openai/gpt-5.4"],
                 vercelModels: [],
+                syntheticModels: [],
             }),
         );
 
@@ -52,6 +53,7 @@ describe("useSelectedModel", () => {
             useSelectedModel({
                 openRouterModels: ["openai/gpt-5.4"],
                 vercelModels: [],
+                syntheticModels: [],
             }),
         );
 

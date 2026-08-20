@@ -13,6 +13,7 @@ const { profileContext } = vi.hoisted(() => ({
             tabularModel: "gemini-3-flash-preview",
             openRouterModels: [],
             vercelModels: [],
+            syntheticModels: [],
             apiKeys: {
                 claude: { configured: false, source: null },
                 gemini: { configured: true, source: "user" },

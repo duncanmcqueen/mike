@@ -16,6 +16,7 @@ export type ModelGroup =
   | "OpenRouter"
   | "Vercel AI Gateway"
   | "OpenCode Go"
+  | "Synthetic"
   | "Local"
   | "Committee";
 
@@ -77,7 +78,7 @@ const MODEL_NAME_ACRONYMS: Record<string, string> = {
 
 export function modelDisplayName(modelId: string): string {
   const normalized = modelId
-    .replace(/^(?:openrouter|vercel|ollama)\//, "")
+    .replace(/^(?:openrouter|vercel|synthetic|ollama)\//, "")
     .split("/")
     .at(-1)!
     .replace(/(\d)-(\d)/g, "$1.$2");
@@ -124,13 +125,33 @@ export function vercelModelOptions(models: string[]): ModelOption[] {
   }));
 }
 
+/** Mirrors the web app's syntheticModelDisplayName — see the drift guard. */
+export function syntheticModelDisplayName(model: string): string {
+  if (model.startsWith("syn:")) {
+    const [size, ...rest] = model.slice("syn:".length).split(":");
+    if (!size) return model;
+    const name = modelDisplayName(size);
+    return rest.length ? `${name} (${rest.join(", ")})` : name;
+  }
+  return modelDisplayName(model.replace(/^hf:/, ""));
+}
+
+export function syntheticModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `synthetic/${model}`,
+    label: syntheticModelDisplayName(model),
+    group: "Synthetic",
+  }));
+}
+
 export function isAllowedModelId(id: string): boolean {
   return (
     ALLOWED_MODEL_IDS.has(id) ||
     id.startsWith("ollama/") ||
     id.startsWith("openrouter/") ||
     id.startsWith("vercel/") ||
-    id.startsWith("opencode-go/")
+    id.startsWith("opencode-go/") ||
+    id.startsWith("synthetic/")
   );
 }
 
@@ -147,6 +168,7 @@ export function isModelAvailable(
   if (modelId.startsWith("openrouter/")) return !!status.openrouter;
   if (modelId.startsWith("vercel/")) return !!status.vercel;
   if (modelId.startsWith("opencode-go/")) return !!status.opencodego;
+  if (modelId.startsWith("synthetic/")) return !!status.synthetic;
   const model = STATIC_MODELS.find((item) => item.id === modelId);
   if (!model || model.group === "Local" || model.group === "Committee") {
     return false;
@@ -164,6 +186,9 @@ export function missingModelProvider(modelId: string): string {
   }
   if (modelId.startsWith("vercel/") || group === "Vercel AI Gateway") {
     return "Vercel AI Gateway";
+  }
+  if (modelId.startsWith("synthetic/") || group === "Synthetic") {
+    return "Synthetic";
   }
   return group === "Anthropic"
     ? "Anthropic"
