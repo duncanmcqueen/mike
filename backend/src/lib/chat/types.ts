@@ -78,7 +78,12 @@ export type ToolCall = {
 export type ChatMessage = {
   role: string;
   content: string | null;
-  files?: { filename: string; document_id?: string }[];
+  files?: {
+    filename: string;
+    document_id?: string;
+    version_id?: string;
+    version_number?: number;
+  }[];
   workflow?: { id: string; title: string };
   playbook?: { id: string; title: string; version: number; versionId: string };
 };
@@ -132,6 +137,8 @@ export type AskInputOption = {
   value: string;
 };
 
+export const MAX_ASK_INPUT_TEXT_LENGTH = 5_000;
+
 export type AskInputItem =
   | {
       id: string;
@@ -140,6 +147,12 @@ export type AskInputItem =
       options: AskInputOption[];
       allow_other: boolean;
       other_label: string;
+      response_prefix?: string;
+    }
+  | {
+      id: string;
+      kind: "text";
+      question: string;
       response_prefix?: string;
     }
   | {
@@ -158,6 +171,13 @@ export type AskInputResponseItem =
   | {
       id: string;
       kind: "choice";
+      question: string;
+      answer?: string;
+      skipped?: boolean;
+    }
+  | {
+      id: string;
+      kind: "text";
       question: string;
       answer?: string;
       skipped?: boolean;

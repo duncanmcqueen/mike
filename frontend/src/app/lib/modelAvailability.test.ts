@@ -13,28 +13,33 @@ const keys = (configured: {
     claude?: boolean;
     gemini?: boolean;
     openai?: boolean;
+    openrouter?: boolean;
+    vercel?: boolean;
+    opencodego?: boolean;
 }): ApiKeyState =>
     ({
         claude: { configured: !!configured.claude, source: null },
         gemini: { configured: !!configured.gemini, source: null },
         openai: { configured: !!configured.openai, source: null },
-        openrouter: { configured: false, source: null },
-        opencodego: { configured: false, source: null },
+        openrouter: { configured: !!configured.openrouter, source: null },
+        vercel: { configured: !!configured.vercel, source: null },
+        opencodego: { configured: !!configured.opencodego, source: null },
         courtlistener: { configured: false, source: null },
     }) as ApiKeyState;
 
 describe("getModelProvider", () => {
     it("maps each settings model to a provider via its group", () => {
+        expect(getModelProvider("claude-opus-5")).toBe("claude");
         expect(getModelProvider("claude-haiku-4-5")).toBe("claude");
+        expect(getModelProvider("gemini-3.7-flash")).toBe("gemini");
         expect(getModelProvider("gemini-3-flash-preview")).toBe("gemini");
-        expect(getModelProvider("gpt-5.4-lite")).toBe("openai");
+        expect(getModelProvider("gpt-5.6-sol")).toBe("openai");
         expect(getModelProvider("ollama/qwen3.6")).toBe("ollama");
-        expect(getModelProvider("openrouter/anthropic/claude-sonnet-4")).toBe(
+        expect(getModelProvider("openrouter/openai/gpt-5.4")).toBe(
             "openrouter",
         );
-        expect(getModelProvider("opencode-go/qwen3.8-max")).toBe(
-            "opencodego",
-        );
+        expect(getModelProvider("vercel/openai/gpt-5.4")).toBe("vercel");
+        expect(getModelProvider("opencode-go/qwen3.8-max")).toBe("opencodego");
     });
 
     it("resolves any ollama/-prefixed id without consulting SETTINGS_MODELS", () => {
@@ -57,12 +62,24 @@ describe("getModelProvider", () => {
 
 describe("isModelAvailable", () => {
     it("is true only when the model's provider has a configured key", () => {
+        expect(isModelAvailable("claude-fable-5", keys({ claude: true }))).toBe(
+            true,
+        );
+        expect(isModelAvailable("claude-fable-5", keys({ gemini: true }))).toBe(
+            false,
+        );
         expect(
-            isModelAvailable("claude-fable-5", keys({ claude: true })),
+            isModelAvailable(
+                "openrouter/anthropic/claude-sonnet-4.5",
+                keys({ openrouter: true }),
+            ),
         ).toBe(true);
         expect(
-            isModelAvailable("claude-fable-5", keys({ gemini: true })),
-        ).toBe(false);
+            isModelAvailable(
+                "vercel/anthropic/claude-sonnet-4.5",
+                keys({ vercel: true }),
+            ),
+        ).toBe(true);
     });
 
     it("allows an unknown model so server-managed dynamic models can resolve", () => {
@@ -139,6 +156,8 @@ describe("providerLabel", () => {
         expect(providerLabel("claude")).toBe("Anthropic (Claude)");
         expect(providerLabel("kimi")).toBe("Moonshot (Kimi)");
         expect(providerLabel("openai")).toBe("OpenAI");
+        expect(providerLabel("openrouter")).toBe("OpenRouter");
+        expect(providerLabel("vercel")).toBe("Vercel AI Gateway");
         expect(providerLabel("ollama")).toBe("Local (Ollama)");
         expect(providerLabel("gemini")).toBe("Google (Gemini)");
         expect(providerLabel("openrouter")).toBe("OpenRouter");
@@ -151,6 +170,9 @@ describe("modelGroupToProvider", () => {
         expect(modelGroupToProvider("Anthropic")).toBe("claude");
         expect(modelGroupToProvider("Moonshot")).toBe("kimi");
         expect(modelGroupToProvider("OpenAI")).toBe("openai");
+        expect(modelGroupToProvider("OpenRouter")).toBe("openrouter");
+        expect(modelGroupToProvider("Vercel AI Gateway")).toBe("vercel");
+        expect(modelGroupToProvider("OpenCode Go")).toBe("opencodego");
         expect(modelGroupToProvider("Local")).toBe("local");
         expect(modelGroupToProvider("Committee")).toBe("committee");
         expect(modelGroupToProvider("Google")).toBe("gemini");

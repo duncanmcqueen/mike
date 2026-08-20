@@ -58,7 +58,9 @@ test("shows frontend-style quick actions before any message is sent", async ({
     page.getByRole("heading", { name: "Hi, Test User" }),
   ).toBeVisible();
   await expect(page.getByText("Quick actions", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Proofread" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Proofread agreement" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Compare documents" }),
   ).toBeVisible();
@@ -91,6 +93,9 @@ test("uses a floating icon header with no logo, tabs, or visible sign-out button
   await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
 
   const header = page.getByTestId("floating-header");
+  await expect(header.getByRole("button", { name: "New chat" })).toHaveCount(
+    0,
+  );
   const chatInput = page.getByTestId("chat-input");
   const [headerBox, inputBox, headerPadding] = await Promise.all([
     header.boundingBox(),
@@ -1064,7 +1069,7 @@ test("opens a left-aligned source menu and selects web files from the document m
   addin,
   page,
 }) => {
-  await addin.mockApiJson("GET", "**/library/files", {
+  await addin.mockApiJson("GET", "**/library/files?*", {
     documents: [],
     folders: [],
   });
@@ -1116,11 +1121,42 @@ test("opens a left-aligned source menu and selects web files from the document m
   });
 
   await expect(modal.getByText("agreement.pdf")).toBeVisible();
-  await expect(modal.getByText("Date", { exact: true })).toBeVisible();
-  await expect(modal.getByText("Size", { exact: true })).toBeVisible();
-  await expect(modal.getByText("12 B", { exact: true })).toBeVisible();
+  await expect(modal.getByText("Date", { exact: true })).toHaveCount(0);
+  await expect(modal.getByText("Size", { exact: true })).toHaveCount(0);
+  await expect(modal.getByText("Name", { exact: true })).toHaveCount(0);
+  await expect(modal.getByText("12 B", { exact: true })).toHaveCount(0);
+  const tabsScroll = modal.getByTestId("document-tabs-scroll");
+  await expect(tabsScroll).toHaveCSS("padding-left", "8px");
+  await expect(tabsScroll).toHaveCSS("padding-top", "8px");
+  await expect(tabsScroll).toHaveCSS("overflow-x", "auto");
+  const [tabsScrollBox, filesTabBox] = await Promise.all([
+    tabsScroll.boundingBox(),
+    modal.getByRole("button", { name: "Files", exact: true }).boundingBox(),
+  ]);
+  expect(tabsScrollBox).not.toBeNull();
+  expect(filesTabBox).not.toBeNull();
+  expect(filesTabBox!.x - tabsScrollBox!.x).toBeGreaterThanOrEqual(8);
+  expect(filesTabBox!.y - tabsScrollBox!.y).toBeGreaterThanOrEqual(8);
   await expect(modal.locator('img[src*="/icons/pdf."]')).toBeVisible();
   const uploadedRow = modal.getByRole("button", { name: /agreement\.pdf/ });
+  const documentsScroll = modal.locator(".overflow-y-auto").last();
+  await expect(documentsScroll).toHaveCSS(
+    "padding-left",
+    "8px",
+  );
+  await expect(documentsScroll).toHaveCSS("margin-left", "-8px");
+  const [documentSearchBox, uploadedRowBox] = await Promise.all([
+    modal.getByPlaceholder("Search...").locator("..").boundingBox(),
+    uploadedRow.boundingBox(),
+  ]);
+  expect(documentSearchBox).not.toBeNull();
+  expect(uploadedRowBox).not.toBeNull();
+  expect(Math.abs(uploadedRowBox!.x - documentSearchBox!.x)).toBeLessThanOrEqual(
+    1,
+  );
+  expect(
+    Math.abs(uploadedRowBox!.width - documentSearchBox!.width),
+  ).toBeLessThanOrEqual(1);
   await expect(uploadedRow).toHaveAttribute("aria-pressed", "true");
   await uploadedRow.click();
   await expect(uploadedRow).toHaveAttribute("aria-pressed", "false");
@@ -1145,11 +1181,11 @@ test("attaches a library template from the Templates tab", async ({
   addin,
   page,
 }) => {
-  await addin.mockApiJson("GET", "**/library/files", {
+  await addin.mockApiJson("GET", "**/library/files?*", {
     documents: [],
     folders: [],
   });
-  await addin.mockApiJson("GET", "**/library/templates", {
+  await addin.mockApiJson("GET", "**/library/templates?*", {
     documents: [
       {
         id: "template-1",
@@ -1189,11 +1225,11 @@ test("expands a project and attaches one of its documents", async ({
   addin,
   page,
 }) => {
-  await addin.mockApiJson("GET", "**/library/files", {
+  await addin.mockApiJson("GET", "**/library/files?*", {
     documents: [],
     folders: [],
   });
-  await addin.mockApiJson("GET", "**/projects", [
+  await addin.mockApiJson("GET", "**/projects?*", [
     {
       id: "project-1",
       name: "Matter Atlas",
@@ -1202,15 +1238,19 @@ test("expands a project and attaches one of its documents", async ({
       document_count: 1,
     },
   ]);
-  await addin.mockApiJson("GET", "**/projects/project-1/documents", [
-    {
-      id: "project-doc-1",
-      filename: "Disclosure letter.pdf",
-      file_type: "pdf",
-      size_bytes: 1024,
-      created_at: "2026-08-08T00:00:00Z",
-    },
-  ]);
+  await addin.mockApiJson("GET", "**/projects/project-1/directory?*", {
+    documents: [
+      {
+        id: "project-doc-1",
+        filename: "Disclosure letter.pdf",
+        file_type: "pdf",
+        size_bytes: 1024,
+        created_at: "2026-08-08T00:00:00Z",
+      },
+    ],
+    folders: [],
+    documentsHasMore: false,
+  });
   await addin.mockChatStream(["Project document received."]);
   await addin.gotoTaskpane();
 
@@ -1236,13 +1276,13 @@ test("expands a project and attaches one of its documents", async ({
 });
 
 test("reports a Templates-tab load failure", async ({ addin, page }) => {
-  await addin.mockApiJson("GET", "**/library/files", {
+  await addin.mockApiJson("GET", "**/library/files?*", {
     documents: [],
     folders: [],
   });
   await addin.mockApiError(
     "GET",
-    "**/library/templates",
+    "**/library/templates?*",
     503,
     "Templates temporarily unavailable",
   );
@@ -1356,6 +1396,18 @@ test("selects a workflow from the add-workflow modal and attaches it to chat", a
   const contractWorkflow = modal.getByRole("button", {
     name: /Contract review/,
   });
+  const [workflowSearchBox, contractWorkflowBox] = await Promise.all([
+    modal.getByPlaceholder("Search workflows...").locator("..").boundingBox(),
+    contractWorkflow.boundingBox(),
+  ]);
+  expect(workflowSearchBox).not.toBeNull();
+  expect(contractWorkflowBox).not.toBeNull();
+  expect(
+    Math.abs(contractWorkflowBox!.x - workflowSearchBox!.x),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(contractWorkflowBox!.width - workflowSearchBox!.width),
+  ).toBeLessThanOrEqual(1);
   await expect(contractWorkflow.getByText("Commercial")).toBeVisible();
   await expect(contractWorkflow.locator("svg")).toHaveCount(0);
   await expect(modal.getByText("System", { exact: true })).toHaveCount(0);
@@ -1389,7 +1441,8 @@ test("model toggle sends the selected frontend model", async ({
   await addin.expectAuthedShell();
 
   await page.getByRole("button", { name: "Choose model" }).click();
-  await page.getByRole("menuitem", { name: /GPT-5\.4/ }).click();
+  await page.getByRole("menuitem", { name: "OpenAI", exact: true }).click();
+  await page.getByRole("menuitem", { name: "GPT-5.4", exact: true }).click();
   await page.getByPlaceholder("How can I help?").fill("Hello");
   const requestPromise = page.waitForRequest("**/word-chat");
   await page.getByRole("button", { name: "Send" }).click();
@@ -1403,7 +1456,7 @@ test("composer controls and workflow modal fit a narrow Word task pane", async (
 }) => {
   await page.setViewportSize({ width: 360, height: 760 });
   await addin.mockApiJson("GET", "**/workflows**", []);
-  await addin.mockApiJson("GET", "**/library/files", {
+  await addin.mockApiJson("GET", "**/library/files?*", {
     documents: [],
     folders: [],
   });
@@ -1419,6 +1472,9 @@ test("composer controls and workflow modal fit a narrow Word task pane", async (
   await expect(
     page.getByRole("button", { name: "Choose model" }),
   ).toBeVisible();
+  const sendButton = page.getByRole("button", { name: "Send" });
+  await expect(sendButton).toHaveClass(/rounded-\[11px\]/);
+  await expect(sendButton).toHaveClass(/border-0/);
 
   const placeholderBounds = await page
     .getByPlaceholder("How can I help?")
@@ -1603,11 +1659,15 @@ test("streams sealed edit cards into Word and resolves their exact revisions", a
     .first()
     .click();
   await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Scroll to bottom" }).click();
-  await page
+  const scrollToBottom = page.getByRole("button", {
+    name: "Scroll to bottom",
+  });
+  await expect(scrollToBottom).toBeVisible();
+  await scrollToBottom.click();
+  const rejectButton = page
     .getByRole("button", { name: "Reject", exact: true })
-    .first()
-    .click();
+    .first();
+  await rejectButton.click();
   await expect(page.getByText("Rejected.", { exact: true })).toBeVisible();
 
   calls = await addin.wordCalls();

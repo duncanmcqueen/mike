@@ -2,6 +2,12 @@ import { streamClaude, completeClaudeText } from "./claude";
 import { streamGemini, completeGeminiText } from "./gemini";
 import { streamOpenAI, completeOpenAIText } from "./openai";
 import { streamOllama, completeOllamaText } from "./ollama";
+import {
+    streamOpenRouter,
+    completeOpenRouterText,
+    streamVercel,
+    completeVercelText,
+} from "./openrouter";
 import { providerForModel } from "./models";
 import { completeOpenAICompatibleText, streamOpenAICompatible } from "./openaiCompatible";
 import { completeCommitteeText, isCommitteeId, streamCommitteeChat } from "./committee";
@@ -19,6 +25,8 @@ export async function streamChatWithTools(
     if (provider === "claude") return streamClaude(params);
     if (provider === "openai") return streamOpenAI(params);
     if (provider === "openai-compatible") return streamOpenAICompatible(params);
+    if (provider === "openrouter") return streamOpenRouter(params);
+    if (provider === "vercel") return streamVercel(params);
     if (provider === "ollama") return streamOllama(params);
     return streamGemini(params);
 }
@@ -54,6 +62,8 @@ export async function completeText(params: {
             plugins: params.plugins,
         });
     }
+    if (provider === "openrouter") return completeOpenRouterText(params);
+    if (provider === "vercel") return completeVercelText(params);
     if (provider === "ollama") return completeOllamaText(params);
     return completeGeminiText(params);
 }

@@ -1,10 +1,5 @@
 import type { CommitteeModel, ConfiguredModel, Provider } from "./types";
 import {
-  isOpenRouterModelId,
-  OPENROUTER_API_BASE_URL,
-  openRouterApiModel,
-} from "./openrouterCatalog";
-import {
   isOpenCodeGoModelId,
   OPENCODE_GO_API_BASE_URL,
   openCodeGoApiModel,
@@ -107,17 +102,9 @@ export function getConfiguredModel(id: string): ConfiguredModel | null {
   const configured =
     loadModelRegistry().models?.find((model) => model.id === id) ?? null;
   if (configured) return configured;
-  if (isOpenRouterModelId(id)) {
-    return {
-      id,
-      label: openRouterApiModel(id) ?? id,
-      provider: "openai-compatible",
-      location: "cloud",
-      apiModel: openRouterApiModel(id) ?? id,
-      baseUrl: OPENROUTER_API_BASE_URL,
-      apiKeyProvider: "openrouter",
-    };
-  }
+  // "openrouter/…" and "vercel/…" ids are NOT registry models: they route
+  // through the first-class openrouter/vercel providers, which additionally
+  // gate on the user's saved router selection (see lib/routerModels.ts).
   if (isOpenCodeGoModelId(id)) {
     return {
       id,

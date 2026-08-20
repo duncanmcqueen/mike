@@ -7,12 +7,9 @@ import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
     disconnectGmail,
     getGmailStatus,
-    listQuickActions,
     startGmailOAuth,
-    updateQuickAction,
     type GmailStatus,
 } from "@/app/lib/mikeApi";
-import type { QuickAction } from "@/app/components/shared/types";
 import {
     deploymentModuleEnabled,
     featureEnabled,
@@ -29,12 +26,13 @@ export default function FeaturesPage() {
         updateLegalResearchUs,
         updateEmailIntegration,
         updateFeatureFlag,
+        updateQuickActionsVisible,
     } = useUserProfile();
-    const [quickActions, setQuickActions] = useState<QuickAction[]>([]);
     const [quickActionsError, setQuickActionsError] = useState<string | null>(
         null,
     );
     const [saving, setSaving] = useState(false);
+    const [savingQuickActions, setSavingQuickActions] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [optimisticLegalResearchUs, setOptimisticLegalResearchUs] = useState<
         boolean | null
@@ -51,14 +49,9 @@ export default function FeaturesPage() {
     const persistedLegalResearchUs = profile?.legalResearchUs ?? true;
     const courtListenerEnabled =
         optimisticLegalResearchUs ?? persistedLegalResearchUs;
-    const quickActionsEnabled = quickActions.some((action) => action.enabled);
     const gmailDeploymentEnabled = profile
         ? deploymentModuleEnabled(profile.deploymentModules, "gmail")
         : false;
-
-    useEffect(() => {
-        void listQuickActions().then(setQuickActions).catch(() => {});
-    }, []);
 
     const refreshGmailStatus = async () => {
         try {
@@ -96,31 +89,14 @@ export default function FeaturesPage() {
         };
     }, [gmailDeploymentEnabled, profile]);
 
-    const updateAllQuickActions = async (enabled: boolean) => {
-        const previous = quickActions;
+    const quickActionsVisible = profile?.quickActionsVisible ?? true;
+
+    const setQuickActionsVisible = async (visible: boolean) => {
         setQuickActionsError(null);
-        setQuickActions((current) =>
-            current.map((action) => ({ ...action, enabled })),
-        );
-        const results = await Promise.allSettled(
-            previous.map((action) => updateQuickAction(action.id, { enabled })),
-        );
-        setQuickActions(
-            previous.map((action, index) => {
-                const result = results[index];
-                return result.status === "fulfilled" ? result.value : action;
-            }),
-        );
-        const failed = results.filter(
-            (result) => result.status === "rejected",
-        ).length;
-        if (failed > 0) {
-            setQuickActionsError(
-                failed === results.length
-                    ? "Could not update. Try again."
-                    : "Some quick actions could not be updated. Try again.",
-            );
-        }
+        setSavingQuickActions(true);
+        const ok = await updateQuickActionsVisible(visible);
+        setSavingQuickActions(false);
+        if (!ok) setQuickActionsError("Could not update. Try again.");
     };
 
     const handleCourtListenerChange = async (enabled: boolean) => {
@@ -216,10 +192,11 @@ export default function FeaturesPage() {
                             )}
                         </div>
                         <SettingsToggle
-                            checked={quickActionsEnabled}
+                            checked={quickActionsVisible}
+                            loading={savingQuickActions}
                             size="md"
                             onChange={(checked) => {
-                                void updateAllQuickActions(checked);
+                                void setQuickActionsVisible(checked);
                             }}
                         />
                     </div>
@@ -343,9 +320,7 @@ export default function FeaturesPage() {
                                     value.trim() || null,
                                 )
                             }
-                            onRemove={() =>
-                                updateApiKey("courtlistener", null)
-                            }
+                            onRemove={() => updateApiKey("courtlistener", null)}
                         />
                     )}
                 </SettingsSection>

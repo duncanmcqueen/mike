@@ -4,16 +4,39 @@ import { authHeaders } from "../lib/llm/ollama";
 import { createServerDatabase } from "../lib/database";
 import { getUserApiKeys } from "../lib/userApiKeys";
 import {
-    OPENROUTER_API_BASE_URL,
-    parseOpenRouterModelOptions,
-} from "../lib/llm/openrouterCatalog";
-import {
     OPENCODE_GO_API_BASE_URL,
     parseOpenCodeGoModelOptions,
 } from "../lib/llm/openCodeGoCatalog";
 import { safeErrorLog } from "../lib/safeError";
 
 export const modelsRouter = Router();
+
+function catalogPrice(value: unknown): string | undefined {
+    if (typeof value !== "string" && typeof value !== "number") {
+        return undefined;
+    }
+    const normalized = String(value).trim();
+    const amount = Number(normalized);
+    return normalized && Number.isFinite(amount) && amount >= 0
+        ? normalized
+        : undefined;
+}
+
+function catalogPricing(
+    input: unknown,
+    output: unknown,
+    options?: { variesByProvider?: boolean; tiered?: boolean },
+) {
+    const normalizedInput = catalogPrice(input);
+    const normalizedOutput = catalogPrice(output);
+    if (!normalizedInput && !normalizedOutput) return undefined;
+    return {
+        ...(normalizedInput ? { input: normalizedInput } : {}),
+        ...(normalizedOutput ? { output: normalizedOutput } : {}),
+        ...(options?.variesByProvider ? { variesByProvider: true } : {}),
+        ...(options?.tiered ? { tiered: true } : {}),
+    };
+}
 
 // Live list of locally installed Ollama models, shaped like the frontend's
 // ModelOption. Returns [] when Ollama is unreachable so the app still works.
@@ -36,49 +59,173 @@ modelsRouter.get("/ollama", requireAuth, async (_req, res) => {
     }
 });
 
-// Catalog visible to the authenticated user's OpenRouter account. The API key
-// stays server-side; only model ids and display labels are returned.
-export async function openRouterModelsHandler(
-    _req: Request,
-    res: Response,
-): Promise<void> {
+// OpenRouter's authenticated catalog, limited to text models that support
+// tool calling because Mike supplies tools on interactive chat requests.
+modelsRouter.get("/openrouter", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
     try {
-        const db = createServerDatabase();
-        const apiKeys = await getUserApiKeys(userId, db);
-        const apiKey = apiKeys.openrouter?.trim();
-        if (!apiKey) {
-            return void res.status(400).json({
-                detail: "OpenRouter API key is not configured.",
+        const apiKeys = await getUserApiKeys(userId, createServerDatabase());
+        const key = apiKeys.openrouter?.trim();
+        if (!key) {
+            return void res.status(422).json({
+                code: "missing_api_key",
+                detail: "An OpenRouter API key is required to list models.",
             });
         }
 
-        const response = await fetch(`${OPENROUTER_API_BASE_URL}/models`, {
-            signal: AbortSignal.timeout(15_000),
-            headers: {
-                Authorization: `Bearer ${apiKey}`,
-                Accept: "application/json",
-            },
-        });
+        // Honor the same base-URL override as the chat adapter so a proxy or
+        // test double sees the catalog request too (read per request, like
+        // the Vercel route below, so tests and re-configuration work).
+        const baseUrl = (
+            process.env.OPENROUTER_BASE_URL?.trim() ||
+            "https://openrouter.ai/api/v1"
+        ).replace(/\/+$/, "");
+        const response = await fetch(
+            `${baseUrl}/models?output_modalities=text&supported_parameters=tools&sort=most-popular&limit=1000`,
+            { headers: { Authorization: `Bearer ${key}` } },
+        );
         if (!response.ok) {
+            const detail = await response.text().catch(() => "");
             return void res.status(502).json({
-                detail: "Unable to load the OpenRouter model catalog.",
+                detail: `OpenRouter model catalog request failed (${response.status})${detail ? `: ${detail}` : ""}`,
             });
         }
-        const models = parseOpenRouterModelOptions(await response.json());
+
+        const payload = (await response.json()) as {
+            data?: Array<{
+                id?: unknown;
+                name?: unknown;
+                pricing?: {
+                    prompt?: unknown;
+                    completion?: unknown;
+                };
+            }>;
+        };
+        const models = (payload.data ?? []).flatMap((model) => {
+            if (typeof model.id !== "string" || !model.id.trim()) return [];
+            const pricing = catalogPricing(
+                model.pricing?.prompt,
+                model.pricing?.completion,
+            );
+            return [
+                {
+                    id: model.id.trim(),
+                    label:
+                        typeof model.name === "string" && model.name.trim()
+                            ? model.name.trim()
+                            : model.id.trim(),
+                    ...(pricing ? { pricing } : {}),
+                },
+            ];
+        });
         res.json({ models });
     } catch (error) {
-        console.error(
-            "[models/openrouter] catalog request failed",
-            safeErrorLog(error),
-        );
-        res.status(502).json({
-            detail: "Unable to load the OpenRouter model catalog.",
+        res.status(500).json({
+            detail:
+                error instanceof Error
+                    ? error.message
+                    : "Failed to list OpenRouter models.",
         });
     }
-}
+});
 
-modelsRouter.get("/openrouter", requireAuth, openRouterModelsHandler);
+// Vercel AI Gateway's public catalog, limited to text models that support tool
+// calling because Mike supplies tools on interactive chat requests. A key must
+// still be configured before the catalog is exposed in the user's settings.
+modelsRouter.get("/vercel", requireAuth, async (_req, res) => {
+    const userId = res.locals.userId as string;
+    try {
+        const apiKeys = await getUserApiKeys(userId, createServerDatabase());
+        if (!apiKeys.vercel?.trim()) {
+            return void res.status(422).json({
+                code: "missing_api_key",
+                detail: "A Vercel AI Gateway API key is required to list models.",
+            });
+        }
+
+        const baseUrl = (
+            process.env.VERCEL_AI_GATEWAY_BASE_URL?.trim() ||
+            "https://ai-gateway.vercel.sh/v1"
+        ).replace(/\/+$/, "");
+        const response = await fetch(`${baseUrl}/models`);
+        if (!response.ok) {
+            const detail = await response.text().catch(() => "");
+            return void res.status(502).json({
+                detail: `Vercel AI Gateway model catalog request failed (${response.status})${detail ? `: ${detail}` : ""}`,
+            });
+        }
+
+        const payload = (await response.json()) as {
+            data?: Array<{
+                id?: unknown;
+                name?: unknown;
+                type?: unknown;
+                tags?: unknown;
+                modalities?: { output?: unknown };
+                supported_parameters?: unknown;
+                pricing?: {
+                    input?: unknown;
+                    output?: unknown;
+                    input_tiers?: unknown;
+                    output_tiers?: unknown;
+                    varies_by_provider?: unknown;
+                };
+            }>;
+        };
+        const models = (payload.data ?? []).flatMap((model) => {
+            const outputs = Array.isArray(model.modalities?.output)
+                ? model.modalities.output
+                : [];
+            const tags = Array.isArray(model.tags) ? model.tags : [];
+            const parameters = Array.isArray(model.supported_parameters)
+                ? model.supported_parameters
+                : [];
+            const supportsText =
+                model.type === "language" || outputs.includes("text");
+            const supportsTools =
+                tags.includes("tool-use") || parameters.includes("tools");
+            if (
+                !supportsText ||
+                !supportsTools ||
+                typeof model.id !== "string" ||
+                !model.id.trim()
+            ) {
+                return [];
+            }
+            const pricing = catalogPricing(
+                model.pricing?.input,
+                model.pricing?.output,
+                {
+                    variesByProvider:
+                        model.pricing?.varies_by_provider === true,
+                    tiered:
+                        (Array.isArray(model.pricing?.input_tiers) &&
+                            model.pricing.input_tiers.length > 0) ||
+                        (Array.isArray(model.pricing?.output_tiers) &&
+                            model.pricing.output_tiers.length > 0),
+                },
+            );
+            return [
+                {
+                    id: model.id.trim(),
+                    label:
+                        typeof model.name === "string" && model.name.trim()
+                            ? model.name.trim()
+                            : model.id.trim(),
+                    ...(pricing ? { pricing } : {}),
+                },
+            ];
+        });
+        res.json({ models });
+    } catch (error) {
+        res.status(500).json({
+            detail:
+                error instanceof Error
+                    ? error.message
+                    : "Failed to list Vercel AI Gateway models.",
+        });
+    }
+});
 
 // Catalog visible to the authenticated user's OpenCode Go subscription. The
 // API key stays server-side; only model ids and display labels are returned.

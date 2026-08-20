@@ -29,10 +29,7 @@ import {
     PlaybookPickerModal,
     type AssistantPlaybookSelection,
 } from "./PlaybookPickerModal";
-import {
-    WORKFLOW_SLASH_MENU_ID,
-    WorkflowSlashMenu,
-} from "./WorkflowSlashMenu";
+import { WORKFLOW_SLASH_MENU_ID, WorkflowSlashMenu } from "./WorkflowSlashMenu";
 import {
     exactSlashWorkflow,
     matchingSlashWorkflows,
@@ -91,6 +88,7 @@ interface Props {
      *  ask_inputs continuation) instead of being lost with this component. */
     selectedPlaybook?: AssistantPlaybookSelection | null;
     onPlaybookChange?: (playbook: AssistantPlaybookSelection | null) => void;
+    onDocumentClick?: (document: Document) => void;
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
@@ -106,6 +104,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         onDocumentsUploaded,
         selectedPlaybook: selectedPlaybookProp,
         onPlaybookChange,
+        onDocumentClick,
     }: Props,
     ref,
 ) {
@@ -117,9 +116,28 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     } | null>(null);
     const [storedSelectedPlaybook, setStoredSelectedPlaybook] =
         useState<AssistantPlaybookSelection | null>(null);
-    const [model, setModel] = useSelectedModel();
-    const { profile } = useUserProfile();
-    const apiKeys = profile?.apiKeys;
+    const {
+        profile,
+        loading: profileLoading,
+        apiKeysDegraded,
+    } = useUserProfile();
+    // A degraded profile is the local fallback, whose router lists are empty
+    // because the truth is UNKNOWN. Passing them on would let one dropped
+    // /user/profile request rewrite the saved composer selection to the
+    // default — permanently. null means "not loaded", which the hook leaves
+    // the stored selection alone for.
+    const [model, setModel] = useSelectedModel(
+        profile && !apiKeysDegraded
+            ? {
+                  openRouterModels: profile.openRouterModels,
+                  vercelModels: profile.vercelModels,
+              }
+            : null,
+    );
+    // Degraded profile → key availability is UNKNOWN; undefined here makes
+    // every key gate (submit check + model toggle) fail open instead of
+    // treating "we couldn't ask" as "no keys configured".
+    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
     const promptLibraryEnabled = featureEnabled(
         profile?.featureFlags,
         "promptLibrary",
@@ -202,14 +220,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         },
         startWorkflow: (workflow, prompt) => {
             setSelectedWorkflow(workflow);
-            if (prompt) setValue((current) => current || prompt);
+            if (prompt !== undefined) setValue(prompt);
             requestAnimationFrame(() => textareaRef.current?.focus());
         },
         startWorkflowDocumentSelection: (workflow, prompt, options) => {
             setSelectedWorkflow(workflow);
             setDocSelectorInitialTab(options?.initialDocumentTab ?? "files");
-            if (prompt) {
-                setValue((current) => current || prompt);
+            if (prompt !== undefined) {
+                setValue(prompt);
                 requestAnimationFrame(() => {
                     if (!textareaRef.current) return;
                     textareaRef.current.style.height = "auto";
@@ -341,7 +359,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             event.stopPropagation();
             dragDepthRef.current = 0;
             setIsDraggingFiles(false);
-            void handleDroppedFiles(Array.from(event.dataTransfer?.files ?? []));
+            void handleDroppedFiles(
+                Array.from(event.dataTransfer?.files ?? []),
+            );
         };
 
         window.addEventListener("dragenter", handleDragEnter);
@@ -382,6 +402,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         const files = attachedDocs.map((d) => ({
             filename: d.filename,
             document_id: d.id,
+            ...(d.current_version_id
+                ? { version_id: d.current_version_id }
+                : {}),
+            ...(d.active_version_number != null
+                ? { version_number: d.active_version_number }
+                : {}),
         }));
         setAttachedDocs([]);
         setSelectedWorkflow(null);
@@ -415,10 +441,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const handleSubmit = () => {
         const query = value.trim();
         if (slashCommandsLoading) return;
-        const slashWorkflow = exactSlashWorkflow(
-            slashWorkflows ?? [],
-            query,
-        );
+        const slashWorkflow = exactSlashWorkflow(slashWorkflows ?? [], query);
         if (slashWorkflow) {
             selectSlashWorkflow(slashWorkflow);
             return;
@@ -478,7 +501,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         onSelect={selectSlashWorkflow}
                     />
                 )}
-                <div className="rounded-[18px] border border-white/65 bg-white/60 shadow-[0_4px_10px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.85),inset_0_-6px_14px_rgba(255,255,255,0.18)] backdrop-blur-2xl md:rounded-[22px]">
+                <div className="rounded-[21px] border border-white/65 bg-white/60 shadow-[0_4px_10px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.85),inset_0_-6px_14px_rgba(255,255,255,0.18)] backdrop-blur-2xl">
                     {/* Attached chips */}
                     {(selectedWorkflow || selectedPlaybook || attachedDocs.length > 0) && (
                         <div className="flex flex-wrap gap-1.5 px-2 pt-2">
@@ -516,11 +539,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 </div>
                             )}
                             {attachedDocs.map((doc) => {
-                                return (
-                                    <div
-                                        key={doc.id}
-                                        className="inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-1 text-xs text-gray-800 shadow-[0_2px_6px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-xl"
-                                    >
+                                const documentLabel = (
+                                    <>
                                         <FileTypeIcon
                                             fileType={doc.file_type}
                                             className="h-2.5 w-2.5"
@@ -528,6 +548,29 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                         <span className="max-w-[140px] truncate">
                                             {doc.filename}
                                         </span>
+                                    </>
+                                );
+                                return (
+                                    <div
+                                        key={doc.id}
+                                        className="inline-flex items-center rounded-[10px] border border-white/70 bg-white text-xs text-gray-800 shadow-sm backdrop-blur-xl"
+                                    >
+                                        {onDocumentClick ? (
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    onDocumentClick(doc)
+                                                }
+                                                aria-label={`Open ${doc.filename}`}
+                                                className="inline-flex min-w-0 items-center gap-1 py-0.5 pl-2 transition-colors hover:text-gray-950"
+                                            >
+                                                {documentLabel}
+                                            </button>
+                                        ) : (
+                                            <span className="inline-flex min-w-0 items-center gap-1 py-0.5 pl-2">
+                                                {documentLabel}
+                                            </span>
+                                        )}
                                         <button
                                             type="button"
                                             onClick={() =>
@@ -537,7 +580,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                                     ),
                                                 )
                                             }
-                                            className="ml-0.5 rounded-full p-0.5 text-gray-400 transition-colors hover:bg-gray-900/5 hover:text-gray-700"
+                                            aria-label={`Remove ${doc.filename}`}
+                                            className="mx-1 rounded-full p-0.5 text-gray-400 transition-colors hover:bg-gray-900/5 hover:text-gray-700"
                                         >
                                             <X className="h-2.5 w-2.5" />
                                         </button>
@@ -592,7 +636,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     {/* Controls */}
                     <div
                         ref={controlsRef}
-                        className="flex items-center justify-between md:p-2.5 p-2"
+                        className="flex items-center justify-between p-2.5"
                     >
                         <div className="flex items-center gap-1">
                             {!hideAddDocButton && (
@@ -675,6 +719,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 value={model}
                                 onChange={setModel}
                                 apiKeys={apiKeys}
+                                apiKeysLoading={profileLoading && !profile}
+                                openRouterModels={profile?.openRouterModels}
+                                vercelModels={profile?.vercelModels}
+                                compact={compactControls}
                             />
                             <button
                                 type="button"
@@ -682,8 +730,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                     isLoading ? "Stop response" : "Send message"
                                 }
                                 className={cn(
-                                    "relative bg-gradient-to-b from-neutral-700 to-black text-white rounded-[10px] h-8 w-8 flex items-center justify-center cursor-pointer disabled:cursor-default disabled:from-neutral-600 disabled:to-black backdrop-blur-xl border border-white/30 active:enabled:scale-95 transition-all duration-150",
-                                    "shadow-[0_5px_14px_rgba(15,23,42,0.18),inset_0_1px_0_rgba(255,255,255,0.24)]",
+                                    "relative bg-gradient-to-b from-neutral-700 to-black text-white rounded-[11px] h-8 w-8 flex items-center justify-center cursor-pointer disabled:cursor-default disabled:from-neutral-600 disabled:to-black backdrop-blur-xl border-0 active:enabled:scale-95 transition-all duration-150",
+                                    "shadow-[0_3px_9px_rgba(15,23,42,0.10),inset_1px_1px_0_rgba(255,255,255,0.22),inset_-1px_-1px_0_rgba(255,255,255,0.10),inset_-4px_-4px_9px_rgba(15,23,42,0.2)]",
                                 )}
                                 onClick={handleActionClick}
                                 disabled={

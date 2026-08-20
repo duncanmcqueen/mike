@@ -429,7 +429,7 @@ type ModelAvailability =
   | { available: false; reason: string };
 
 function providerKeyName(
-  provider: "claude" | "gemini" | "openai",
+  provider: "claude" | "gemini" | "openai" | "openrouter" | "vercel",
 ): keyof UserApiKeys {
   return provider;
 }
@@ -440,6 +440,7 @@ function providerDisplayName(provider: keyof UserApiKeys): string {
   if (provider === "kimi") return "Moonshot (Kimi)";
   if (provider === "openai") return "OpenAI";
   if (provider === "openrouter") return "OpenRouter";
+  if (provider === "vercel") return "Vercel AI Gateway";
   if (provider === "opencodego") return "OpenCode Go";
   return "CourtListener";
 }

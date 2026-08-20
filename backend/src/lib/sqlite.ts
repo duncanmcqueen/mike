@@ -775,10 +775,54 @@ async function sqliteRpc(name: string, args: Row): Promise<Result<any>> {
         error: null,
       };
     }
+    if (name === "replace_user_router_models") {
+      return { data: replaceUserRouterModels(args), error: null };
+    }
     return { data: [], error: null };
   } catch (error) {
     return { data: null as any, error: error instanceof Error ? error : new Error(String(error)) };
   }
+}
+
+// Mirrors the Postgres public.replace_user_router_models function: the whole
+// saved selection for one router is swapped atomically, so a concurrent write
+// can never interleave a delete with a partial insert.
+function replaceUserRouterModels(args: Row): null {
+  const userId = rpcUserId(args);
+  const router = String(args.target_router ?? "").trim();
+  if (!userId || !router) return null;
+  const modelIds = Array.isArray(args.target_model_ids)
+    ? (args.target_model_ids as unknown[]).flatMap((value) =>
+        typeof value === "string" && value.trim() ? [value.trim()] : [],
+      )
+    : [];
+
+  const db = getSqliteDb();
+  ensureColumns("user_router_models", {
+    user_id: null,
+    router: null,
+    model_id: null,
+    sort_order: null,
+  });
+  db.exec("begin immediate");
+  try {
+    db.prepare(
+      `delete from "user_router_models" where "user_id" = ? and "router" = ?`,
+    ).run(userId, router);
+    const insert = db.prepare(
+      `insert into "user_router_models"
+       (id, user_id, router, model_id, sort_order, created_at, updated_at)
+       values (?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+    );
+    modelIds.forEach((modelId, index) => {
+      insert.run(crypto.randomUUID(), userId, router, modelId, index);
+    });
+    db.exec("commit");
+  } catch (error) {
+    db.exec("rollback");
+    throw error;
+  }
+  return null;
 }
 
 async function installMissingDefaultWorkflows(args: Row): Promise<number> {

@@ -23,6 +23,7 @@ const {
     buildUserAccountExport,
     buildUserChatsExport,
     buildUserTabularReviewsExport,
+    supabaseRpc,
 } = vi.hoisted(() => ({
     requireMfaIfEnrolled: vi.fn(),
     getUserApiKeyStatus: vi.fn(),
@@ -36,6 +37,7 @@ const {
     buildUserAccountExport: vi.fn(),
     buildUserChatsExport: vi.fn(),
     buildUserTabularReviewsExport: vi.fn(),
+    supabaseRpc: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -84,9 +86,26 @@ function resultForQuery(table: string): QueryResult {
 function makeQuery(table: string) {
     const q: Record<string, unknown> = {};
     const chain = [
-        "select", "update", "delete", "upsert", "insert",
-        "eq", "neq", "in", "is", "or", "not", "lt", "gt", "gte", "lte",
-        "filter", "order", "limit", "range", "contains",
+        "select",
+        "update",
+        "delete",
+        "upsert",
+        "insert",
+        "eq",
+        "neq",
+        "in",
+        "is",
+        "or",
+        "not",
+        "lt",
+        "gt",
+        "gte",
+        "lte",
+        "filter",
+        "order",
+        "limit",
+        "range",
+        "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
     q.select = vi.fn((columns: string) => {
@@ -109,7 +128,7 @@ function makeQuery(table: string) {
 function mockDb() {
     return {
         from: vi.fn((table: string) => makeQuery(table)),
-        rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
+        rpc: (...args: unknown[]) => supabaseRpc(...args),
         auth: {
             getUser: () =>
                 Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
@@ -204,6 +223,7 @@ function profileRow(overrides: Record<string, unknown> = {}) {
         legal_research_us: true,
         email_integration_enabled: false,
         dark_mode: false,
+        quick_actions_visible: true,
         ...overrides,
     };
 }
@@ -247,7 +267,9 @@ describe("user.routes", () => {
         saveUserApiKey.mockResolvedValue(undefined);
         hasEnvApiKey.mockReturnValue(false);
         normalizeApiKeyProvider.mockImplementation((v: string) =>
-            ["claude", "openai", "gemini"].includes(v) ? v : null,
+            ["claude", "openai", "gemini", "openrouter", "vercel"].includes(v)
+                ? v
+                : null,
         );
         deleteAllUserChats.mockResolvedValue(undefined);
         deleteAllUserTabularReviews.mockResolvedValue(undefined);
@@ -256,6 +278,7 @@ describe("user.routes", () => {
         buildUserAccountExport.mockResolvedValue({ account: "data" });
         buildUserChatsExport.mockResolvedValue({ chats: "data" });
         buildUserTabularReviewsExport.mockResolvedValue({ reviews: "data" });
+        supabaseRpc.mockResolvedValue({ data: null, error: null });
     });
 
     // ── GET /user/profile (MFA bootstrap path) ────────────────────────────
@@ -265,8 +288,17 @@ describe("user.routes", () => {
                 data: profileRow(),
                 error: null,
             };
+            dbState.tables.user_router_models = {
+                data: [
+                    { model_id: "anthropic/claude-sonnet-4.5" },
+                    { model_id: "openai/gpt-5.4" },
+                ],
+                error: null,
+            };
 
-            const res = await request(app).get("/user/profile").set(...AUTH);
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toMatchObject({
@@ -277,6 +309,7 @@ describe("user.routes", () => {
                 legalResearchUs: true,
                 emailIntegrationEnabled: false,
                 darkMode: false,
+                quickActionsVisible: true,
                 mfaOnLogin: false,
                 deploymentModules: expect.objectContaining({
                     promptLibrary: true,
@@ -284,6 +317,10 @@ describe("user.routes", () => {
                     playbooks: true,
                     gmail: true,
                 }),
+                openRouterModels: [
+                    "anthropic/claude-sonnet-4.5",
+                    "openai/gpt-5.4",
+                ],
                 apiKeyStatus: STATUS,
             });
             // Presence-only key status — never plaintext.
@@ -325,7 +362,9 @@ describe("user.routes", () => {
                 error: null,
             };
 
-            const res = await request(app).get("/user/profile").set(...AUTH);
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(requireMfaIfEnrolled).not.toHaveBeenCalled();
@@ -337,7 +376,9 @@ describe("user.routes", () => {
                 error: { message: "db down" },
             };
 
-            const res = await request(app).get("/user/profile").set(...AUTH);
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("Internal server error");
@@ -378,7 +419,9 @@ describe("user.routes", () => {
     // ── POST /user/profile (bootstrap upsert) ─────────────────────────────
     describe("POST /user/profile", () => {
         it("ensures the profile row and returns ok", async () => {
-            const res = await request(app).post("/user/profile").set(...AUTH);
+            const res = await request(app)
+                .post("/user/profile")
+                .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual({ ok: true });
@@ -389,7 +432,9 @@ describe("user.routes", () => {
     // ── GET /user/api-keys (presence without plaintext) ───────────────────
     describe("GET /user/api-keys", () => {
         it("returns the boolean key-status map", async () => {
-            const res = await request(app).get("/user/api-keys").set(...AUTH);
+            const res = await request(app)
+                .get("/user/api-keys")
+                .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual(STATUS);
@@ -489,10 +534,78 @@ describe("user.routes", () => {
         });
     });
 
+    describe("PATCH /user/profile", () => {
+        it("persists OpenRouter selections through the router-neutral table function", async () => {
+            dbState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({
+                    openRouterModels: [
+                        "anthropic/claude-sonnet-4.5",
+                        "openai/gpt-5.4",
+                    ],
+                });
+
+            expect(res.status).toBe(200);
+            expect(supabaseRpc).toHaveBeenCalledWith(
+                "replace_user_router_models",
+                {
+                    target_user_id: "u1",
+                    target_router: "openrouter",
+                    target_model_ids: [
+                        "anthropic/claude-sonnet-4.5",
+                        "openai/gpt-5.4",
+                    ],
+                },
+            );
+        });
+
+        it("persists Vercel selections through the router-neutral table function", async () => {
+            dbState.tables.user_profiles = {
+                data: profileRow(),
+                error: null,
+            };
+
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ vercelModels: ["openai/gpt-5.4"] });
+
+            expect(res.status).toBe(200);
+            expect(supabaseRpc).toHaveBeenCalledWith(
+                "replace_user_router_models",
+                {
+                    target_user_id: "u1",
+                    target_router: "vercel",
+                    target_model_ids: ["openai/gpt-5.4"],
+                },
+            );
+        });
+
+        it("rejects a non-boolean Quick Actions visibility preference", async () => {
+            const res = await request(app)
+                .patch("/user/profile")
+                .set(...AUTH)
+                .send({ quickActionsVisible: "yes" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "quickActionsVisible must be a boolean",
+            );
+        });
+    });
+
     // ── Data export endpoints (MFA-guarded, attachment headers) ───────────
     describe("data export endpoints", () => {
         it("GET /user/export returns the account export as a JSON attachment", async () => {
-            const res = await request(app).get("/user/export").set(...AUTH);
+            const res = await request(app)
+                .get("/user/export")
+                .set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual({ account: "data" });
@@ -537,7 +650,9 @@ describe("user.routes", () => {
         it("GET /user/export returns 500 when the builder throws", async () => {
             buildUserAccountExport.mockRejectedValue(new Error("export boom"));
 
-            const res = await request(app).get("/user/export").set(...AUTH);
+            const res = await request(app)
+                .get("/user/export")
+                .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("Failed to export account data");
@@ -547,7 +662,9 @@ describe("user.routes", () => {
         it("GET /user/export is rejected when MFA is unsatisfied", async () => {
             requireMfaIfEnrolled.mockImplementation(rejectMfa);
 
-            const res = await request(app).get("/user/export").set(...AUTH);
+            const res = await request(app)
+                .get("/user/export")
+                .set(...AUTH);
 
             expect(res.status).toBe(403);
             expect(res.body.code).toBe("mfa_verification_required");
@@ -558,7 +675,9 @@ describe("user.routes", () => {
     // ── Data deletion endpoints (MFA-guarded, cleanup helpers) ────────────
     describe("data deletion endpoints", () => {
         it("DELETE /user/chats invokes deleteAllUserChats and returns 204", async () => {
-            const res = await request(app).delete("/user/chats").set(...AUTH);
+            const res = await request(app)
+                .delete("/user/chats")
+                .set(...AUTH);
 
             expect(res.status).toBe(204);
             expect(deleteAllUserChats).toHaveBeenCalledWith(
@@ -592,7 +711,9 @@ describe("user.routes", () => {
         });
 
         it("DELETE /user/account purges data then deletes the auth user (204)", async () => {
-            const res = await request(app).delete("/user/account").set(...AUTH);
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
 
             expect(res.status).toBe(204);
             // Account purge runs the cleanup helper with id + email.
@@ -606,7 +727,9 @@ describe("user.routes", () => {
         it("DELETE /user/account returns 500 when the auth-user delete errors", async () => {
             dbState.adminDeleteUser = { error: { message: "auth boom" } };
 
-            const res = await request(app).delete("/user/account").set(...AUTH);
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("Failed to delete account");
@@ -616,7 +739,9 @@ describe("user.routes", () => {
         it("DELETE /user/chats returns 500 when cleanup throws", async () => {
             deleteAllUserChats.mockRejectedValue(new Error("cascade failed"));
 
-            const res = await request(app).delete("/user/chats").set(...AUTH);
+            const res = await request(app)
+                .delete("/user/chats")
+                .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("Failed to delete chats");
@@ -626,7 +751,9 @@ describe("user.routes", () => {
         it("DELETE /user/account is rejected when MFA is unsatisfied (no cleanup)", async () => {
             requireMfaIfEnrolled.mockImplementation(rejectMfa);
 
-            const res = await request(app).delete("/user/account").set(...AUTH);
+            const res = await request(app)
+                .delete("/user/account")
+                .set(...AUTH);
 
             expect(res.status).toBe(403);
             expect(res.body.code).toBe("mfa_verification_required");

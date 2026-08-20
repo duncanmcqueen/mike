@@ -5,12 +5,14 @@ import {
   type LlmMessage,
   type OpenAIToolSchema,
 } from "../llm";
+import { resolveRequestedModel } from "../routerModels";
 import { safeErrorMessage } from "../safeError";
 import { createServerDatabase } from "../database";
 import {
   buildUserMcpTools,
   type McpToolEvent,
 } from "../mcpConnectors";
+import type { SourceDocument } from "../sourceDocuments";
 import {
   COURTLISTENER_TOOLS,
   type CaseCitationEvent,
@@ -33,6 +35,7 @@ import {
   type TabularCellStore,
   type WorkflowStore,
   type ToolCall,
+  type AskInputResponseItem,
   type AskInputsEvent,
   type EditAnnotation,
   devLog,
@@ -45,16 +48,17 @@ import {
   createCitation,
   CITATIONS_OPEN_TAG,
 } from "./citations";
+import { runToolCalls } from "./tools/toolDispatcher";
 import {
-  runToolCalls,
+  getCachedCaseOpinionTexts,
   type CourtlistenerTurnState,
-} from "./tools/toolDispatcher";
+} from "./tools/courtlistenerTurnState";
 import {
   readDocumentContent,
   type TurnEditState,
   type TurnReadState,
 } from "./tools/documentOps";
-import { verifyDocumentCitations } from "./verifyCitations";
+import { verifyCitations } from "./verifyCitations";
 import { getConfiguredModel } from "../llm/registry";
 import { analyzePlaybookChunks } from "./playbookChunking";
 import { spotlight } from "./contextBuilders";
@@ -78,19 +82,21 @@ export type AssistantEvent =
   | AskInputsEvent
   | {
       type: "ask_inputs_response";
-      responses: {
-        id: string;
-        kind: "choice" | "documents";
-        question?: string;
-        answer?: string;
-        filenames?: string[];
-        skipped?: boolean;
-      }[];
+      responses: AskInputResponseItem[];
     }
-  | { type: "doc_read"; filename: string; document_id?: string }
+  | {
+      type: "doc_read";
+      filename: string;
+      document_id?: string;
+      version_id?: string | null;
+      version_number?: number | null;
+    }
   | {
       type: "doc_find";
       filename: string;
+      document_id?: string;
+      version_id?: string | null;
+      version_number?: number | null;
       query: string;
       total_matches: number;
     }
@@ -130,7 +136,11 @@ export type AssistantEvent =
   | McpToolEvent
   | IroncladToolEvent
   | GmailToolEvent
-  | { type: "case_opinions"; cluster_id: number; case: unknown }
+  | {
+      type: "case_opinions";
+      cluster_id: number;
+      document: SourceDocument;
+    }
   | { type: "content"; text: string }
   | { type: "error"; message: string };
 
@@ -411,13 +421,41 @@ Use the available DingDuff MCP tool(s) for case retrieval, case reading, and cas
     }
   };
 
-  const selectedModel = resolveUsableModel(model, DEFAULT_MAIN_MODEL, apiKeys);
-
-  const shouldChunkPlaybook =
-    playbookChunkDocumentIds?.length &&
-    getConfiguredModel(selectedModel)?.playbookChunking === true;
-
   try {
+    // Single request-time choke point for every runLLMStream caller (chat,
+    // project chat, Word chat, tabular): router-prefixed models must be in the
+    // user's saved selection.
+    //
+    // This lives INSIDE the try because it touches the database. Above it, a
+    // read failure escaped as a bare rejection — before any error event was
+    // pushed and before AssistantStreamError could carry the partial turn — so
+    // the SSE client saw the socket end with no explanation. Inside, a blip
+    // takes the same path as any other mid-stream failure.
+    //
+    // "throw" (not silent fallback) because `model` here is what the caller
+    // asked for in THIS request. Tabular's stored preference has already been
+    // normalized by getUserModelSettings, so what arrives here is either an
+    // in-selection router model or a first-party id.
+    const requestedModel = await resolveRequestedModel(
+      model,
+      DEFAULT_MAIN_MODEL,
+      userId,
+      db,
+      "throw",
+    );
+    // When the request-time model has no usable API key, fall back to one that
+    // does. resolveUsableModel only ever substitutes registry or built-in ids,
+    // so it cannot reintroduce a router model outside the saved selection.
+    const selectedModel = resolveUsableModel(
+      requestedModel,
+      DEFAULT_MAIN_MODEL,
+      apiKeys,
+    );
+
+    const shouldChunkPlaybook =
+      playbookChunkDocumentIds?.length &&
+      getConfiguredModel(selectedModel)?.playbookChunking === true;
+
     if (shouldChunkPlaybook) {
       const documents = await Promise.all(
         playbookChunkDocumentIds.map(async (docId) => ({
@@ -570,12 +608,17 @@ Use the available DingDuff MCP tool(s) for case retrieval, case reading, and cas
             type: "doc_read",
             filename: r.filename,
             document_id: r.document_id,
+            version_id: r.version_id,
+            version_number: r.version_number,
           });
         }
         for (const f of docsFound) {
           events.push({
             type: "doc_find",
             filename: f.filename,
+            document_id: f.document_id,
+            version_id: f.version_id,
+            version_number: f.version_number,
             query: f.query,
             total_matches: f.total_matches,
           });
@@ -693,10 +736,10 @@ Use the available DingDuff MCP tool(s) for case retrieval, case reading, and cas
     const rawCitations = parsedCitations.map((c) =>
       createCitation(c, docIndex, courtlistenerTurnState.casesByClusterId),
     );
-    // Server-side document-quote verification. Fetch each document's extracted
-    // source text at most once per turn (memoized by doc_id), reading only the
-    // bytes already in storage with emitEvents:false so no new events fire and
-    // the air-gap guarantee holds. Case citations pass through untouched.
+    // Server-side quote verification. Fetch each document's extracted source
+    // text at most once per turn (memoized by doc_id), reading only bytes
+    // already in storage with emitEvents:false. Case citations are matched
+    // against the opinion text cached during this turn.
     const sourceTextByDocId = new Map<string, Promise<string>>();
     const getSourceText = (docId: string): Promise<string> => {
       let pending = sourceTextByDocId.get(docId);
@@ -712,7 +755,12 @@ Use the available DingDuff MCP tool(s) for case retrieval, case reading, and cas
       }
       return pending;
     };
-    citations = await verifyDocumentCitations(rawCitations, getSourceText);
+    citations = await verifyCitations(
+      rawCitations,
+      getSourceText,
+      async (clusterId) =>
+        getCachedCaseOpinionTexts(courtlistenerTurnState, clusterId),
+    );
   }
   devLog("[chat/stream] final citations", {
     hasCitationsBlock: citationDiagnostics.hasBlock,

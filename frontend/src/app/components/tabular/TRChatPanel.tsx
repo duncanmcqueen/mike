@@ -26,7 +26,7 @@ import {
     type TRChat,
     type TRCitationAnnotation,
 } from "@/app/lib/mikeApi";
-import type { AssistantEvent } from "../shared/types";
+import { isPanelDocument, type AssistantEvent } from "../shared/types";
 import { ModelToggle } from "../assistant/ModelToggle";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import { PreResponseWrapper } from "../assistant/PreResponseWrapper";
@@ -282,11 +282,7 @@ function TRAssistantMessage({
         }
         if (event.type === "thinking") {
             return (
-                <EventBlock
-                    key={key}
-                    showConnector={showConnector}
-                    isStreaming
-                >
+                <EventBlock key={key} showConnector={showConnector} isStreaming>
                     <span>Thinking...</span>
                 </EventBlock>
             );
@@ -387,7 +383,6 @@ function TRAssistantMessage({
                                 stepCount={g.events.length}
                                 shouldMinimize={subsequentContent}
                                 isStreaming={wrapperIsStreaming}
-                                compact
                             >
                                 {g.events.map((event, i) =>
                                     renderPreEvent(
@@ -440,6 +435,9 @@ function TRChatInput({
     model,
     onModelChange,
     apiKeys,
+    apiKeysLoading,
+    openRouterModels,
+    vercelModels,
     onHeightChange,
 }: {
     isLoading: boolean;
@@ -448,6 +446,9 @@ function TRChatInput({
     model: string;
     onModelChange: (id: string) => void;
     apiKeys?: ApiKeyState;
+    apiKeysLoading?: boolean;
+    openRouterModels?: string[];
+    vercelModels?: string[];
     onHeightChange: (height: number) => void;
 }) {
     const [value, setValue] = useState("");
@@ -532,6 +533,9 @@ function TRChatInput({
                         value={model}
                         onChange={onModelChange}
                         apiKeys={apiKeys}
+                        apiKeysLoading={apiKeysLoading}
+                        openRouterModels={openRouterModels}
+                        vercelModels={vercelModels}
                     />
                     <button
                         type="button"
@@ -682,42 +686,42 @@ function HistoryDropdown({
                                 </button>
                                 {menu?.chatId === chat.id &&
                                     createPortal(
-                                    <LiquidDropdownSurface
-                                        onMouseDown={(e) =>
-                                            e.stopPropagation()
-                                        }
-                                        className="fixed z-[130] w-28 p-1"
-                                        style={{
-                                            top: menu.top,
-                                            left: menu.left,
-                                        }}
-                                    >
-                                        <LiquidDropdownButton
-                                            onClick={() => {
-                                                setMenu(null);
-                                                setRenameValue(
-                                                    chat.title ?? "",
-                                                );
-                                                setRenamingChatId(chat.id);
+                                        <LiquidDropdownSurface
+                                            onMouseDown={(e) =>
+                                                e.stopPropagation()
+                                            }
+                                            className="fixed z-[130] w-28 p-1"
+                                            style={{
+                                                top: menu.top,
+                                                left: menu.left,
                                             }}
-                                            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left"
                                         >
-                                            <Pencil className="h-3 w-3" />
-                                            Rename
-                                        </LiquidDropdownButton>
-                                        <LiquidDropdownButton
-                                            onClick={() => {
-                                                setMenu(null);
-                                                onDelete(chat.id);
-                                            }}
-                                            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-red-600 hover:text-red-600 focus:text-red-600"
-                                        >
-                                            <Trash2 className="h-3 w-3" />
-                                            Delete
-                                        </LiquidDropdownButton>
-                                    </LiquidDropdownSurface>,
-                                    document.body,
-                                )}
+                                            <LiquidDropdownButton
+                                                onClick={() => {
+                                                    setMenu(null);
+                                                    setRenameValue(
+                                                        chat.title ?? "",
+                                                    );
+                                                    setRenamingChatId(chat.id);
+                                                }}
+                                                className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left"
+                                            >
+                                                <Pencil className="h-3 w-3" />
+                                                Rename
+                                            </LiquidDropdownButton>
+                                            <LiquidDropdownButton
+                                                onClick={() => {
+                                                    setMenu(null);
+                                                    onDelete(chat.id);
+                                                }}
+                                                className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-red-600 hover:text-red-600 focus:text-red-600"
+                                            >
+                                                <Trash2 className="h-3 w-3" />
+                                                Delete
+                                            </LiquidDropdownButton>
+                                        </LiquidDropdownSurface>,
+                                        document.body,
+                                    )}
                             </div>
                         );
                     })
@@ -759,8 +763,16 @@ export function TRChatPanel({
     initialChatId,
     onChatIdChange,
 }: Props) {
-    const { profile, updateModelPreference } = useUserProfile();
-    const apiKeys = profile?.apiKeys;
+    const {
+        profile,
+        loading: profileLoading,
+        apiKeysDegraded,
+        updateModelPreference,
+    } = useUserProfile();
+    // Unknown key state (still loading, or degraded after a failed profile
+    // fetch) fails open — see ModelToggle.
+    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
+    const apiKeysLoading = profileLoading && !profile;
     const currentModel = profile?.tabularModel ?? "gemini-3-flash-preview";
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
@@ -1655,10 +1667,9 @@ export function TRChatPanel({
                                     typeof data.cluster_id === "number"
                                         ? (data.cluster_id as number)
                                         : 0,
-                                case: data.case as Extract<
-                                    AssistantEvent,
-                                    { type: "case_opinions" }
-                                >["case"],
+                                document: isPanelDocument(data.document)
+                                    ? data.document
+                                    : undefined,
                             });
                             continue;
                         }
@@ -1793,7 +1804,10 @@ export function TRChatPanel({
             <div
                 onMouseDown={(e) => {
                     e.preventDefault();
-                    resizeStartRef.current = { x: e.clientX, width: panelWidth };
+                    resizeStartRef.current = {
+                        x: e.clientX,
+                        width: panelWidth,
+                    };
                     setIsResizing(true);
                 }}
                 className={`absolute top-0 left-0 h-full w-1 cursor-col-resize z-20 transition-colors hidden md:block ${
@@ -1929,6 +1943,9 @@ export function TRChatPanel({
                     updateModelPreference("tabularModel", id)
                 }
                 apiKeys={apiKeys}
+                apiKeysLoading={apiKeysLoading}
+                openRouterModels={profile?.openRouterModels}
+                vercelModels={profile?.vercelModels}
                 onHeightChange={setInputHeight}
             />
 

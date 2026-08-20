@@ -16,7 +16,7 @@ import { workflowAddonsRouter } from "./routes/workflowAddons";
 import { userRouter } from "./routes/user";
 import { modelsRouter } from "./routes/models";
 import { downloadsRouter } from "./routes/downloads";
-import { caseLawRouter } from "./routes/caseLaw";
+import { sourceDocumentsRouter } from "./routes/sourceDocuments";
 import { ironcladRouter } from "./routes/ironclad";
 import { legalMonitorsRouter } from "./routes/legalMonitors";
 import { promptsRouter } from "./routes/prompts";
@@ -226,7 +226,7 @@ app.use("/workflow-addons", workflowAddonsRouter);
 app.use("/user", userRouter);
 app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
-app.use("/case-law", caseLawRouter);
+app.use("/documents", sourceDocumentsRouter);
 app.use(
   "/integrations/ironclad",
   requireDeploymentModule("ironclad"),

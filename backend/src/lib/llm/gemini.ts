@@ -3,8 +3,14 @@ import type {
   StreamChatResult,
   NormalizedToolCall,
 } from "./types";
+import type { ThinkingLevel } from "@google/genai" with {
+  "resolution-mode": "import",
+};
 import { toGeminiTools } from "./tools";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
+
+const LOW_THINKING_LEVEL = "LOW" as ThinkingLevel;
+const HIGH_THINKING_LEVEL = "HIGH" as ThinkingLevel;
 
 type GeminiPart = {
   text?: string;
@@ -203,13 +209,15 @@ export async function streamGemini(
             tools: !forceFinalAnswer && functionDeclarations.length
               ? [{ functionDeclarations } as never]
               : undefined,
-            // On the forced final pass, disable thinking so the model must
-            // answer directly instead of spending the turn on thought parts.
-            thinkingConfig: forceFinalAnswer
-              ? { thinkingBudget: 0 }
-              : enableThinking
-                ? { includeThoughts: true }
-                : { thinkingBudget: 0 },
+            // Gemini 3.x replaced numeric thinking budgets with thinking
+            // levels. "low" is the least expensive supported level; unlike
+            // earlier models, thinking cannot be disabled completely. On the
+            // forced final pass, drop to the low level so the model answers
+            // directly instead of spending the turn on thought parts.
+            thinkingConfig:
+              enableThinking && !forceFinalAnswer
+                ? { includeThoughts: true, thinkingLevel: HIGH_THINKING_LEVEL }
+                : { thinkingLevel: LOW_THINKING_LEVEL },
           },
         });
       } catch (error) {

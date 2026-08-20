@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronDown, Check, AlertCircle } from "lucide-react";
+import { ChevronDown, Check, Settings2 } from "lucide-react";
 import {
     DropdownMenu,
-    DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
@@ -14,10 +13,9 @@ import {
 } from "@/app/components/ui/liquid-dropdown";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import { getConfiguredModels, type ApiKeyState } from "@/app/lib/mikeApi";
-import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { useOptionalUserProfile } from "@/app/contexts/UserProfileContext";
 import { featureEnabled } from "@/app/lib/featureFlags";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
-import { useOpenRouterModels } from "@/app/hooks/useOpenRouterModels";
 import { useOpenCodeGoModels } from "@/app/hooks/useOpenCodeGoModels";
 
 export interface ModelOption {
@@ -29,6 +27,7 @@ export interface ModelOption {
         | "Google"
         | "OpenAI"
         | "OpenRouter"
+        | "Vercel AI Gateway"
         | "OpenCode Go"
         | "Local"
         | "Committee";
@@ -36,14 +35,21 @@ export interface ModelOption {
 
 export const MODELS: ModelOption[] = [
     { id: "claude-fable-5", label: "Claude Fable 5", group: "Anthropic" },
+    { id: "claude-opus-5", label: "Claude Opus 5", group: "Anthropic" },
+    { id: "claude-sonnet-5", label: "Claude Sonnet 5", group: "Anthropic" },
     { id: "claude-opus-4-8", label: "Claude Opus 4.8", group: "Anthropic" },
     { id: "claude-opus-4-7", label: "Claude Opus 4.7", group: "Anthropic" },
     { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", group: "Anthropic" },
+    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", group: "Google" },
+    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", group: "Google" },
     { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", group: "Google" },
     { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", group: "Google" },
     { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", group: "Google" },
     { id: "kimi-k3", label: "Kimi K3", group: "Moonshot" },
     { id: "kimi-k3-256k", label: "Kimi K3 256K", group: "Moonshot" },
+    { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", group: "OpenAI" },
+    { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", group: "OpenAI" },
+    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", group: "OpenAI" },
     { id: "gpt-5.5", label: "GPT-5.5", group: "OpenAI" },
     { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
     // Local (Ollama) models are appended dynamically — see useOllamaModels.
@@ -53,16 +59,69 @@ export const SETTINGS_MODELS: ModelOption[] = [
     ...MODELS,
     { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", group: "Anthropic" },
     {
-        id: "gemini-3.1-flash-lite-preview",
-        label: "Gemini 3.1 Flash Lite",
+        id: "gemini-3.5-flash-lite",
+        label: "Gemini 3.5 Flash-Lite",
         group: "Google",
     },
-    { id: "gpt-5.4-lite", label: "GPT-5.4 Lite", group: "OpenAI" },
+    {
+        id: "gemini-3.1-flash-lite",
+        label: "Gemini 3.1 Flash-Lite",
+        group: "Google",
+    },
+    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", group: "OpenAI" },
 ];
 
 export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
 
 export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
+
+// Renamed/retired static ids → their current equivalents. Stored preferences
+// (profile fields, localStorage selections) outlive catalog renames; mapping
+// them on read keeps an old saved value working instead of orphaning it.
+// Kept in sync with backend/src/lib/llm/models.ts LEGACY_MODEL_IDS.
+export const LEGACY_MODEL_IDS: Record<string, string> = {
+    "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite",
+    "gpt-5.4-lite": "gpt-5.4-mini",
+};
+
+export function canonicalModelId(id: string): string {
+    return LEGACY_MODEL_IDS[id] ?? id;
+}
+
+const MODEL_NAME_ACRONYMS: Record<string, string> = {
+    ai: "AI",
+    gpt: "GPT",
+    oss: "OSS",
+    r1: "R1",
+};
+
+export function modelDisplayName(modelId: string): string {
+    const normalized = modelId
+        .replace(/^(?:openrouter|vercel|ollama)\//, "")
+        .split("/")
+        .at(-1)!
+        .replace(/(\d)-(\d)/g, "$1.$2");
+    const [rawName, variant] = normalized.split(":", 2);
+    const name = rawName ?? normalized;
+    const label = name
+        .split(/[-_\s]+/)
+        .filter(Boolean)
+        .map((token) => {
+            const lower = token.toLowerCase();
+            if (MODEL_NAME_ACRONYMS[lower]) {
+                return MODEL_NAME_ACRONYMS[lower];
+            }
+            if (/^\d+[bk]$/i.test(token)) return token.toUpperCase();
+            return token.charAt(0).toUpperCase() + token.slice(1);
+        })
+        .join(" ");
+    if (!variant) return label;
+    const variantLabel = variant
+        .split(/[-_]+/)
+        .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+        .join(" ");
+    return `${label} (${variantLabel})`;
+}
 
 const GROUP_ORDER: ModelOption["group"][] = [
     "Committee",
@@ -72,19 +131,26 @@ const GROUP_ORDER: ModelOption["group"][] = [
     "Google",
     "OpenAI",
     "OpenRouter",
+    "Vercel AI Gateway",
     "OpenCode Go",
 ];
 const itemClassName =
     "rounded-xl px-2.5 py-1.5 text-gray-700 focus:bg-app-surface-hover focus:text-gray-900 data-[highlighted]:bg-app-surface-hover data-[highlighted]:text-gray-900";
 
+/**
+ * Model options assembled from the instance's configured-model registry plus
+ * the dynamic catalogs (Ollama, OpenCode Go), gated by the user's feature
+ * flags. Router (OpenRouter / Vercel AI Gateway) models are NOT included here:
+ * the backend only accepts router models that are in the user's saved
+ * selection, so those come in through the explicit props below.
+ */
 export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
-    const { profile } = useUserProfile();
+    // Optional: the composer must still render (with the static catalog) when
+    // it is mounted outside a UserProfileProvider.
+    const profile = useOptionalUserProfile()?.profile;
     const ollamaModels = useOllamaModels();
-    const openRouterModels = useOpenRouterModels(
-        profile?.apiKeys.openrouter.configured === true,
-    );
     const openCodeGoModels = useOpenCodeGoModels(
-        profile?.apiKeys.opencodego.configured === true,
+        profile?.apiKeys?.opencodego?.configured === true,
     );
     const [options, setOptions] = useState<ModelOption[]>(base);
     const localModelsEnabled = featureEnabled(
@@ -103,32 +169,34 @@ export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
         getConfiguredModels()
             .then((configured) => {
                 if (cancelled || configured.length === 0) return;
-                const extra = configured.map((model): ModelOption => {
-                    const group =
-                        model.location === "committee"
-                            ? "Committee"
-                            : model.location === "local"
-                              ? "Local"
-                              : model.id.startsWith("openrouter/")
-                                ? "OpenRouter"
-                                : model.id.startsWith("opencode-go/")
-                                  ? "OpenCode Go"
-                                : model.provider === "claude"
-                                ? "Anthropic"
-                                : model.id.startsWith("kimi-")
-                                  ? "Moonshot"
-                                : model.provider === "gemini"
-                                  ? "Google"
-                                  : "OpenAI";
-                    return { id: model.id, label: model.label, group };
-                }).filter(
-                    (model) =>
-                        (model.group !== "Local" || localModelsEnabled) &&
-                        (model.group !== "Committee" ||
-                            committeeModelsEnabled),
-                );
+                const extra = configured
+                    .map((model): ModelOption => {
+                        const group =
+                            model.location === "committee"
+                                ? "Committee"
+                                : model.location === "local"
+                                  ? "Local"
+                                  : model.id.startsWith("opencode-go/")
+                                    ? "OpenCode Go"
+                                    : model.provider === "claude"
+                                      ? "Anthropic"
+                                      : model.id.startsWith("kimi-")
+                                        ? "Moonshot"
+                                        : model.provider === "gemini"
+                                          ? "Google"
+                                          : "OpenAI";
+                        return { id: model.id, label: model.label, group };
+                    })
+                    .filter(
+                        (model) =>
+                            (model.group !== "Local" || localModelsEnabled) &&
+                            (model.group !== "Committee" ||
+                                committeeModelsEnabled),
+                    );
                 const merged = new Map<string, ModelOption>();
-                [...base, ...extra].forEach((model) => merged.set(model.id, model));
+                [...base, ...extra].forEach((model) =>
+                    merged.set(model.id, model),
+                );
                 setOptions(Array.from(merged.values()));
             })
             .catch(() => {});
@@ -139,9 +207,13 @@ export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
 
     const merged = new Map(options.map((model) => [model.id, model]));
     if (localModelsEnabled) {
-        ollamaModels.forEach((model) => merged.set(model.id, model));
+        ollamaModels.forEach((model) =>
+            merged.set(model.id, {
+                ...model,
+                label: modelDisplayName(model.id),
+            }),
+        );
     }
-    openRouterModels.forEach((model) => merged.set(model.id, model));
     openCodeGoModels.forEach((model) => merged.set(model.id, model));
     return Array.from(merged.values());
 }
@@ -149,160 +221,172 @@ export function useConfiguredModelOptions(base: ModelOption[] = MODELS) {
 interface Props {
     value: string;
     onChange: (id: string) => void;
+    /**
+     * Loaded key state, or undefined when it is UNKNOWN (profile still
+     * loading, or the fetch failed and the app degrades). Unknown state fails
+     * open — the backend authoritatively rejects models it cannot serve.
+     */
     apiKeys?: ApiKeyState;
+    /** True while the profile is still loading: render a neutral disabled
+     *  trigger instead of flashing "No API Key" on every page load. */
+    apiKeysLoading?: boolean;
+    openRouterModels?: string[];
+    vercelModels?: string[];
+    compact?: boolean;
 }
 
-export function ModelToggle({ value, onChange, apiKeys }: Props) {
-    const { profile } = useUserProfile();
-    const [isOpen, setIsOpen] = useState(false);
-    const [query, setQuery] = useState("");
-    const options = useConfiguredModelOptions(MODELS);
-    const normalizedQuery = query.trim().toLowerCase();
-    const visibleOptions = normalizedQuery
-        ? options.filter(
-              (model) =>
-                  model.label.toLowerCase().includes(normalizedQuery) ||
-                  model.id.toLowerCase().includes(normalizedQuery),
-          )
-        : options;
-    const selected = options.find((m) => m.id === value);
-    const selectedLabel = selected?.label ?? "Model";
-    const selectedAvailable = apiKeys
-        ? isModelAvailable(value, apiKeys)
-        : true;
-    const selectedLocalModelsEnabled = featureEnabled(
-        profile?.featureFlags,
-        "localModels",
-        profile?.deploymentModules,
-    );
-    const selectedCommitteeModelsEnabled = featureEnabled(
-        profile?.featureFlags,
-        "committeeModels",
-        profile?.deploymentModules,
-    );
+export function openRouterModelOptions(models: string[]): ModelOption[] {
+    return models.map((model) => ({
+        id: `openrouter/${model}`,
+        label: modelDisplayName(model),
+        group: "OpenRouter",
+    }));
+}
 
-    useEffect(() => {
-        if (
-            (selected?.group === "Local" &&
-                !selectedLocalModelsEnabled) ||
-            (selected?.group === "Committee" &&
-                !selectedCommitteeModelsEnabled) ||
-            (value.startsWith("openrouter/") &&
-                profile?.apiKeys.openrouter.configured !== true) ||
-            (value.startsWith("opencode-go/") &&
-                profile?.apiKeys.opencodego.configured !== true)
-        ) {
-            onChange(DEFAULT_MODEL_ID);
+export function vercelModelOptions(models: string[]): ModelOption[] {
+    return models.map((model) => ({
+        id: `vercel/${model}`,
+        label: modelDisplayName(model),
+        group: "Vercel AI Gateway",
+    }));
+}
+
+export function ModelToggle({
+    value,
+    onChange,
+    apiKeys,
+    apiKeysLoading = false,
+    openRouterModels = [],
+    vercelModels = [],
+    compact = false,
+}: Props) {
+    const [isOpen, setIsOpen] = useState(false);
+    const [expandedGroup, setExpandedGroup] = useState<
+        ModelOption["group"] | null
+    >(null);
+    const configuredModels = useConfiguredModelOptions(MODELS);
+    const models = [
+        ...configuredModels,
+        ...openRouterModelOptions(openRouterModels),
+        ...vercelModelOptions(vercelModels),
+    ];
+    const availableModels = models.filter((model) => {
+        // Local and committee models are served without a hosted API key.
+        if (model.group === "Local" || model.group === "Committee") return true;
+        if (apiKeysLoading) return false; // nothing offered until known
+        if (!apiKeys) return true; // unknown after a failed load → fail open
+        return isModelAvailable(model.id, apiKeys);
+    });
+    const selected = availableModels.find((model) => model.id === value);
+    const selectedLabel = apiKeysLoading
+        ? (models.find((model) => model.id === value)?.label ?? "Select model")
+        : (selected?.label ??
+          (availableModels.length > 0 ? "Select model" : "No API Key"));
+    const availableGroups = GROUP_ORDER.flatMap((group) => {
+        const items = availableModels.filter((model) => model.group === group);
+        return items.length ? [{ group, items }] : [];
+    });
+
+    const handleOpenChange = (open: boolean) => {
+        setIsOpen(open);
+        if (open) {
+            setExpandedGroup(
+                selected?.group ??
+                    (value.startsWith("ollama/") ? "Local" : null) ??
+                    GROUP_ORDER.find((group) =>
+                        availableModels.some((model) => model.group === group),
+                    ) ??
+                    null,
+            );
         }
-    }, [
-        onChange,
-        selected?.group,
-        selectedCommitteeModelsEnabled,
-        selectedLocalModelsEnabled,
-        profile?.apiKeys.openrouter.configured,
-        profile?.apiKeys.opencodego.configured,
-        value,
-    ]);
+    };
 
     return (
-        <DropdownMenu
-            onOpenChange={(open) => {
-                setIsOpen(open);
-                if (!open) setQuery("");
-            }}
-        >
+        <DropdownMenu onOpenChange={handleOpenChange}>
             <DropdownMenuTrigger asChild>
                 <button
                     type="button"
-                    className={`flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-2 text-sm text-gray-400 transition-colors hover:text-gray-700 ${isOpen ? "text-gray-700" : ""}`}
+                    aria-label="Choose model"
+                    disabled={apiKeysLoading || availableModels.length === 0}
+                    className={`flex h-8 items-center rounded-full text-sm text-gray-400 transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default ${compact ? "w-8 justify-center px-0" : "gap-1.5 px-2"} ${isOpen ? "text-gray-700" : ""}`}
                     title={
-                        !selectedAvailable
-                            ? "API key missing for selected model"
-                            : "Choose model"
+                        apiKeysLoading
+                            ? "Checking API keys"
+                            : availableModels.length
+                              ? "Choose model"
+                              : "No API key configured"
                     }
                 >
-                    {!selectedAvailable && (
-                        <AlertCircle className="h-3 w-3 shrink-0 text-red-500" />
+                    {compact ? (
+                        <Settings2 className="h-4 w-4 shrink-0" />
+                    ) : (
+                        <>
+                            <span className="max-w-[200px] truncate">
+                                {selectedLabel}
+                            </span>
+                            <ChevronDown
+                                className={`h-3 w-3 shrink-0 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+                            />
+                        </>
                     )}
-                    <span className="max-w-[140px] truncate">{selectedLabel}</span>
-                    <ChevronDown
-                        className={`h-3 w-3 shrink-0 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
-                    />
                 </button>
             </DropdownMenuTrigger>
             <LiquidDropdownContent
-                className="z-50 max-h-[min(70vh,32rem)] w-72 overflow-y-auto p-1.5 text-gray-700"
+                className="z-50 max-h-[min(70vh,32rem)] w-64 overflow-y-auto p-1.5 text-gray-700"
                 side="top"
                 align="end"
             >
-                <div className="sticky top-0 z-10 bg-white/95 p-1 backdrop-blur">
-                    <input
-                        value={query}
-                        onChange={(event) => setQuery(event.target.value)}
-                        onKeyDown={(event) => {
-                            if (event.key !== "Escape") event.stopPropagation();
-                        }}
-                        placeholder="Search models..."
-                        aria-label="Search models"
-                        className="h-8 w-full rounded-lg border border-gray-200 bg-white px-2.5 text-sm text-gray-800 outline-none placeholder:text-gray-400 focus:border-gray-400"
-                    />
-                </div>
-                {GROUP_ORDER.map((group, gi) => {
-                    const items = visibleOptions.filter((m) => m.group === group);
-                    if (items.length === 0) return null;
+                {availableGroups.map(({ group, items }, groupIndex) => {
+                    const expanded = expandedGroup === group;
                     return (
                         <div key={group}>
-                            {gi > 0 && (
+                            {groupIndex > 0 && (
                                 <DropdownMenuSeparator className="-mx-1 my-1 bg-white/70" />
                             )}
-                            <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-gray-400">
-                                {group}
-                            </DropdownMenuLabel>
-                            {items.map((m) => {
-                                const available = apiKeys
-                                    ? isModelAvailable(m.id, apiKeys)
-                                    : true;
-                                return (
+                            <LiquidDropdownItem
+                                aria-expanded={expanded}
+                                className="rounded-xl px-2.5 py-2 font-medium text-gray-700 focus:bg-app-surface-hover focus:text-gray-900 data-[highlighted]:bg-app-surface-hover data-[highlighted]:text-gray-900"
+                                onSelect={(event) => {
+                                    event.preventDefault();
+                                    setExpandedGroup(expanded ? null : group);
+                                }}
+                            >
+                                <span className="flex-1">{group}</span>
+                                <ChevronDown
+                                    className={`h-3.5 w-3.5 text-gray-400 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+                                />
+                            </LiquidDropdownItem>
+                            {expanded &&
+                                items.map((m) => (
                                     <LiquidDropdownItem
                                         key={m.id}
                                         className={`${itemClassName} ${m.id === value ? "bg-app-surface-hover text-gray-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]" : ""}`}
                                         onSelect={() => onChange(m.id)}
                                     >
-                                        <span
-                                            className={`min-w-0 flex-1 ${available ? "" : "text-gray-400"}`}
-                                        >
-                                            <span className="block truncate">{m.label}</span>
-                                            {m.group === "OpenRouter" && (
+                                        <span className="min-w-0 flex-1">
+                                            <span className="block truncate">
+                                                {m.label}
+                                            </span>
+                                            {(m.group === "OpenRouter" ||
+                                                m.group ===
+                                                    "Vercel AI Gateway" ||
+                                                m.group === "OpenCode Go") && (
                                                 <span className="block truncate text-[10px] text-gray-400">
-                                                    {m.id.replace(/^openrouter\//, "")}
-                                                </span>
-                                            )}
-                                            {m.group === "OpenCode Go" && (
-                                                <span className="block truncate text-[10px] text-gray-400">
-                                                    {m.id.replace(/^opencode-go\//, "")}
+                                                    {m.id.replace(
+                                                        /^(?:openrouter|vercel|opencode-go)\//,
+                                                        "",
+                                                    )}
                                                 </span>
                                             )}
                                         </span>
-                                        {!available && (
-                                            <AlertCircle
-                                                className="h-3.5 w-3.5 text-red-500 ml-1"
-                                                aria-label="API key missing"
-                                            />
-                                        )}
-                                        {m.id === value && available && (
-                                            <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
+                                        {m.id === value && (
+                                            <Check className="ml-1 h-3.5 w-3.5 text-gray-600" />
                                         )}
                                     </LiquidDropdownItem>
-                                );
-                            })}
+                                ))}
                         </div>
                     );
                 })}
-                {visibleOptions.length === 0 && (
-                    <p className="px-2.5 py-3 text-center text-xs text-gray-400">
-                        No models found.
-                    </p>
-                )}
             </LiquidDropdownContent>
         </DropdownMenu>
     );

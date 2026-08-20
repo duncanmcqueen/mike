@@ -9,6 +9,7 @@ import { Check, Library, Waypoints, X } from "lucide-react";
 import { ChatInput as ChatInputShell } from "../../../shared/chat/ChatInput";
 import {
   getApiKeyStatus,
+  getUserProfile,
   uploadStandaloneDocument,
   type ApiKeyStatus,
 } from "../../api/mikeApi";
@@ -30,6 +31,7 @@ import type {
   WordChatSubmitOptions,
 } from "../../lib/wordChatTypes";
 import { isModelAvailable, missingModelProvider } from "../../lib/modelCatalog";
+import { loadWithRetry } from "../../lib/composerPreflight";
 
 export interface ChatInputHandle {
   setDraft: (prompt: string) => void;
@@ -78,6 +80,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
     const [model, setModel] = useSelectedModel();
     const [keyStatus, setKeyStatus] = useState<ApiKeyStatus | null>(null);
+    const [keyStatusLoading, setKeyStatusLoading] = useState(true);
+    const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
+    const [vercelModels, setVercelModels] = useState<string[]>([]);
     const [modelError, setModelError] = useState<string | null>(null);
     const localFileInputRef = useRef<HTMLInputElement>(null);
     const mountedRef = useRef(true);
@@ -102,14 +107,34 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
 
     useEffect(() => {
       let cancelled = false;
-      void getApiKeyStatus()
-        .then((status) => {
-          if (!cancelled) setKeyStatus(status);
-        })
-        .catch(() => {
-          // The backend still validates provider credentials when this optional
-          // preflight status request is unavailable.
-        });
+      // Three-state preflight: while it runs the model toggle stays neutral
+      // (no "No API Key"); each request retries once with backoff; after a
+      // final failure keyStatus stays null and availability FAILS OPEN (the
+      // backend still authoritatively rejects models it cannot serve).
+      void Promise.all([
+        loadWithRetry(getApiKeyStatus, {
+          onFinalFailure: (error) =>
+            console.warn(
+              "[word-addin] API key status unavailable after retry; model availability fails open",
+              error,
+            ),
+        }),
+        loadWithRetry(getUserProfile, {
+          onFinalFailure: (error) =>
+            console.warn(
+              "[word-addin] user profile unavailable after retry; router models hidden this session",
+              error,
+            ),
+        }),
+      ]).then(([status, profile]) => {
+        if (cancelled) return;
+        setKeyStatus(status);
+        if (profile) {
+          setOpenRouterModels(profile.openRouterModels ?? []);
+          setVercelModels(profile.vercelModels ?? []);
+        }
+        setKeyStatusLoading(false);
+      });
       return () => {
         cancelled = true;
       };
@@ -275,7 +300,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                   {attachedDocuments.map((document) => (
                     <div
                       key={document.id}
-                      className="inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-1 text-xs text-gray-800 shadow-[0_2px_6px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-xl"
+                      className="inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-1 text-xs text-gray-800 shadow-sm backdrop-blur-xl"
                     >
                       <FileTypeIcon
                         fileType={document.file_type ?? document.filename}
@@ -333,6 +358,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                   setModel(next);
                 }}
                 keyStatus={keyStatus}
+                keyStatusLoading={keyStatusLoading}
+                openRouterModels={openRouterModels}
+                vercelModels={vercelModels}
               />
             }
           />

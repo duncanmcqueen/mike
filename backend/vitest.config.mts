@@ -29,19 +29,19 @@ export default defineConfig({
             // llm model resolution, chat citations, userLookup,
             // documentVersions, userDataCleanup, docxTrackedChanges,
             // documentTypes, chat prompts, systemWorkflows) AND the large,
-            // still-untested feature libs (courtlistener, mcp, chat tool
+            // lightly tested feature libs (courtlistener, mcp, chat tool
             // dispatch, llm providers, spreadsheet handling), so the global
-            // number is still low. Measured on this tree: 43.26% statements,
-            // 36.95% branches, 46.00% functions, 44.83% lines. These floors
+            // number is still low. Measured on this tree: 54.18% statements,
+            // 47.14% branches, 59.03% functions, 56.28% lines. These floors
             // sit just below that (rounded down to whole percents) so CI
             // fails on a *drop*. Floors only go up: when you add tests, raise
             // them in the same PR. Backlog + per-area status:
             // docs/testing-coverage.md.
             thresholds: {
-                statements: 43,
-                branches: 36,
-                functions: 46,
-                lines: 44,
+                statements: 54,
+                branches: 47,
+                functions: 59,
+                lines: 56,
             },
         },
     },

@@ -4,9 +4,9 @@ import { useState } from "react";
 import { RefreshCw } from "lucide-react";
 
 import { ApiKeyField } from "@/app/components/settings/ApiKeyField";
+import { RouterSettingsSection } from "@/app/components/settings/RouterSettingsSection";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { refreshOllamaModels } from "@/app/hooks/useOllamaModels";
-import { refreshOpenRouterModels } from "@/app/hooks/useOpenRouterModels";
 import { refreshOpenCodeGoModels } from "@/app/hooks/useOpenCodeGoModels";
 import { SettingsSection } from "../SettingsSection";
 
@@ -36,7 +36,14 @@ const MODEL_API_KEY_FIELDS = [
         label: "OpenRouter API Key",
         placeholder: "sk-or-...",
         description:
-            "After saving, choose any available OpenRouter model from the searchable model picker.",
+            "After saving, pick the OpenRouter models you want offered in the composer below.",
+    },
+    {
+        provider: "vercel",
+        label: "Vercel AI Gateway API Key",
+        placeholder: "vck_...",
+        description:
+            "After saving, pick the Vercel AI Gateway models you want offered in the composer below.",
     },
     {
         provider: "opencodego",
@@ -67,7 +74,6 @@ export default function ApiKeysPage() {
             await Promise.all([
                 reloadProfile(),
                 refreshOllamaModels(),
-                refreshOpenRouterModels(),
                 refreshOpenCodeGoModels(),
             ]);
         } finally {
@@ -129,26 +135,38 @@ export default function ApiKeysPage() {
                 ))}
             </SettingsSection>
 
-            <SettingsSection className="mt-8">
-                {OTHER_API_KEY_FIELDS.map((field) => (
-                    <ApiKeyField
-                        key={field.provider}
-                        label={field.label}
-                        description={field.description}
-                        placeholder={field.placeholder}
-                        hasSavedKey={
-                            !!profile?.apiKeys[field.provider].configured
-                        }
-                        isServerConfigured={
-                            profile?.apiKeys[field.provider].source === "env"
-                        }
-                        onSave={(value) =>
-                            updateApiKey(field.provider, value.trim() || null)
-                        }
-                        onRemove={() => updateApiKey(field.provider, null)}
-                    />
-                ))}
-            </SettingsSection>
+            <div className="mt-8">
+                <RouterSettingsSection />
+            </div>
+
+            <div className="mt-8">
+                <SettingsSection>
+                    {OTHER_API_KEY_FIELDS.map((field) => (
+                        <ApiKeyField
+                            key={field.provider}
+                            label={field.label}
+                            description={field.description}
+                            placeholder={field.placeholder}
+                            hasSavedKey={
+                                !!profile?.apiKeys[field.provider].configured
+                            }
+                            isServerConfigured={
+                                profile?.apiKeys[field.provider].source ===
+                                "env"
+                            }
+                            onSave={(value) =>
+                                updateApiKey(
+                                    field.provider,
+                                    value.trim() || null,
+                                )
+                            }
+                            onRemove={() =>
+                                updateApiKey(field.provider, null)
+                            }
+                        />
+                    ))}
+                </SettingsSection>
+            </div>
         </div>
     );
 }

@@ -560,3 +560,23 @@ npm run build --prefix backend
 npm run build --prefix frontend
 npm run lint --prefix frontend
 ```
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [Local development](docs/local-development.md)
+- [Manual and production deployment](docs/deployment.md)
+- [Optional deployment modules](docs/deployment-modules.md)
+- [Model orchestration](docs/model-orchestration.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [CourtListener integration](docs/courtlistener.md)
+- [Microsoft Word add-in](word-addin/README.md)
+- [Tamper-evident exports](docs/tamper-evident-exports.md)
+- [Safe local testing](docs/safe-local-testing.md)
+- [End-to-end testing and CI](docs/e2e-ci.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+
+## License
+
+Mike is available under the [GNU Affero General Public License v3.0](LICENSE).

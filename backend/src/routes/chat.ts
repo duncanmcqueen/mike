@@ -29,8 +29,8 @@ import {
     reserveAssistantMessage,
     withoutEmptyAssistantReservations,
 } from "../lib/chat";
-import { completeText } from "../lib/llm";
 import { getUserModelSettings } from "../lib/userSettings";
+import { generateAssistantChatTitle } from "../lib/chatTitle";
 import { checkProjectAccess } from "../lib/access";
 import {
     safeErrorLog,
@@ -51,17 +51,6 @@ const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
 };
-
-const TITLE_FALLBACK = "Misc. Query";
-
-function normalizeGeneratedTitle(raw: string): string {
-    const title = raw
-        .trim()
-        .replace(/^["'`]+|["'`.,:;!?]+$/g, "")
-        .trim();
-    if (!title) return TITLE_FALLBACK;
-    return title.slice(0, 80);
-}
 
 type AccessibleChat = {
     id: string;
@@ -394,13 +383,11 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
             userId,
             db,
         );
-        const titleText = await completeText({
+        const title = await generateAssistantChatTitle({
             model: title_model,
-            user: `Generate a concise title (3–6 words) for a chat in an AI Legal Platform that starts with this message. The title should describe the topic or document — do NOT include words like "Legal Assistant", "AI", "Chat", or any similar prefix. If there is not enough information to generate a title, return exactly "${TITLE_FALLBACK}". Return only the title, no quotes or punctuation.\n\nMessage: ${message.slice(0, 500)}`,
-            maxTokens: 64,
+            message,
             apiKeys: api_keys,
         });
-        const title = normalizeGeneratedTitle(titleText);
 
         await db.from("chats").update({ title }).eq("id", chatId);
 
@@ -628,6 +615,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     const {
         api_keys: apiKeys,
         legal_research_us: legalResearchUs,
+        title_model: titleModel,
     } = await getUserModelSettings(userId, db);
     const wordContext = buildContextSuffix({
         editMode: body.editMode,
@@ -707,6 +695,48 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             })}\n\n`,
         );
 
+        const shouldGenerateTitle =
+            !chatTitle && !!lastUser?.content && !askInputsResponse;
+        const titleMessage = lastUser
+            ? [
+                  lastUser.content,
+                  lastUser.workflow
+                      ? `Workflow: ${lastUser.workflow.title}`
+                      : "",
+                  lastUser.files?.length
+                      ? `Files: ${lastUser.files.map((file) => file.filename).join(", ")}`
+                      : "",
+              ]
+                  .filter(Boolean)
+                  .join("\n")
+            : "";
+        const titlePromise = shouldGenerateTitle
+            ? generateAssistantChatTitle({
+                  model: titleModel,
+                  message: titleMessage,
+                  apiKeys,
+              })
+                  .then(async (title) => {
+                      const { error } = await db
+                          .from("chats")
+                          .update({ title })
+                          .eq("id", chatId);
+                      if (error) throw error;
+                      chatTitle = title;
+                      if (!stream.signal.aborted) {
+                          write(
+                              `data: ${JSON.stringify({ type: "chat_title", chatId, title })}\n\n`,
+                          );
+                      }
+                  })
+                  .catch((error) => {
+                      console.error(
+                          "[chat/stream] failed to generate chat title",
+                          safeErrorLog(error),
+                      );
+                  })
+            : Promise.resolve();
+
         const { fullText, events, citations } = await runLLMStream({
             apiMessages,
             docStore,
@@ -769,11 +799,20 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             }
         }
 
+        await titlePromise;
+
         if (!chatTitle && lastUser?.content) {
+            const title = lastUser.content.slice(0, 120);
             await db
                 .from("chats")
-                .update({ title: lastUser.content.slice(0, 120) })
+                .update({ title })
                 .eq("id", chatId);
+            chatTitle = title;
+            if (shouldGenerateTitle && !stream.signal.aborted) {
+                write(
+                    `data: ${JSON.stringify({ type: "chat_title", chatId, title })}\n\n`,
+                );
+            }
         }
         void recordChatTurn(
             db,

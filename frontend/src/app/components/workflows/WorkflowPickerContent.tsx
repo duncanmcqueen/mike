@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, MessageSquare, Table2, X } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import { SearchBar } from "@/app/components/ui/search-bar";
+import {
+    ChatSkeuoIcon,
+    TabularReviewSkeuoIcon,
+} from "@/app/components/shared/AppSidebarSkeuoIcons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ColumnConfig, Workflow } from "../shared/types";
@@ -80,7 +84,6 @@ export function WorkflowPickerContent({
               [
                   workflow.metadata.title,
                   workflow.metadata.practice ?? "",
-                  workflow.is_system ? "System" : "Custom",
               ]
                   .join(" ")
                   .toLowerCase()
@@ -146,8 +149,8 @@ export function WorkflowPickerContent({
                                 const isSelected = selected?.id === workflow.id;
                                 const TypeIcon =
                                     workflow.metadata.type === "tabular"
-                                        ? Table2
-                                        : MessageSquare;
+                                        ? TabularReviewSkeuoIcon
+                                        : ChatSkeuoIcon;
                                 return (
                                     <button
                                         key={workflow.id}
@@ -176,13 +179,12 @@ export function WorkflowPickerContent({
                                         </span>
                                         {showTypeIcon ? (
                                             <TypeIcon className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                                        ) : (
+                                        ) : !selected &&
+                                          workflow.metadata.practice ? (
                                             <span className="shrink-0 text-xs text-gray-400">
-                                                {workflow.is_system
-                                                    ? "System"
-                                                    : "Custom"}
+                                                {workflow.metadata.practice}
                                             </span>
-                                        )}
+                                        ) : null}
                                     </button>
                                 );
                             })}

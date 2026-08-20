@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, Moon, Trash2 } from "lucide-react";
+import { Moon, Trash2 } from "lucide-react";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
@@ -64,11 +64,6 @@ export default function SettingsPage() {
             setEmail(user.pendingEmail || user.email);
         }
     }, [user?.email, user?.pendingEmail]);
-
-    const handleLogout = async () => {
-        await signOut();
-        router.push("/");
-    };
 
     const handleDeleteAccount = async () => {
         devLog("[account/mfa] delete account requested");
@@ -192,8 +187,8 @@ export default function SettingsPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Appearance
                 </h2>
-                <SettingsSection className="p-4">
-                    <div className="flex items-center justify-between gap-4">
+                <SettingsSection>
+                    <div className="flex items-center justify-between gap-4 p-4">
                         <div className="flex min-w-0 items-center gap-3">
                             <Moon className="h-5 w-5 shrink-0 text-gray-500" />
                             <div>
@@ -228,8 +223,8 @@ export default function SettingsPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Profile
                 </h2>
-                <SettingsSection className="p-4">
-                    <div className="space-y-8">
+                <SettingsSection>
+                    <div className="space-y-8 p-4">
                         <div>
                             <FieldLabel className="text-sm text-gray-600">
                                 Display Name
@@ -254,13 +249,11 @@ export default function SettingsPage() {
                                         }
                                         className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
                                     >
-                                        {isSavingName ? (
-                                            "Saving..."
-                                        ) : saved ? (
-                                            "Saved"
-                                        ) : (
-                                            "Save"
-                                        )}
+                                        {isSavingName
+                                            ? "Saving..."
+                                            : saved
+                                              ? "Saved"
+                                              : "Save"}
                                     </button>
                                 </div>
                             </div>
@@ -290,13 +283,11 @@ export default function SettingsPage() {
                                         }
                                         className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
                                     >
-                                        {isSavingOrg ? (
-                                            "Saving..."
-                                        ) : orgSaved ? (
-                                            "Saved"
-                                        ) : (
-                                            "Save"
-                                        )}
+                                        {isSavingOrg
+                                            ? "Saving..."
+                                            : orgSaved
+                                              ? "Saved"
+                                              : "Save"}
                                     </button>
                                 </div>
                             </div>
@@ -310,8 +301,8 @@ export default function SettingsPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Email
                 </h2>
-                <SettingsSection className="p-4">
-                    <div className="space-y-2">
+                <SettingsSection>
+                    <div className="space-y-2 p-4">
                         <SettingsTextInput
                             type="email"
                             value={email}
@@ -350,13 +341,11 @@ export default function SettingsPage() {
                                 }
                                 className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
                             >
-                                {isSavingEmail ? (
-                                    "Saving..."
-                                ) : emailSaved ? (
-                                    "Saved"
-                                ) : (
-                                    "Save"
-                                )}
+                                {isSavingEmail
+                                    ? "Saving..."
+                                    : emailSaved
+                                      ? "Saved"
+                                      : "Save"}
                             </button>
                         </div>
                     </div>
@@ -368,8 +357,8 @@ export default function SettingsPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Usage Plan
                 </h2>
-                <SettingsSection className="p-4">
-                    <div>
+                <SettingsSection>
+                    <div className="p-4">
                         <p className="text-base font-medium text-gray-500 capitalize">
                             {profile?.tier || "Free"}
                         </p>
@@ -377,47 +366,33 @@ export default function SettingsPage() {
                 </SettingsSection>
             </section>
 
-            {/* Actions */}
-            <section className="space-y-3">
-                <h2 className="text-2xl font-medium font-serif text-gray-900">
-                    Actions
-                </h2>
-                <PillButton
-                    tone="black"
-                    size="sm"
-                    onClick={handleLogout}
-                    className="w-full sm:w-auto"
-                >
-                    <LogOut className="h-4 w-4 shrink-0" />
-                    Sign Out
-                </PillButton>
-            </section>
-
             {/* Danger Zone */}
             <section className="space-y-3">
                 <h2 className="text-2xl font-medium font-serif text-red-600">
                     Danger Zone
                 </h2>
-                <SettingsSection className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="space-y-1">
-                        <p className="text-sm font-medium text-gray-700">
+                <SettingsSection>
+                    <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Delete account
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Permanently delete your account and all
+                                associated data. This action cannot be undone.
+                            </p>
+                        </div>
+                        <PillButton
+                            tone="danger"
+                            size="sm"
+                            onClick={() => setDeleteConfirm(true)}
+                            disabled={isDeleting}
+                            className="w-full shrink-0 sm:w-auto"
+                        >
+                            <Trash2 className="h-4 w-4 shrink-0" />
                             Delete account
-                        </p>
-                        <p className="text-sm text-gray-500">
-                            Permanently delete your account and all associated
-                            data. This action cannot be undone.
-                        </p>
+                        </PillButton>
                     </div>
-                    <PillButton
-                        tone="danger"
-                        size="sm"
-                        onClick={() => setDeleteConfirm(true)}
-                        disabled={isDeleting}
-                        className="w-full shrink-0 sm:w-auto"
-                    >
-                        <Trash2 className="h-4 w-4 shrink-0" />
-                        Delete account
-                    </PillButton>
                 </SettingsSection>
             </section>
             <ConfirmPopup
@@ -443,7 +418,9 @@ export default function SettingsPage() {
                 open={accountDeleteMfaOpen}
                 onCancel={() => setAccountDeleteMfaOpen(false)}
                 onVerified={() => {
-                    devLog("[account/mfa] account delete verification callback");
+                    devLog(
+                        "[account/mfa] account delete verification callback",
+                    );
                     setAccountDeleteMfaOpen(false);
                     void handleDeleteAccount();
                 }}

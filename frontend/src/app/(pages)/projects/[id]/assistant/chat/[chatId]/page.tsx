@@ -976,16 +976,22 @@ function ProjectAssistantChatPageInner({
                         ? {
                               label: project.name,
                               onClick: () =>
-                                  router.push(`/projects/${projectId}/assistant`),
+                                  router.push(`/projects/${projectId}`),
                               title: "Back to project",
                           }
                         : {
                               loading: true,
                               skeletonClassName: "w-32",
                               onClick: () =>
-                                  router.push(`/projects/${projectId}/assistant`),
+                                  router.push(`/projects/${projectId}`),
                               title: "Back to project",
                           },
+                    {
+                        label: "Chats",
+                        onClick: () =>
+                            router.push(`/projects/${projectId}/assistant`),
+                        title: "Back to Chats",
+                    },
                     chatLoaded
                         ? {
                               label: chatTitle ?? "Untitled New Chat",
@@ -1392,6 +1398,18 @@ function ProjectAssistantChatPageInner({
                                                 files={msg.files}
                                                 workflow={msg.workflow}
                                                 playbook={msg.playbook}
+                                                onFileClick={(file) => {
+                                                    if (!file.document_id)
+                                                        return;
+                                                    handleOpenDocument({
+                                                        documentId:
+                                                            file.document_id,
+                                                        filename:
+                                                            file.filename,
+                                                        versionId: null,
+                                                        versionNumber: null,
+                                                    });
+                                                }}
                                             />
                                         </div>
                                     ) : (
@@ -1443,6 +1461,7 @@ function ProjectAssistantChatPageInner({
                                 isLoading={isResponseLoading}
                                 hideAddDocButton
                                 projectId={projectId}
+                                onDocumentClick={handleDocClick}
                                 onDocumentsUploaded={(documents) =>
                                     setProject((prev) =>
                                         prev

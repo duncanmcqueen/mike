@@ -7,6 +7,8 @@ export type Provider =
     | "gemini"
     | "openai"
     | "openai-compatible"
+    | "openrouter"
+    | "vercel"
     | "ollama";
 
 export type OpenAIToolSchema = {
@@ -48,6 +50,7 @@ export type UserApiKeys = {
     openai?: string | null;
     openrouter?: string | null;
     opencodego?: string | null;
+    vercel?: string | null;
     courtlistener?: string | null;
 };
 

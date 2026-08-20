@@ -4,7 +4,9 @@
  */
 
 import { getAuthToken } from "@/app/lib/auth";
+import { isPanelDocument } from "@/app/components/shared/types";
 import type {
+    AskInputResponseItem,
     AssistantEvent,
     Chat,
     ChatDetailOut,
@@ -13,6 +15,8 @@ import type {
     Folder,
     LibraryFolder,
     Message,
+    MessageFile,
+    PanelDocument,
     OpenSourceWorkflowContributorMode,
     OpenSourceWorkflowResponse,
     Project,
@@ -25,13 +29,17 @@ import type {
     TabularReviewDetailOut,
 } from "@/app/components/shared/types";
 
+type AskInputsResponsePayload = {
+    responses: AskInputResponseItem[];
+};
+
 // Server-side shape before mapping
 interface ServerMessage {
     id: string;
     chat_id: string;
     role: "user" | "assistant";
     content: string | AssistantEvent[] | null;
-    files?: { filename: string; document_id?: string }[] | null;
+    files?: MessageFile[] | null;
     workflow?: { id: string; title: string } | null;
     citations?: Citation[] | null;
     created_at: string;
@@ -52,7 +60,11 @@ export class MikeApiError extends Error {
     status: number;
     code: string | null;
 
-    constructor(args: { message: string; status: number; code?: string | null }) {
+    constructor(args: {
+        message: string;
+        status: number;
+        code?: string | null;
+    }) {
         super(args.message);
         this.name = "MikeApiError";
         this.status = args.status;
@@ -192,13 +204,13 @@ export async function listProjectsPage(pagination?: {
     if (pagination?.offset) params.set("offset", String(pagination.offset));
     if (pagination?.search) params.set("search", pagination.search);
     if (pagination?.sortKey) params.set("sort_key", pagination.sortKey);
-  if (pagination?.sortDirection)
-    params.set("sort_direction", pagination.sortDirection);
+    if (pagination?.sortDirection)
+        params.set("sort_direction", pagination.sortDirection);
     if (pagination?.scope && pagination.scope !== "all")
         params.set("scope", pagination.scope);
     if (pagination?.practice) params.set("practice", pagination.practice);
-  if (pagination?.ownerUserId)
-    params.set("owner_user_id", pagination.ownerUserId);
+    if (pagination?.ownerUserId)
+        params.set("owner_user_id", pagination.ownerUserId);
 
     const qs = params.toString() ? `?${params.toString()}` : "";
     return apiRequest<Project[]>(`/projects${qs}`, {
@@ -207,64 +219,65 @@ export async function listProjectsPage(pagination?: {
 }
 
 export async function listProjectSummaries(pagination?: {
-  limit?: number;
-  offset?: number;
-  signal?: AbortSignal;
-}): Promise<Project[]> {
-  const params = new URLSearchParams();
-  if (pagination?.limit != null) params.set("limit", String(pagination.limit));
-  if (pagination?.offset != null)
-    params.set("offset", String(pagination.offset));
-  params.set("view", "summary");
-  return apiRequest<Project[]>(`/projects?${params.toString()}`, {
-    signal: pagination?.signal,
-  });
-}
-
-export interface ProjectDirectoryLevel {
-  documents: Document[];
-  folders: Folder[];
-  documentsHasMore: boolean;
-}
-
-export async function getProjectDirectoryLevel(
-  projectId: string,
-  options?: {
-    parentFolderId?: string | null;
     limit?: number;
     offset?: number;
     signal?: AbortSignal;
-  },
-): Promise<ProjectDirectoryLevel> {
-  const params = new URLSearchParams();
-  if (options?.parentFolderId)
-    params.set("parent_folder_id", options.parentFolderId);
-  if (options?.limit != null) params.set("limit", String(options.limit));
-  if (options?.offset != null) params.set("offset", String(options.offset));
-  const query = params.toString();
-  return apiRequest<ProjectDirectoryLevel>(
-    `/projects/${projectId}/directory${query ? `?${query}` : ""}`,
-    {
-      signal: options?.signal,
+}): Promise<Project[]> {
+    const params = new URLSearchParams();
+    if (pagination?.limit != null)
+        params.set("limit", String(pagination.limit));
+    if (pagination?.offset != null)
+        params.set("offset", String(pagination.offset));
+    params.set("view", "summary");
+    return apiRequest<Project[]>(`/projects?${params.toString()}`, {
+        signal: pagination?.signal,
+    });
+}
+
+export interface ProjectDirectoryLevel {
+    documents: Document[];
+    folders: Folder[];
+    documentsHasMore: boolean;
+}
+
+export async function getProjectDirectoryLevel(
+    projectId: string,
+    options?: {
+        parentFolderId?: string | null;
+        limit?: number;
+        offset?: number;
+        signal?: AbortSignal;
     },
-  );
+): Promise<ProjectDirectoryLevel> {
+    const params = new URLSearchParams();
+    if (options?.parentFolderId)
+        params.set("parent_folder_id", options.parentFolderId);
+    if (options?.limit != null) params.set("limit", String(options.limit));
+    if (options?.offset != null) params.set("offset", String(options.offset));
+    const query = params.toString();
+    return apiRequest<ProjectDirectoryLevel>(
+        `/projects/${projectId}/directory${query ? `?${query}` : ""}`,
+        {
+            signal: options?.signal,
+        },
+    );
 }
 
 export async function searchProjectDirectory(options: {
-  search: string;
-  limit?: number;
-  offset?: number;
-  signal?: AbortSignal;
+    search: string;
+    limit?: number;
+    offset?: number;
+    signal?: AbortSignal;
 }): Promise<Project[]> {
-  const params = new URLSearchParams({
-    view: "directory-search",
-    search: options.search,
-  });
-  if (options.limit != null) params.set("limit", String(options.limit));
-  if (options.offset != null) params.set("offset", String(options.offset));
-  return apiRequest<Project[]>(`/projects?${params}`, {
-    signal: options.signal,
-  });
+    const params = new URLSearchParams({
+        view: "directory-search",
+        search: options.search,
+    });
+    if (options.limit != null) params.set("limit", String(options.limit));
+    if (options.offset != null) params.set("offset", String(options.offset));
+    return apiRequest<Project[]>(`/projects?${params}`, {
+        signal: options.signal,
+    });
 }
 
 export async function listProjectIds(options?: {
@@ -276,28 +289,28 @@ export async function listProjectIds(options?: {
 }): Promise<{ id: string; user_id: string }[]> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
-  if (options?.scope && options.scope !== "all")
-    params.set("scope", options.scope);
+    if (options?.scope && options.scope !== "all")
+        params.set("scope", options.scope);
     if (options?.practice) params.set("practice", options.practice);
     if (options?.ownerUserId) params.set("owner_user_id", options.ownerUserId);
 
     const qs = params.toString() ? `?${params.toString()}` : "";
-  return apiRequest<{ id: string; user_id: string }[]>(`/projects/ids${qs}`, {
-    signal: options?.signal,
-  });
+    return apiRequest<{ id: string; user_id: string }[]>(`/projects/ids${qs}`, {
+        signal: options?.signal,
+    });
 }
 
 export interface ProjectFilterOptions {
-  practices: string[];
-  owners: { value: string; label: string }[];
+    practices: string[];
+    owners: { value: string; label: string }[];
 }
 
 export async function getProjectFilterOptions(
-  signal?: AbortSignal,
+    signal?: AbortSignal,
 ): Promise<ProjectFilterOptions> {
-  return apiRequest<ProjectFilterOptions>("/projects/filter-options", {
-    signal,
-  });
+    return apiRequest<ProjectFilterOptions>("/projects/filter-options", {
+        signal,
+    });
 }
 
 export async function createProject(
@@ -514,6 +527,9 @@ export interface UserProfile {
     darkMode: boolean;
     featureFlags: import("./featureFlags").UserFeatureFlags;
     deploymentModules: import("./featureFlags").DeploymentModules;
+    quickActionsVisible: boolean;
+    openRouterModels: string[];
+    vercelModels: string[];
     apiKeyStatus: ApiKeyStatus;
 }
 
@@ -619,6 +635,9 @@ export async function updateUserProfile(payload: {
     emailIntegrationEnabled?: boolean;
     darkMode?: boolean;
     featureFlags?: import("./featureFlags").UserFeatureFlags;
+    quickActionsVisible?: boolean;
+    openRouterModels?: string[];
+    vercelModels?: string[];
 }): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile", {
         method: "PATCH",
@@ -657,6 +676,7 @@ export type ApiKeyProvider =
     | "gemini"
     | "openai"
     | "openrouter"
+    | "vercel"
     | "opencodego"
     | "courtlistener";
 export type ApiKeySource = "user" | "env" | null;
@@ -682,10 +702,15 @@ export interface OllamaModelOption {
     group: "Local";
 }
 
-export interface OpenRouterModelOption {
+export interface RouterCatalogModel {
     id: string;
     label: string;
-    group: "OpenRouter";
+    pricing?: {
+        input?: string;
+        output?: string;
+        variesByProvider?: boolean;
+        tiered?: boolean;
+    };
 }
 
 export interface OpenCodeGoModelOption {
@@ -701,16 +726,21 @@ export async function getOllamaModels(): Promise<OllamaModelOption[]> {
     return models;
 }
 
-export async function getOpenRouterModels(): Promise<OpenRouterModelOption[]> {
-    const { models } = await apiRequest<{ models: OpenRouterModelOption[] }>(
+export async function getOpenRouterModels(): Promise<RouterCatalogModel[]> {
+    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
         "/models/openrouter",
     );
     return models;
 }
 
-export async function getOpenCodeGoModels(): Promise<
-    OpenCodeGoModelOption[]
-> {
+export async function getVercelModels(): Promise<RouterCatalogModel[]> {
+    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
+        "/models/vercel",
+    );
+    return models;
+}
+
+export async function getOpenCodeGoModels(): Promise<OpenCodeGoModelOption[]> {
     const { models } = await apiRequest<{ models: OpenCodeGoModelOption[] }>(
         "/models/opencode-go",
     );
@@ -766,7 +796,9 @@ export async function listMcpConnectors(): Promise<McpConnectorSummary[]> {
 export async function getMcpConnector(
     connectorId: string,
 ): Promise<McpConnectorSummary> {
-  return apiRequest<McpConnectorSummary>(`/user/mcp-connectors/${connectorId}`);
+    return apiRequest<McpConnectorSummary>(
+        `/user/mcp-connectors/${connectorId}`,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,10 +1209,10 @@ export async function refreshMcpConnectorTools(
 export async function startMcpConnectorOAuth(
     connectorId: string,
 ): Promise<{ authorizationUrl: string | null; alreadyAuthorized: boolean }> {
-  return apiRequest<{
-    authorizationUrl: string | null;
-    alreadyAuthorized: boolean;
-  }>(`/user/mcp-connectors/${connectorId}/oauth/start`, { method: "POST" });
+    return apiRequest<{
+        authorizationUrl: string | null;
+        alreadyAuthorized: boolean;
+    }>(`/user/mcp-connectors/${connectorId}/oauth/start`, { method: "POST" });
 }
 
 export async function setMcpToolEnabled(
@@ -1265,11 +1297,11 @@ export async function renameProjectFolder(
     folderId: string,
     name: string,
 ): Promise<Folder> {
-  return apiRequest<Folder>(`/projects/${projectId}/folders/${folderId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name }),
-  });
+    return apiRequest<Folder>(`/projects/${projectId}/folders/${folderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+    });
 }
 
 export async function deleteProjectFolder(
@@ -1286,11 +1318,11 @@ export async function moveSubfolderToFolder(
     folderId: string,
     parentFolderId: string | null,
 ): Promise<Folder> {
-  return apiRequest<Folder>(`/projects/${projectId}/folders/${folderId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ parent_folder_id: parentFolderId }),
-  });
+    return apiRequest<Folder>(`/projects/${projectId}/folders/${folderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parent_folder_id: parentFolderId }),
+    });
 }
 
 export async function moveDocumentToFolder(
@@ -1337,21 +1369,22 @@ export interface LibraryPagination {
 }
 
 export interface LibrarySearchParams extends LibraryPagination {
-  search?: string;
-  fileType?: string;
-  sortKey?: "name" | "type" | "size" | "version" | "created" | "updated";
-  sortDirection?: "asc" | "desc";
-  signal?: AbortSignal;
+    search?: string;
+    fileType?: string;
+    sortKey?: "name" | "type" | "size" | "version" | "created" | "updated";
+    sortDirection?: "asc" | "desc";
+    signal?: AbortSignal;
 }
 
 export interface LibrarySearchResults {
-  documents: Document[];
-  documentsHasMore: boolean;
+    documents: Document[];
+    documentsHasMore: boolean;
 }
 
 function libraryPaginationQuery(pagination?: LibraryPagination): string {
     const params = new URLSearchParams();
-    if (pagination?.limit != null) params.set("limit", String(pagination.limit));
+    if (pagination?.limit != null)
+        params.set("limit", String(pagination.limit));
     if (pagination?.offset != null)
         params.set("offset", String(pagination.offset));
     const qs = params.toString();
@@ -1382,69 +1415,80 @@ export async function getLibraryFolderChildren(
     );
 }
 
+export async function getLibraryFolderPath(
+    kind: LibraryKind,
+    folderId: string,
+): Promise<{ folders: LibraryFolder[] }> {
+    return apiRequest<{ folders: LibraryFolder[] }>(
+        `/library/${kind}/folders/${folderId}`,
+    );
+}
+
 export async function getLibraryLevels(
-  kind: LibraryKind,
-  levels: { parentId: string | null; limit: number }[],
+    kind: LibraryKind,
+    levels: { parentId: string | null; limit: number }[],
 ): Promise<{
-  levels: Array<LibraryCollection & { parentId: string | null }>;
+    levels: Array<LibraryCollection & { parentId: string | null }>;
 }> {
-  return apiRequest(`/library/${kind}/levels`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ levels }),
-  });
+    return apiRequest(`/library/${kind}/levels`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ levels }),
+    });
 }
 
 export async function searchLibraryDocuments(
-  kind: LibraryKind,
-  options: LibrarySearchParams,
+    kind: LibraryKind,
+    options: LibrarySearchParams,
 ): Promise<LibrarySearchResults> {
-  const params = new URLSearchParams({ view: "search" });
-  if (options.limit != null) params.set("limit", String(options.limit));
-  if (options.offset != null) params.set("offset", String(options.offset));
-  if (options.search) params.set("search", options.search);
-  if (options.fileType) params.set("file_type", options.fileType);
-  if (options.sortKey) params.set("sort_key", options.sortKey);
-  if (options.sortDirection)
-    params.set("sort_direction", options.sortDirection);
-  return apiRequest<LibrarySearchResults>(
-    `/library/${kind}?${params.toString()}`,
-    { signal: options.signal },
-  );
+    const params = new URLSearchParams({ view: "search" });
+    if (options.limit != null) params.set("limit", String(options.limit));
+    if (options.offset != null) params.set("offset", String(options.offset));
+    if (options.search) params.set("search", options.search);
+    if (options.fileType) params.set("file_type", options.fileType);
+    if (options.sortKey) params.set("sort_key", options.sortKey);
+    if (options.sortDirection)
+        params.set("sort_direction", options.sortDirection);
+    return apiRequest<LibrarySearchResults>(
+        `/library/${kind}?${params.toString()}`,
+        { signal: options.signal },
+    );
 }
 
 export async function getLibraryFilterOptions(
-  kind: LibraryKind,
+    kind: LibraryKind,
 ): Promise<{ fileTypes: string[] }> {
-  return apiRequest<{ fileTypes: string[] }>(`/library/${kind}/filter-options`);
+    return apiRequest<{ fileTypes: string[] }>(
+        `/library/${kind}/filter-options`,
+    );
 }
 
 export async function listLibraryDocumentIds(
-  kind: LibraryKind,
-  options?: { search?: string; fileType?: string; signal?: AbortSignal },
+    kind: LibraryKind,
+    options?: { search?: string; fileType?: string; signal?: AbortSignal },
 ): Promise<string[]> {
-  const params = new URLSearchParams();
-  if (options?.search) params.set("search", options.search);
-  if (options?.fileType) params.set("file_type", options.fileType);
-  const query = params.toString();
-  return apiRequest<string[]>(
-    `/library/${kind}/ids${query ? `?${query}` : ""}`,
-    { signal: options?.signal },
-  );
+    const params = new URLSearchParams();
+    if (options?.search) params.set("search", options.search);
+    if (options?.fileType) params.set("file_type", options.fileType);
+    const query = params.toString();
+    return apiRequest<string[]>(
+        `/library/${kind}/ids${query ? `?${query}` : ""}`,
+        { signal: options?.signal },
+    );
 }
 
 export async function bulkDeleteLibraryDocuments(
-  kind: LibraryKind,
-  ids: string[],
+    kind: LibraryKind,
+    ids: string[],
 ): Promise<{ deletedIds: string[] }> {
-  return apiRequest<{ deletedIds: string[] }>(
-    `/library/${kind}/documents/bulk-delete`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids }),
-    },
-  );
+    return apiRequest<{ deletedIds: string[] }>(
+        `/library/${kind}/documents/bulk-delete`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids }),
+        },
+    );
 }
 
 export async function uploadLibraryDocument(
@@ -1663,11 +1707,14 @@ export async function uploadProjectDocument(
     const authHeaders = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
-  const response = await fetch(`${API_BASE}/projects/${projectId}/documents`, {
+    const response = await fetch(
+        `${API_BASE}/projects/${projectId}/documents`,
+        {
             method: "POST",
             headers: { ...authHeaders },
             body: form,
-  });
+        },
+    );
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<Document>;
 }
@@ -1691,6 +1738,26 @@ export async function listStandaloneDocuments(): Promise<Document[]> {
 
 export async function deleteDocument(documentId: string): Promise<void> {
     await apiRequest(`/single-documents/${documentId}`, { method: "DELETE" });
+}
+
+export interface DocumentEditResolution {
+    ok: boolean;
+    already_resolved?: boolean;
+    status?: "accepted" | "rejected";
+    version_id: string | null;
+    download_url: string | null;
+    remaining_pending?: number;
+}
+
+export async function resolveDocumentEdit(
+    documentId: string,
+    editId: string,
+    verb: "accept" | "reject",
+): Promise<DocumentEditResolution> {
+    return apiRequest<DocumentEditResolution>(
+        `/single-documents/${encodeURIComponent(documentId)}/edits/${encodeURIComponent(editId)}/${verb}`,
+        { method: "POST" },
+    );
 }
 
 export async function getDocumentUrl(
@@ -1736,12 +1803,12 @@ export async function createChat(payload?: {
 }
 
 export async function listChats(options?: {
-  limit?: number;
-  offset?: number;
+    limit?: number;
+    offset?: number;
 }): Promise<Chat[]> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", String(options.limit));
-  if (options?.offset) params.set("offset", String(options.offset));
+    if (options?.offset) params.set("offset", String(options.offset));
     const query = params.toString();
     return apiRequest<Chat[]>(`/chat${query ? `?${query}` : ""}`);
 }
@@ -1809,37 +1876,33 @@ export async function generateChatTitle(
     });
 }
 
-export type CaseLawOpinion = {
-    opinionId: number | null;
-    apiUrl?: string | null;
-    type: string | null;
-    author: string | null;
-    url: string | null;
-    text?: string | null;
-    html?: string | null;
-};
+const panelDocumentRequests = new Map<string, Promise<PanelDocument>>();
 
-export async function getCourtlistenerOpinions(
-    clusterId: number,
-): Promise<CaseLawOpinion[]> {
-    const result = await apiRequest<{ opinions: CaseLawOpinion[] }>(
-        "/case-law/case-opinions",
-        {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                clusterId,
-            }),
-        },
-    );
-    return result.opinions;
+export async function getPanelDocument(
+    documentId: string,
+): Promise<PanelDocument> {
+    let request = panelDocumentRequests.get(documentId);
+    if (!request) {
+        request = apiRequest<unknown>(
+            `/documents/${encodeURIComponent(documentId)}`,
+        )
+            .then((value) => {
+                if (!isPanelDocument(value)) {
+                    throw new Error("Invalid source document response");
+                }
+                return value;
+            })
+            .finally(() => panelDocumentRequests.delete(documentId));
+        panelDocumentRequests.set(documentId, request);
+    }
+    return request;
 }
 
 export async function streamChat(payload: {
     messages: {
         role: string;
         content: string;
-        files?: { filename: string; document_id?: string }[];
+        files?: MessageFile[];
         workflow?: { id: string; title: string };
         playbook?: { id: string; title: string; version: number; versionId: string };
     }[];
@@ -1848,23 +1911,7 @@ export async function streamChat(payload: {
     model?: string;
     playbook_id?: string;
     playbook_version_id?: string;
-    ask_inputs_response?: {
-        responses: (
-            | {
-                  id: string;
-                  kind: "choice";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "documents";
-                  filenames: string[];
-                  skipped?: boolean;
-              }
-        )[];
-    };
+    ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
     const { signal, ...body } = payload;
@@ -1884,7 +1931,7 @@ export async function streamChat(payload: {
 type StreamChatMessage = {
     role: string;
     content: string;
-    files?: { filename: string; document_id?: string }[];
+    files?: MessageFile[];
     workflow?: { id: string; title: string };
     playbook?: { id: string; title: string; version: number; versionId: string };
 };
@@ -1898,23 +1945,7 @@ export async function streamProjectChat(payload: {
     playbook_version_id?: string;
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
-    ask_inputs_response?: {
-        responses: (
-            | {
-                  id: string;
-                  kind: "choice";
-                  question: string;
-                  answer?: string;
-                  skipped?: boolean;
-              }
-            | {
-                  id: string;
-                  kind: "documents";
-                  filenames: string[];
-                  skipped?: boolean;
-              }
-        )[];
-    };
+    ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
     const { projectId, signal, ...body } = payload;
@@ -1953,8 +1984,8 @@ export async function listTabularReviews(
     if (pagination?.offset) params.set("offset", String(pagination.offset));
     if (pagination?.search) params.set("search", pagination.search);
     if (pagination?.sortKey) params.set("sort_key", pagination.sortKey);
-  if (pagination?.sortDirection)
-    params.set("sort_direction", pagination.sortDirection);
+    if (pagination?.sortDirection)
+        params.set("sort_direction", pagination.sortDirection);
     if (pagination?.scope && pagination.scope !== "all")
         params.set("scope", pagination.scope);
 
@@ -2236,9 +2267,9 @@ export async function clearTabularCells(
 type WorkflowType = Workflow["metadata"]["type"];
 
 export async function listWorkflows(type?: WorkflowType): Promise<Workflow[]> {
-  return apiRequest<Workflow[]>(
-    type ? `/workflows?type=${type}` : "/workflows",
-  );
+    return apiRequest<Workflow[]>(
+        type ? `/workflows?type=${type}` : "/workflows",
+    );
 }
 
 // Paginated sibling of listWorkflows() used only by WorkflowList.tsx.
@@ -2268,14 +2299,14 @@ export async function listWorkflowsPage(pagination?: {
     if (pagination?.offset) params.set("offset", String(pagination.offset));
     if (pagination?.search) params.set("search", pagination.search);
     if (pagination?.sortKey) params.set("sort_key", pagination.sortKey);
-  if (pagination?.sortDirection)
-    params.set("sort_direction", pagination.sortDirection);
+    if (pagination?.sortDirection)
+        params.set("sort_direction", pagination.sortDirection);
     if (pagination?.scope && pagination.scope !== "all")
         params.set("scope", pagination.scope);
     if (pagination?.practice) params.set("practice", pagination.practice);
     if (pagination?.language) params.set("language", pagination.language);
-  if (pagination?.jurisdiction)
-    params.set("jurisdiction", pagination.jurisdiction);
+    if (pagination?.jurisdiction)
+        params.set("jurisdiction", pagination.jurisdiction);
 
     const qs = params.toString() ? `?${params.toString()}` : "";
     return apiRequest<Workflow[]>(`/workflows${qs}`, {
@@ -2295,16 +2326,19 @@ export async function listWorkflowIds(options?: {
     const params = new URLSearchParams();
     if (options?.type) params.set("type", options.type);
     if (options?.search) params.set("search", options.search);
-  if (options?.scope && options.scope !== "all")
-    params.set("scope", options.scope);
+    if (options?.scope && options.scope !== "all")
+        params.set("scope", options.scope);
     if (options?.practice) params.set("practice", options.practice);
     if (options?.language) params.set("language", options.language);
     if (options?.jurisdiction) params.set("jurisdiction", options.jurisdiction);
 
     const qs = params.toString() ? `?${params.toString()}` : "";
-  return apiRequest<{ id: string; user_id: string }[]>(`/workflows/ids${qs}`, {
-    signal: options?.signal,
-  });
+    return apiRequest<{ id: string; user_id: string }[]>(
+        `/workflows/ids${qs}`,
+        {
+            signal: options?.signal,
+        },
+    );
 }
 
 // Always-unpaginated: the static, code-generated system-workflow list (37
@@ -2318,27 +2352,27 @@ export async function listSystemWorkflows(
 }
 
 export interface WorkflowFilterOptions {
-  practices: string[];
-  languages: string[];
-  jurisdictions: string[];
+    practices: string[];
+    languages: string[];
+    jurisdictions: string[];
 }
 
 export async function getWorkflowFilterOptions(options?: {
-  type?: WorkflowType;
-  scope?: "all" | "owned" | "shared";
-  signal?: AbortSignal;
+    type?: WorkflowType;
+    scope?: "all" | "owned" | "shared";
+    signal?: AbortSignal;
 }): Promise<WorkflowFilterOptions> {
-  const params = new URLSearchParams();
-  if (options?.type) params.set("type", options.type);
-  if (options?.scope && options.scope !== "all")
-    params.set("scope", options.scope);
-  const query = params.toString();
-  return apiRequest<WorkflowFilterOptions>(
-    `/workflows/filter-options${query ? `?${query}` : ""}`,
-    {
-      signal: options?.signal,
-    },
-  );
+    const params = new URLSearchParams();
+    if (options?.type) params.set("type", options.type);
+    if (options?.scope && options.scope !== "all")
+        params.set("scope", options.scope);
+    const query = params.toString();
+    return apiRequest<WorkflowFilterOptions>(
+        `/workflows/filter-options${query ? `?${query}` : ""}`,
+        {
+            signal: options?.signal,
+        },
+    );
 }
 
 export async function getWorkflow(workflowId: string): Promise<Workflow> {
@@ -2455,12 +2489,32 @@ export async function listQuickActions(): Promise<QuickAction[]> {
     return apiRequest<QuickAction[]>("/quick-actions");
 }
 
+export async function createQuickAction(payload: {
+    workflow_id: string;
+    name: string;
+    prompt: string;
+    document_upload: boolean;
+    enabled?: boolean;
+    sort_order?: number;
+}): Promise<QuickAction> {
+    return apiRequest<QuickAction>("/quick-actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
 export async function updateQuickAction(
     quickActionId: string,
     payload: Partial<
         Pick<
             QuickAction,
-            "prompt" | "document_upload" | "enabled" | "sort_order"
+            | "workflow_id"
+            | "name"
+            | "prompt"
+            | "document_upload"
+            | "enabled"
+            | "sort_order"
         >
     >,
 ): Promise<QuickAction> {
@@ -2485,9 +2539,7 @@ export async function getWorkflowAddon(
     return apiRequest<WorkflowAddon>(`/workflow-addons/${addonId}`);
 }
 
-export async function importWorkflowAddon(
-    addonId: string,
-): Promise<Workflow> {
+export async function importWorkflowAddon(addonId: string): Promise<Workflow> {
     return apiRequest<Workflow>(`/workflow-addons/${addonId}/import`, {
         method: "POST",
     });
@@ -2496,7 +2548,9 @@ export async function importWorkflowAddon(
 export async function listWorkflowReferenceFiles(
     workflowId: string,
 ): Promise<WorkflowReferenceDocument[]> {
-    return apiRequest<WorkflowReferenceDocument[]>(`/workflows/${workflowId}/reference-files`);
+    return apiRequest<WorkflowReferenceDocument[]>(
+        `/workflows/${workflowId}/reference-files`,
+    );
 }
 
 export async function uploadWorkflowReferenceFile(
@@ -2510,7 +2564,8 @@ export async function uploadWorkflowReferenceFile(
         `${API_BASE}/workflows/${workflowId}/reference-files`,
         { method: "POST", headers: { ...authHeaders }, body: form },
     );
-    if (!response.ok) throw await toApiError(response, "/workflows/reference-files");
+    if (!response.ok)
+        throw await toApiError(response, "/workflows/reference-files");
     return response.json() as Promise<WorkflowReferenceDocument>;
 }
 
@@ -2547,6 +2602,8 @@ export async function deleteWorkflowReferenceFile(
 ): Promise<void> {
     await apiRequest(
         `/workflows/${workflowId}/reference-files/${referenceId}`,
-        { method: "DELETE" },
+        {
+            method: "DELETE",
+        },
     );
 }

@@ -37,6 +37,7 @@ import {
     featureForModel,
     getUserFeatures,
 } from "../lib/userFeatures";
+import { generateAssistantChatTitle } from "../lib/chatTitle";
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
 You are operating within a project folder that contains a collection of legal documents the user has organised for a single matter. The user's questions will usually refer to one or more documents in this project — your job is to find the relevant files to work on. Use list_documents to see what is available and fetch_documents / read_document to pull in any documents you need before answering.
@@ -306,6 +307,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const {
         api_keys: apiKeys,
         legal_research_us: legalResearchUs,
+        title_model: titleModel,
     } = await getUserModelSettings(userId, db);
     const apiMessages = buildMessages(
         messagesForLLM,
@@ -335,6 +337,48 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     try {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
 
+        const shouldGenerateTitle =
+            !chatTitle && !!lastUser?.content && !askInputsResponse;
+        const titleMessage = lastUser
+            ? [
+                  lastUser.content,
+                  lastUser.workflow
+                      ? `Workflow: ${lastUser.workflow.title}`
+                      : "",
+                  lastUser.files?.length
+                      ? `Files: ${lastUser.files.map((file) => file.filename).join(", ")}`
+                      : "",
+              ]
+                  .filter(Boolean)
+                  .join("\n")
+            : "";
+        const titlePromise = shouldGenerateTitle
+            ? generateAssistantChatTitle({
+                  model: titleModel,
+                  message: titleMessage,
+                  apiKeys,
+              })
+                  .then(async (title) => {
+                      const { error } = await db
+                          .from("chats")
+                          .update({ title })
+                          .eq("id", chatId);
+                      if (error) throw error;
+                      chatTitle = title;
+                      if (!streamAbort.signal.aborted) {
+                          write(
+                              `data: ${JSON.stringify({ type: "chat_title", chatId, title })}\n\n`,
+                          );
+                      }
+                  })
+                  .catch((error) => {
+                      console.error(
+                          "[project-chat/stream] failed to generate chat title",
+                          safeErrorLog(error),
+                      );
+                  })
+            : Promise.resolve();
+
         const { events, citations } = await runLLMStream({
             apiMessages,
             docStore,
@@ -352,6 +396,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             projectId,
             userEmail,
             nonce,
+            emitDone: false,
         });
 
         const persistedEvents = stripTransientAssistantEvents(events);
@@ -371,11 +416,20 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             });
         }
 
+        await titlePromise;
+
         if (!chatTitle && lastUser?.content) {
+            const title = lastUser.content.slice(0, 120);
             await db
                 .from("chats")
-                .update({ title: lastUser.content.slice(0, 120) })
+                .update({ title })
                 .eq("id", chatId);
+            chatTitle = title;
+            if (shouldGenerateTitle && !streamAbort.signal.aborted) {
+                write(
+                    `data: ${JSON.stringify({ type: "chat_title", chatId, title })}\n\n`,
+                );
+            }
         }
 
         void recordChatTurn(
@@ -390,6 +444,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             },
             persistedEvents,
         );
+        write("data: [DONE]\n\n");
     } catch (err) {
         if (isAbortError(err)) {
             console.log("[project-chat/stream] client aborted stream", {

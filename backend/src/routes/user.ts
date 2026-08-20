@@ -80,6 +80,10 @@ import {
 } from "../lib/userFeatures";
 import { resolveDeploymentModules } from "../lib/deploymentModules";
 import { sendServerError } from "../lib/safeError";
+import {
+    getUserRouterModels,
+    replaceUserRouterModels,
+} from "../lib/routerModels";
 
 export const userRouter = Router();
 
@@ -250,6 +254,7 @@ type UserProfileRow = {
     email_integration_enabled: boolean | null;
     dark_mode: boolean | null;
     feature_flags?: unknown;
+    quick_actions_visible: boolean | null;
 };
 
 // GET /user/mfa/status — factors plus authenticator assurance levels.
@@ -407,11 +412,14 @@ function shortHash(value: string) {
         : null;
 }
 
-function mcpOAuthPopupHtml(payload: {
-    success: boolean;
-    connectorId?: string;
-    detail?: string;
-}, nonce: string) {
+function mcpOAuthPopupHtml(
+    payload: {
+        success: boolean;
+        connectorId?: string;
+        detail?: string;
+    },
+    nonce: string,
+) {
     const targetOrigin = new URL(frontendUrl()).origin;
     const targetUrl = frontendUrl();
     // Escape "<" so attacker-influenced payload fields (e.g. the OAuth
@@ -467,11 +475,12 @@ function mcpOAuthPopupCsp(nonce: string) {
 }
 
 const PROFILE_SELECT =
-    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, email_integration_enabled, dark_mode, feature_flags";
+    "display_name, organisation, message_credits_used, credits_reset_date, tier, title_model, tabular_model, mfa_on_login, legal_research_us, email_integration_enabled, dark_mode, feature_flags, quick_actions_visible";
 const OPTIONAL_PROFILE_COLUMN_DEFAULTS: Record<string, unknown> = {
     feature_flags: {},
     dark_mode: false,
     email_integration_enabled: false,
+    quick_actions_visible: true,
     legal_research_us: true,
     mfa_on_login: false,
     title_model: null,
@@ -486,8 +495,9 @@ function isMissingProfileColumn(error: unknown, column: string): boolean {
     return record.code === "42703" && message.includes(column);
 }
 
-// Loads a profile while tolerating databases created before feature columns
-// were introduced.
+// Loads a profile while tolerating older databases that lack newer preference
+// columns: retries the select without each column PostgREST reports missing
+// and applies that column's safe default to the returned row.
 async function selectProfile(
     db: ServerDatabase,
     userId: string,
@@ -526,7 +536,47 @@ async function selectProfile(
     }
 }
 
-function serializeProfile(row: UserProfileRow, apiKeyStatus?: ApiKeyStatus) {
+const CATALOG_MODEL_ID_RE = /^[^\s/]+\/[^\s]+$/;
+
+export function normalizeRouterModels(
+    value: unknown,
+    provider: "openrouter" | "vercel",
+): string[] {
+    if (!Array.isArray(value)) return [];
+    const models: string[] = [];
+    const seen = new Set<string>();
+    for (const item of value) {
+        if (typeof item !== "string") continue;
+        const trimmed = item.trim();
+        // Strip a leading router slug ("openrouter/deepseek/deepseek-v3" →
+        // "deepseek/deepseek-v3") only when what remains is still a full
+        // vendor/model catalog id. Some catalog ids legitimately begin with
+        // the router's own slug (OpenRouter's "openrouter/auto", Vercel's
+        // "vercel/v0-1.5-md"); for those the raw id IS the canonical form
+        // and stripping would destroy it.
+        const stripped = trimmed.replace(new RegExp(`^${provider}/`), "");
+        const model = CATALOG_MODEL_ID_RE.test(stripped) ? stripped : trimmed;
+        if (
+            !model ||
+            model.length > 200 ||
+            !CATALOG_MODEL_ID_RE.test(model) ||
+            seen.has(model)
+        ) {
+            continue;
+        }
+        seen.add(model);
+        models.push(model);
+        if (models.length === 50) break;
+    }
+    return models;
+}
+
+function serializeProfile(
+    row: UserProfileRow,
+    openRouterModels: string[],
+    vercelModels: string[],
+    apiKeyStatus?: ApiKeyStatus,
+) {
     const creditsUsed = row.message_credits_used ?? 0;
     const titleFallback = apiKeyStatus?.gemini
         ? DEFAULT_TITLE_MODEL
@@ -534,7 +584,11 @@ function serializeProfile(row: UserProfileRow, apiKeyStatus?: ApiKeyStatus) {
           ? OPENAI_LOW_MODELS[0]
           : apiKeyStatus?.claude
             ? CLAUDE_LOW_MODELS[0]
-            : DEFAULT_TITLE_MODEL;
+            : apiKeyStatus?.openrouter && openRouterModels[0]
+              ? `openrouter/${openRouterModels[0]}`
+              : apiKeyStatus?.vercel && vercelModels[0]
+                ? `vercel/${vercelModels[0]}`
+                : DEFAULT_TITLE_MODEL;
     return {
         displayName: row.display_name,
         organisation: row.organisation,
@@ -550,6 +604,9 @@ function serializeProfile(row: UserProfileRow, apiKeyStatus?: ApiKeyStatus) {
         darkMode: row.dark_mode === true,
         featureFlags: normalizeUserFeatures(row.feature_flags),
         deploymentModules: resolveDeploymentModules(),
+        quickActionsVisible: row.quick_actions_visible !== false,
+        openRouterModels,
+        vercelModels,
         ...(apiKeyStatus ? { apiKeyStatus } : {}),
     };
 }
@@ -566,8 +623,11 @@ function validateProfilePayload(body: unknown):
               email_integration_enabled?: boolean;
               dark_mode?: boolean;
               feature_flags?: UserFeatures;
+              quick_actions_visible?: boolean;
               updated_at: string;
           };
+          openRouterModels?: string[];
+          vercelModels?: string[];
       }
     | { ok: false; detail: string } {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -584,6 +644,9 @@ function validateProfilePayload(body: unknown):
         "emailIntegrationEnabled",
         "darkMode",
         "featureFlags",
+        "quickActionsVisible",
+        "openRouterModels",
+        "vercelModels",
     ]);
     const invalidField = Object.keys(raw).find(
         (key) => !allowedFields.has(key),
@@ -604,8 +667,11 @@ function validateProfilePayload(body: unknown):
         email_integration_enabled?: boolean;
         dark_mode?: boolean;
         feature_flags?: UserFeatures;
+        quick_actions_visible?: boolean;
         updated_at: string;
     } = { updated_at: new Date().toISOString() };
+    let openRouterModels: string[] | undefined;
+    let vercelModels: string[] | undefined;
 
     if ("displayName" in raw) {
         if (raw.displayName !== null && typeof raw.displayName !== "string") {
@@ -647,6 +713,58 @@ function validateProfilePayload(body: unknown):
             return { ok: false, detail: "Unsupported titleModel" };
         }
         update.title_model = resolved;
+    }
+
+    if ("openRouterModels" in raw) {
+        if (!Array.isArray(raw.openRouterModels)) {
+            return {
+                ok: false,
+                detail: "openRouterModels must be an array of model IDs",
+            };
+        }
+        // Check the cap before normalizing: normalizeRouterModels truncates
+        // at 50, so a longer payload would otherwise surface as the
+        // misleading "invalid or duplicate model ID".
+        if (raw.openRouterModels.length > 50) {
+            return {
+                ok: false,
+                detail: "openRouterModels can include at most 50 models",
+            };
+        }
+        const models = normalizeRouterModels(
+            raw.openRouterModels,
+            "openrouter",
+        );
+        if (models.length !== raw.openRouterModels.length) {
+            return {
+                ok: false,
+                detail: "openRouterModels contains an invalid or duplicate model ID",
+            };
+        }
+        openRouterModels = models;
+    }
+
+    if ("vercelModels" in raw) {
+        if (!Array.isArray(raw.vercelModels)) {
+            return {
+                ok: false,
+                detail: "vercelModels must be an array of model IDs",
+            };
+        }
+        if (raw.vercelModels.length > 50) {
+            return {
+                ok: false,
+                detail: "vercelModels can include at most 50 models",
+            };
+        }
+        const models = normalizeRouterModels(raw.vercelModels, "vercel");
+        if (models.length !== raw.vercelModels.length) {
+            return {
+                ok: false,
+                detail: "vercelModels contains an invalid or duplicate model ID",
+            };
+        }
+        vercelModels = models;
     }
 
     if ("legalResearchUs" in raw) {
@@ -715,7 +833,22 @@ function validateProfilePayload(body: unknown):
         update.feature_flags = normalizeUserFeatures(flags);
     }
 
-    return { ok: true, update };
+    if ("quickActionsVisible" in raw) {
+        if (typeof raw.quickActionsVisible !== "boolean") {
+            return {
+                ok: false,
+                detail: "quickActionsVisible must be a boolean",
+            };
+        }
+        update.quick_actions_visible = raw.quickActionsVisible;
+    }
+
+    return {
+        ok: true,
+        update,
+        ...(openRouterModels ? { openRouterModels } : {}),
+        ...(vercelModels ? { vercelModels } : {}),
+    };
 }
 
 function readBooleanBodyField(
@@ -810,7 +943,29 @@ async function loadProfile(
         row = resetData as UserProfileRow;
     }
 
-    return { data: serializeProfile(row, options.apiKeyStatus), error: null };
+    try {
+        const [openRouterModels, vercelModels] = await Promise.all([
+            getUserRouterModels(userId, "openrouter", db),
+            getUserRouterModels(userId, "vercel", db),
+        ]);
+        return {
+            data: serializeProfile(
+                row,
+                openRouterModels,
+                vercelModels,
+                options.apiKeyStatus,
+            ),
+            error: null,
+        };
+    } catch (routerModelsError) {
+        return {
+            data: null,
+            error:
+                routerModelsError instanceof Error
+                    ? routerModelsError
+                    : new Error(errorMessage(routerModelsError)),
+        };
+    }
 }
 
 // POST /user/profile
@@ -881,6 +1036,36 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
         .eq("user_id", userId);
     if (updateError)
         return void sendServerError(res, updateError);
+
+    if (parsed.openRouterModels !== undefined) {
+        try {
+            await replaceUserRouterModels(
+                userId,
+                "openrouter",
+                parsed.openRouterModels,
+                db,
+            );
+        } catch (routerModelsError) {
+            return void res.status(500).json({
+                detail: errorMessage(routerModelsError),
+            });
+        }
+    }
+
+    if (parsed.vercelModels !== undefined) {
+        try {
+            await replaceUserRouterModels(
+                userId,
+                "vercel",
+                parsed.vercelModels,
+                db,
+            );
+        } catch (routerModelsError) {
+            return void res.status(500).json({
+                detail: errorMessage(routerModelsError),
+            });
+        }
+    }
 
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);
     const { data, error } = await loadProfile(db, userId, { apiKeyStatus });

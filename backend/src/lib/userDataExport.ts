@@ -297,6 +297,7 @@ export async function buildUserAccountExport(
         profile,
         apiKeys,
         gmailConnections,
+        routerModels,
         projects,
         standaloneDocuments,
         workflows,
@@ -332,6 +333,12 @@ export async function buildUserAccountExport(
             "gmail_connections",
             (query) => query.eq("user_id", userId),
             "user_id, email, scopes, created_at, updated_at",
+        ),
+        selectAll(db, "user_router_models", (query) =>
+            query
+                .eq("user_id", userId)
+                .order("router", { ascending: true })
+                .order("sort_order", { ascending: true }),
         ),
         selectAll(db, "projects", (query) =>
             query.eq("user_id", userId).order("created_at", { ascending: true }),
@@ -465,6 +472,7 @@ export async function buildUserAccountExport(
         profile,
         api_keys: apiKeys,
         gmail_connections: gmailConnections,
+        router_models: routerModels,
         projects,
         project_subfolders: folders,
         documents,
