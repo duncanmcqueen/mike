@@ -896,7 +896,13 @@ async function selectRows(table: string): Promise<Row[]> {
 }
 
 function rpcUserId(args: Row): string {
-  return String(args.p_user_id ?? args.user_id ?? "");
+  // Postgres functions in this codebase name the caller's id inconsistently:
+  // the overview functions take p_user_id, and replace_user_router_models
+  // takes target_user_id. Missing the latter here made that RPC a silent
+  // no-op — it resolved an empty id, hit its own guard, and returned
+  // { data: null, error: null }, so every router model selection was
+  // dropped without an error anywhere.
+  return String(args.p_user_id ?? args.user_id ?? args.target_user_id ?? "");
 }
 
 function rpcUserEmail(args: Row): string {
