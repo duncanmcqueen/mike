@@ -36,8 +36,12 @@ import { ModalTextInput } from "@/app/components/modals/ModalTextInput";
 import { PillButton } from "@/app/components/ui/pill-button";
 import {
     SETTINGS_MODELS,
+    openRouterModelOptions,
+    syntheticModelOptions,
     useConfiguredModelOptions,
+    vercelModelOptions,
 } from "@/app/components/assistant/ModelToggle";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { cn } from "@/app/lib/utils";
 import {
     createLegalMonitor,
@@ -136,6 +140,7 @@ function draftFromMonitor(monitor: LegalMonitor): LegalMonitorInput {
 
 export default function LegalMonitorsPage() {
     const configuredModelOptions = useConfiguredModelOptions(SETTINGS_MODELS);
+    const { profile } = useUserProfile();
     const [monitors, setMonitors] = useState<LegalMonitor[]>([]);
     const [configuration, setConfiguration] = useState<LegalMonitorConfiguration | null>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -211,12 +216,28 @@ export default function LegalMonitorsPage() {
         else { setRuns([]); setSelectedRunId(null); }
     }, [loadRuns, selectedId]);
 
+    // useConfiguredModelOptions deliberately omits router models: the composer
+    // takes those as explicit props, because they are a per-user saved
+    // selection rather than an instance-wide catalog. This picker had no such
+    // props, so every OpenRouter / Vercel / Synthetic model the user had saved
+    // was missing here while appearing everywhere else. Append them the same
+    // way the composer does, so the two lists agree.
     const modelOptions = useMemo(() => {
-        return configuredModelOptions.map((model) => ({
+        return [
+            ...configuredModelOptions,
+            ...openRouterModelOptions(profile?.openRouterModels ?? []),
+            ...vercelModelOptions(profile?.vercelModels ?? []),
+            ...syntheticModelOptions(profile?.syntheticModels ?? []),
+        ].map((model) => ({
             value: model.id,
             label: `${model.group} · ${model.label}`,
         }));
-    }, [configuredModelOptions]);
+    }, [
+        configuredModelOptions,
+        profile?.openRouterModels,
+        profile?.vercelModels,
+        profile?.syntheticModels,
+    ]);
 
     function baseDraft(): LegalMonitorInput {
         return {
