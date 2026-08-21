@@ -313,6 +313,23 @@ function decode(value: unknown): unknown {
   return value;
 }
 
+// Every column in this store is declared `text`, so a number written as 1
+// reads back as the string "1.0". Most call sites survive that by accident,
+// because JS coerces strings in arithmetic — but anything doing a strict
+// `typeof x === "number"` check does not. The chat request validator
+// rejected messages[].files[].version_number for exactly that reason, with
+// an error that pointed at the request instead of at the storage layer.
+// These are the columns the application reads as numbers.
+const NUMERIC_COLUMNS = new Set([
+  "version_number",
+  "latest_version_number",
+  "active_version_number",
+  "size_bytes",
+  "page_count",
+  "sort_order",
+  "message_credits_used",
+]);
+
 function decodeColumn(key: string, value: unknown): unknown {
   const decoded = decode(value);
   if (
@@ -331,6 +348,13 @@ function decodeColumn(key: string, value: unknown): unknown {
       decoded === "1.0")
   ) {
     return decoded === 1 || decoded === "1" || decoded === "1.0";
+  }
+  if (NUMERIC_COLUMNS.has(key) && typeof decoded === "string") {
+    const trimmed = decoded.trim();
+    if (trimmed) {
+      const parsed = Number(trimmed);
+      if (Number.isFinite(parsed)) return parsed;
+    }
   }
   return decoded;
 }
