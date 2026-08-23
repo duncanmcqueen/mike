@@ -20,6 +20,7 @@ vi.mock("../routerModels", async () => ({
 vi.mock("../supabase", () => ({ createServerSupabase: vi.fn() }));
 
 import { getUserModelSettings } from "../userSettings";
+import { providerForModel } from "../llm/models";
 
 function profileDb(row: Record<string, unknown> | null) {
     const chain: Record<string, unknown> = {};
@@ -101,11 +102,76 @@ describe("getUserModelSettings router-model allowlist", () => {
             }),
         );
 
-        // Gemini env key present → cheap default title model; tabular default.
+        // Availability-based defaults: the env gemini key yields the cheap
+        // Gemini title model and the cheapest usable mid-tier for tabular.
         expect(settings.title_model).toBe("gemini-3.5-flash-lite");
-        expect(settings.tabular_model).toBe("gemini-3-flash-preview");
+        expect(settings.tabular_model).toBe("gemini-3.7-flash");
         expect(warn).toHaveBeenCalled();
         warn.mockRestore();
+    });
+
+    it("keeps the historical Gemini defaults on Google-OAuth deployments", async () => {
+        // Zero usable providers: outside Google-OAuth deployments this would
+        // resolve to null models; the deployment-level Google flag retains
+        // the historical Gemini default instead.
+        vi.stubEnv("SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID", "id");
+        vi.stubEnv("SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_SECRET", "secret");
+        getUserApiKeys.mockResolvedValue({
+            claude: null,
+            gemini: null,
+            openai: null,
+            openrouter: null,
+            vercel: null,
+            courtlistener: null,
+        });
+        getAllUserRouterModels.mockResolvedValue({
+            openrouter: [],
+            vercel: [],
+            "opencode-go": [],
+        });
+        try {
+            const settings = await getUserModelSettings(
+                "user-1",
+                profileDb(null),
+            );
+
+            expect(settings.title_model).toBe("gemini-3.5-flash-lite");
+            expect(settings.tabular_model).toBe("gemini-3-flash-preview");
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
+    it("returns null models when nothing is usable", async () => {
+        getUserApiKeys.mockResolvedValue({
+            claude: null,
+            gemini: null,
+            openai: null,
+            openrouter: null,
+            vercel: null,
+            courtlistener: null,
+        });
+        getAllUserRouterModels.mockResolvedValue({
+            openrouter: [],
+            vercel: [],
+            "opencode-go": [],
+        });
+
+        const settings = await getUserModelSettings(
+            "user-1",
+            profileDb(null),
+        );
+
+        // No silent cloud-provider default outside Google-OAuth deployments:
+        // titles stay null; tabular may land on a keyless local/registry
+        // model, which is deliberately always usable.
+        expect(settings.title_model).toBeNull();
+        if (settings.tabular_model !== null) {
+            const provider = providerForModel(settings.tabular_model);
+            expect(["gemini", "openai", "anthropic", "claude"]).not.toContain(
+                provider,
+            );
+        }
     });
 
     it("keeps first-party preferences untouched", async () => {

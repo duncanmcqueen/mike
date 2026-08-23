@@ -776,7 +776,7 @@ export function TRChatPanel({
     // fetch) fails open — see ModelToggle.
     const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
     const apiKeysLoading = profileLoading && !profile;
-    const currentModel = profile?.tabularModel ?? "gemini-3-flash-preview";
+    const currentModel = profile?.tabularModel ?? "";
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
     const [chats, setChats] = useState<TRChat[]>([]);
@@ -1144,7 +1144,7 @@ export function TRChatPanel({
 
     async function handleSubmit(trimmed: string) {
         if (!trimmed || isLoading) return;
-        if (apiKeys && !isModelAvailable(currentModel, apiKeys)) {
+        if (apiKeys && currentModel && !isModelAvailable(currentModel, apiKeys)) {
             setApiKeyModalProvider(getModelProvider(currentModel));
             return;
         }

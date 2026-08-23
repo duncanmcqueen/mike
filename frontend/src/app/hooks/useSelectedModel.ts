@@ -55,6 +55,7 @@ export function useSelectedModel(
         vercelModels: string[];
         openCodeGoModels: string[];
     } | null,
+    preselectCandidates?: string[] | null,
 ): [string, (id: string) => void] {
     const [model, setModelState] = useState<string>(DEFAULT_MODEL_ID);
     const openRouterModels = routerSelections?.openRouterModels;
@@ -75,17 +76,33 @@ export function useSelectedModel(
         };
         // eslint-disable-next-line react-hooks/set-state-in-effect -- reconciles state with data that arrives asynchronously (the loaded router lists); the functional update is a no-op unless the stored selection is genuinely stale, so it cannot cascade
         setModelState((current) => {
+            let next = current;
             const router = ROUTER_SLUGS.find((slug) =>
-                current.startsWith(`${slug}/`),
+                next.startsWith(`${slug}/`),
             );
-            if (!router) return current;
-            if (selections[router].includes(current.slice(router.length + 1))) {
-                return current;
+            if (
+                router &&
+                !selections[router].includes(next.slice(router.length + 1))
+            ) {
+                persist(DEFAULT_MODEL_ID);
+                next = DEFAULT_MODEL_ID;
             }
-            persist(DEFAULT_MODEL_ID);
-            return DEFAULT_MODEL_ID;
+            // Empty selection (no stored value, or a stale one reset just
+            // above): preselect the first usable candidate instead of
+            // leaving the user on an unnamed default. Chained inside this
+            // same updater so reset and preselect are atomic.
+            if (!next && preselectCandidates?.length) {
+                const pick = preselectCandidates.find((id) =>
+                    isAllowedModelId(canonicalModelId(id)),
+                );
+                if (pick) {
+                    persist(pick);
+                    return pick;
+                }
+            }
+            return next;
         });
-    }, [openRouterModels, vercelModels, openCodeGoModels]);
+    }, [openRouterModels, vercelModels, openCodeGoModels, preselectCandidates]);
 
     const setModel = useCallback((id: string) => {
         const canonical = canonicalModelId(id);

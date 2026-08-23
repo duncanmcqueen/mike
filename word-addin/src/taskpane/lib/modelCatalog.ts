@@ -45,7 +45,10 @@ export const STATIC_MODELS: readonly ModelOption[] = [
   { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
 ];
 
-export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
+// No hardcoded provider default — mirrors the web composer. Google-OAuth
+// deployments preselect via profile.composerDefaultModel;
+// REACT_APP_DEFAULT_MODEL can pin a deployment-specific default.
+export const DEFAULT_MODEL_ID = "";
 export const ALLOWED_MODEL_IDS = new Set(
   STATIC_MODELS.map((model) => model.id),
 );

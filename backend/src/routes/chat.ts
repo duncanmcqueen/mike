@@ -342,6 +342,11 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
             userId,
             db,
         );
+        if (!title_model) {
+            return void res.status(409).json({
+                detail: "No AI provider is configured. Add an API key in Settings → Bring Your Own Keys.",
+            });
+        }
         const title = await generateAssistantChatTitle({
             model: title_model,
             message,
@@ -573,7 +578,10 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         );
 
         const shouldGenerateTitle =
-            !chatTitle && !!lastUser?.content && !askInputsResponse;
+            !chatTitle &&
+            !!lastUser?.content &&
+            !askInputsResponse &&
+            !!titleModel;
         const titleMessage = lastUser
             ? [
                   lastUser.content,
@@ -589,7 +597,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             : "";
         const titlePromise = shouldGenerateTitle
             ? generateAssistantChatTitle({
-                  model: titleModel,
+                  model: titleModel as string,
                   message: titleMessage,
                   apiKeys,
               })

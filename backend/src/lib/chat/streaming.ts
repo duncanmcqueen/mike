@@ -1,10 +1,19 @@
 import {
   streamChatWithTools,
-  DEFAULT_MAIN_MODEL,
+  resolveModel,
+  CLAUDE_MAIN_MODELS,
+  GEMINI_MAIN_MODELS,
+  OPENAI_MAIN_MODELS,
+  type UserApiKeys,
   type LlmMessage,
   type OpenAIToolSchema,
 } from "../llm";
-import { resolveRequestedModel } from "../routerModels";
+import {
+  getAllUserRouterModels,
+  resolveRequestedModel,
+  ROUTER_SLUGS,
+} from "../routerModels";
+import { legacyDefaultModel } from "../googleOauth";
 import { UserFacingError } from "../userFacingError";
 import { createServerSupabase } from "../supabase";
 import { buildUserMcpTools, type McpToolEvent } from "../mcpConnectors";
@@ -401,13 +410,66 @@ export async function runLLMStream(params: {
     // asked for in THIS request. Tabular's stored preference has already been
     // normalized by getUserModelSettings, so what arrives here is either an
     // in-selection router model or a first-party id.
-    const selectedModel = await resolveRequestedModel(
-      model,
-      DEFAULT_MAIN_MODEL,
-      userId,
-      db,
-      "throw",
-    );
+    // An explicit id that resolves to nothing must fail loudly rather than
+    // degrade silently to the default: a stale or mangled composer value
+    // would otherwise surface as an unrelated default-model failure the
+    // user cannot connect to their own selection.
+    if (model && !resolveModel(model, "")) {
+      throw new UserFacingError(
+        `Model "${model}" is not available on this deployment. Pick another model in the composer.`,
+      );
+    }
+    // No explicit model: Google-OAuth deployments keep their historical
+    // Gemini default; everywhere else resolve from what this user can
+    // actually use — saved router selections first (their curated list),
+    // then first-party models with keys. Never a silent provider default.
+    let selectedModel: string;
+    const legacyDefault = legacyDefaultModel("main");
+    if (model) {
+      selectedModel = await resolveRequestedModel(
+        model,
+        legacyDefault ?? "",
+        userId,
+        db,
+        legacyDefault ? "fallback" : "throw",
+      );
+    } else if (legacyDefault) {
+      selectedModel = await resolveRequestedModel(
+        legacyDefault,
+        legacyDefault,
+        userId,
+        db,
+        "throw",
+      );
+    } else {
+      let picked = "";
+      const routerModels = await getAllUserRouterModels(userId, db);
+      for (const slug of ROUTER_SLUGS) {
+        const first = routerModels[slug]?.[0];
+        if (apiKeys?.[slug]?.trim() && first) {
+          picked = `${slug}/${first}`;
+          break;
+        }
+      }
+      if (!picked) {
+        for (const [slug, tier] of [
+          ["claude", CLAUDE_MAIN_MODELS],
+          ["gemini", GEMINI_MAIN_MODELS],
+          ["openai", OPENAI_MAIN_MODELS],
+        ] as const) {
+          if (apiKeys?.[slug]?.trim()) {
+            picked = tier[0];
+            break;
+          }
+        }
+      }
+      if (!picked) {
+        throw new UserFacingError(
+          "No AI provider is configured. Add an API key in Settings → Bring Your Own Keys.",
+        );
+      }
+      selectedModel = picked;
+    }
     await streamChatWithTools({
       model: selectedModel,
       systemPrompt,

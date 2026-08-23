@@ -46,7 +46,11 @@ export const SETTINGS_MODELS: ModelOption[] = [
   { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", group: "OpenAI" },
 ];
 
-export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
+// No hardcoded provider default: an empty selection renders as "Select
+// model" and the composer preselects the first model the user can actually
+// use once the profile loads (server-owned default first — see
+// profile.composerDefaultModel).
+export const DEFAULT_MODEL_ID = "";
 
 export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 

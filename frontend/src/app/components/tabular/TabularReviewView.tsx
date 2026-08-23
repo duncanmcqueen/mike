@@ -152,7 +152,7 @@ export function TRView({ reviewId, projectId }: Props) {
     // Unknown key state fails open; the submit gates below already skip when
     // apiKeys is undefined.
     const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
-    const tabularModel = profile?.tabularModel ?? "gemini-3-flash-preview";
+    const tabularModel = profile?.tabularModel ?? "";
     const cellMutationsBlocked =
         generating || stoppingGeneration || review?.is_running === true;
 
@@ -280,7 +280,7 @@ export function TRView({ reviewId, projectId }: Props) {
             setGenerationGuard("running");
             return;
         }
-        if (apiKeys && !isModelAvailable(tabularModel, apiKeys)) {
+        if (apiKeys && tabularModel && !isModelAvailable(tabularModel, apiKeys)) {
             setApiKeyModalProvider(getModelProvider(tabularModel));
             return;
         }
@@ -363,7 +363,7 @@ export function TRView({ reviewId, projectId }: Props) {
         // If columns changed since last save, update the review first
         if (columns.length === 0) return;
 
-        if (apiKeys && !isModelAvailable(tabularModel, apiKeys)) {
+        if (apiKeys && tabularModel && !isModelAvailable(tabularModel, apiKeys)) {
             setApiKeyModalProvider(getModelProvider(tabularModel));
             return;
         }

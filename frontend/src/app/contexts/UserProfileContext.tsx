@@ -40,8 +40,9 @@ interface UserProfile {
     creditsResetDate: string;
     creditsRemaining: number;
     tier: string;
-    titleModel: string;
-    tabularModel: string;
+    titleModel: string | null;
+    tabularModel: string | null;
+    composerDefaultModel: string | null;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
@@ -201,8 +202,9 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 creditsResetDate: futureResetDate.toISOString(),
                 creditsRemaining: 999999, // temporarily unlimited
                 tier: "Free",
-                titleModel: "gemini-3.5-flash-lite",
-                tabularModel: "gemini-3-flash-preview",
+                titleModel: null,
+                tabularModel: null,
+                composerDefaultModel: null,
                 mfaOnLogin: false,
                 legalResearchUs: true,
                 quickActionsVisible: true,

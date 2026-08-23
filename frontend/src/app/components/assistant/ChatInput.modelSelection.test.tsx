@@ -114,9 +114,12 @@ describe("ChatInput model selection vs. a degraded profile", () => {
             />,
         );
 
+        // No hardcoded client-side default: the reset target is "" and the
+        // composer then preselects the first model reporting available
+        // (isModelAvailable is stubbed permissive in this suite).
         await waitFor(() =>
             expect(window.localStorage.getItem(STORAGE_KEY)).toBe(
-                "gemini-3-flash-preview",
+                "claude-fable-5",
             ),
         );
     });

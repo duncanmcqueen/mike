@@ -20,7 +20,7 @@ describe("useSelectedModel", () => {
 
         const { result } = renderHook(() => useSelectedModel());
 
-        expect(result.current[0]).toBe("gemini-3-flash-preview");
+        expect(result.current[0]).toBe("");
     });
 
     it("persists a valid explicit selection", () => {
@@ -57,10 +57,8 @@ describe("useSelectedModel", () => {
             }),
         );
 
-        expect(result.current[0]).toBe("gemini-3-flash-preview");
-        expect(window.localStorage.getItem(STORAGE_KEY)).toBe(
-            "gemini-3-flash-preview",
-        );
+        expect(result.current[0]).toBe("");
+        expect(window.localStorage.getItem(STORAGE_KEY)).toBe("");
     });
 
     it("keeps an OpenCode Go selection that is in the loaded saved lists", () => {
@@ -88,7 +86,7 @@ describe("useSelectedModel", () => {
             }),
         );
 
-        expect(result.current[0]).toBe("gemini-3-flash-preview");
+        expect(result.current[0]).toBe("");
     });
 
     it("leaves a router selection alone while the lists are still loading", () => {

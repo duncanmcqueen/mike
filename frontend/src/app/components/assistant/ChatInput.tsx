@@ -3,6 +3,7 @@
 import {
     useState,
     useCallback,
+    useMemo,
     useEffect,
     useRef,
     forwardRef,
@@ -30,7 +31,7 @@ import {
     workflowSlashCommand,
 } from "./workflowSlashCommands";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
-import { ModelToggle } from "./ModelToggle";
+import { MODELS, ModelToggle } from "./ModelToggle";
 import { useSelectedModel } from "@/app/hooks/useSelectedModel";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
@@ -108,6 +109,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     // /user/profile request rewrite the saved composer selection to the
     // default — permanently. null means "not loaded", which the hook leaves
     // the stored selection alone for.
+    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
+    // No hardcoded provider default exists client-side: Google-OAuth
+    // deployments preselect their historical Gemini default via
+    // profile.composerDefaultModel; everywhere else the composer preselects
+    // the first model this user can actually use — saved router selections
+    // first (their curated choices), then first-party models.
+    const preselectCandidates = useMemo(() => {
+        if (!profile || apiKeysDegraded) return null;
+        const candidates = [
+            ...(profile.composerDefaultModel ? [profile.composerDefaultModel] : []),
+            ...(profile.openRouterModels ?? []).map((id) => `openrouter/${id}`),
+            ...(profile.vercelModels ?? []).map((id) => `vercel/${id}`),
+            ...(profile.openCodeGoModels ?? []).map((id) => `opencode-go/${id}`),
+            ...MODELS.map((m) => m.id),
+        ];
+        return apiKeys
+            ? candidates.filter((id) => isModelAvailable(id, apiKeys))
+            : candidates;
+    }, [profile, apiKeysDegraded, apiKeys]);
     const [model, setModel] = useSelectedModel(
         profile && !apiKeysDegraded
             ? {
@@ -116,11 +136,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                   openCodeGoModels: profile.openCodeGoModels,
               }
             : null,
+        preselectCandidates,
     );
     // Degraded profile → key availability is UNKNOWN; undefined here makes
     // every key gate (submit check + model toggle) fail open instead of
     // treating "we couldn't ask" as "no keys configured".
-    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const controlsRef = useRef<HTMLDivElement>(null);
     const [compactControls, setCompactControls] = useState(false);

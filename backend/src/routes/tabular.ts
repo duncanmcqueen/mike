@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
@@ -495,6 +495,20 @@ function providerLabel(provider: Provider): string {
     return "Gemini";
 }
 
+// getUserModelSettings no longer invents a hardcoded default, so a profile
+// with zero usable providers resolves to null here.
+function requireTabularModel(
+    res: Response,
+    tabular_model: string | null,
+): tabular_model is string {
+    if (tabular_model) return true;
+    res.status(409).json({
+        detail:
+            "No AI provider is configured. Add an API key in Settings → Bring Your Own Keys.",
+    });
+    return false;
+}
+
 function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
     const provider = providerForModel(model);
     if (provider === "ollama") return null; // local, no key
@@ -720,6 +734,11 @@ tabularRouter.post("/prompt", requireAuth, async (req, res) => {
 
     try {
         const { title_model, api_keys } = await getUserModelSettings(userId);
+        if (!title_model) {
+            return void res.status(409).json({
+                detail: "No AI provider is configured. Add an API key in Settings → Bring Your Own Keys.",
+            });
+        }
         const raw = await completeText({
             model: title_model,
             systemPrompt:
@@ -1196,7 +1215,8 @@ tabularRouter.post(
             userId,
             db,
         );
-        const missingKey = missingModelApiKey(tabular_model, api_keys);
+        if (!requireTabularModel(res, tabular_model)) return;
+    const missingKey = missingModelApiKey(tabular_model, api_keys);
         if (missingKey) {
             return void res.status(422).json({
                 code: "missing_api_key",
@@ -1392,6 +1412,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
         return void res.status(400).json({ detail: "No columns configured" });
 
     const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
+    if (!requireTabularModel(res, tabular_model)) return;
     const missingKey = missingModelApiKey(tabular_model, api_keys);
     if (missingKey) {
         return void res.status(422).json({
@@ -1972,6 +1993,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
     };
 
     const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
+    if (!requireTabularModel(res, tabular_model)) return;
     const missingKey = missingModelApiKey(tabular_model, api_keys);
     if (missingKey) {
         return void res.status(422).json({
@@ -2081,15 +2103,19 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         // Generate title on first exchange
         if (chatId && isFirstExchange && !chatTitle && lastUser.content) {
             const { title_model } = await getUserModelSettings(userId, db);
-            const title = await generateChatTitle(
-                title_model,
-                lastUser.content,
-                {
-                    reviewTitle: clientReviewTitle ?? review.title ?? null,
-                    projectName: clientProjectName ?? null,
-                },
-                api_keys,
-            );
+            // No usable provider: skip the lightweight title; the review
+            // itself is unaffected.
+            const title = title_model
+                ? await generateChatTitle(
+                      title_model,
+                      lastUser.content,
+                      {
+                          reviewTitle: clientReviewTitle ?? review.title ?? null,
+                          projectName: clientProjectName ?? null,
+                      },
+                      api_keys,
+                  )
+                : null;
             if (title) {
                 await db
                     .from("tabular_review_chats")

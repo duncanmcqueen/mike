@@ -262,7 +262,10 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
 
         const shouldGenerateTitle =
-            !chatTitle && !!lastUser?.content && !askInputsResponse;
+            !chatTitle &&
+            !!lastUser?.content &&
+            !askInputsResponse &&
+            !!titleModel;
         const titleMessage = lastUser
             ? [
                   lastUser.content,
@@ -278,7 +281,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             : "";
         const titlePromise = shouldGenerateTitle
             ? generateAssistantChatTitle({
-                  model: titleModel,
+                  model: titleModel as string,
                   message: titleMessage,
                   apiKeys,
               })

@@ -1,11 +1,15 @@
 import { createServerSupabase } from "./supabase";
 import {
     resolveModel,
-    DEFAULT_TITLE_MODEL,
-    DEFAULT_TABULAR_MODEL,
+    CLAUDE_LOW_MODELS,
+    GEMINI_LOW_MODELS,
     OPENAI_LOW_MODELS,
+    CLAUDE_MID_MODELS,
+    GEMINI_MID_MODELS,
+    OPENAI_MID_MODELS,
     type UserApiKeys,
 } from "./llm";
+import { legacyDefaultModel } from "./googleOauth";
 import { getUserApiKeys as getStoredUserApiKeys } from "./userApiKeys";
 import {
     getAllUserRouterModels,
@@ -16,8 +20,8 @@ import {
 } from "./routerModels";
 
 export type UserModelSettings = {
-    title_model: string;
-    tabular_model: string;
+    title_model: string | null;
+    tabular_model: string | null;
     legal_research_us: boolean;
     api_keys: UserApiKeys;
     personalisation?: {
@@ -30,23 +34,71 @@ export type UserModelSettings = {
     };
 };
 
-// Title generation is a lightweight task — always routed to the cheapest model
-// of whichever provider the user has keys for: Gemini Flash Lite if Gemini is
-// available, otherwise OpenAI lite, Claude Haiku, or the user's first saved
-// router model. With no usable provider, defaults to Gemini (the dev-mode env
-// fallback).
+type TierLists = {
+    gemini: readonly string[];
+    openai: readonly string[];
+    claude: readonly string[];
+};
+
+const TITLE_TIERS: TierLists = {
+    gemini: GEMINI_LOW_MODELS,
+    openai: OPENAI_LOW_MODELS,
+    claude: CLAUDE_LOW_MODELS,
+};
+
+const TABULAR_TIERS: TierLists = {
+    gemini: GEMINI_MID_MODELS,
+    openai: OPENAI_MID_MODELS,
+    claude: CLAUDE_MID_MODELS,
+};
+
+function hasKey(value: unknown): boolean {
+    return typeof value === "string" ? !!value.trim() : value === true;
+}
+
+// Pick the cheapest model of whichever provider the user can actually use:
+// first-party keys by tier, then the user's saved router selections. When
+// nothing is usable: Google-OAuth deployments keep their historical Gemini
+// default; everywhere else this returns null and callers either skip the
+// lightweight task or fail loudly — never a silent provider default.
+export function resolveTierFallback(
+    tiers: TierLists,
+    keys: UserApiKeys | Record<string, unknown> | undefined,
+    routerModels?: RouterModelSelections,
+): string | null {
+    if (hasKey(keys?.gemini)) return tiers.gemini[0];
+    if (hasKey(keys?.openai)) return tiers.openai[0];
+    if (hasKey(keys?.claude)) return tiers.claude[0];
+    if (routerModels) {
+        for (const slug of ROUTER_SLUGS) {
+            const first = routerModels[slug]?.[0];
+            if (hasKey(keys?.[slug]) && first) return `${slug}/${first}`;
+        }
+    }
+    return legacyDefaultModel(tiers === TITLE_TIERS ? "title" : "tabular");
+}
+
 function resolveTitleModel(
     apiKeys: UserApiKeys,
     routerModels: RouterModelSelections,
-): string {
-    if (apiKeys.gemini?.trim()) return DEFAULT_TITLE_MODEL;
-    if (apiKeys.openai?.trim()) return OPENAI_LOW_MODELS[0];
-    if (apiKeys.claude?.trim()) return "claude-haiku-4-5";
-    for (const slug of ROUTER_SLUGS) {
-        const first = routerModels[slug][0];
-        if (apiKeys[slug]?.trim() && first) return `${slug}/${first}`;
-    }
-    return DEFAULT_TITLE_MODEL;
+): string | null {
+    return resolveTierFallback(TITLE_TIERS, apiKeys, routerModels);
+}
+
+/** Cheapest usable model (low tier), or null. Booleans (ApiKeyStatus) work too. */
+export function cheapModelFallback(
+    keys: UserApiKeys | Record<string, unknown> | undefined,
+    routerModels?: RouterModelSelections,
+): string | null {
+    return resolveTierFallback(TITLE_TIERS, keys, routerModels);
+}
+
+/** Mid-tier usable model (tabular-class work), or null. */
+export function midModelFallback(
+    keys: UserApiKeys | Record<string, unknown> | undefined,
+    routerModels?: RouterModelSelections,
+): string | null {
+    return resolveTierFallback(TABULAR_TIERS, keys, routerModels);
 }
 
 export async function getUserModelSettings(
@@ -89,7 +141,11 @@ export async function getUserModelSettings(
     // profile PATCH. Treat that exactly like an invalid model id and fall
     // back, so the env-key spend path can't be steered onto arbitrary
     // gateway models.
-    const guardRouterModel = (model: string, fallback: string): string => {
+    const guardRouterModel = (
+        model: string | null,
+        fallback: string | null,
+    ): string | null => {
+        if (!model) return fallback;
         if (
             !routerForModelId(model) ||
             isRouterModelSelected(model, routerModels)
@@ -97,7 +153,7 @@ export async function getUserModelSettings(
             return model;
         }
         console.warn(
-            `[router-models] user ${userId} preference "${model}" is outside their saved selection; using ${fallback}`,
+            `[router-models] user ${userId} preference "${model}" is outside their saved selection; using ${fallback ?? "no model"}`,
         );
         return fallback;
     };
@@ -105,13 +161,13 @@ export async function getUserModelSettings(
 
     return {
         title_model: guardRouterModel(
-            resolveModel(data?.title_model, titleFallback),
+            resolveModel(data?.title_model, ""),
             titleFallback,
-        ),
+        ) || null,
         tabular_model: guardRouterModel(
-            resolveModel(data?.tabular_model, DEFAULT_TABULAR_MODEL),
-            DEFAULT_TABULAR_MODEL,
-        ),
+            resolveModel(data?.tabular_model, ""),
+            resolveTierFallback(TABULAR_TIERS, api_keys, routerModels),
+        ) || null,
         legal_research_us:
             (data as { legal_research_us?: boolean | null } | null)
                 ?.legal_research_us !== false,

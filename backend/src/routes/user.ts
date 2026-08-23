@@ -5,13 +5,14 @@ import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
 import { sendInternalError } from "../lib/httpError";
 import {
-    DEFAULT_TABULAR_MODEL,
-    DEFAULT_TITLE_MODEL,
-    CLAUDE_LOW_MODELS,
     isSupportedOpenCodeGoModel,
-    OPENAI_LOW_MODELS,
     resolveModel,
 } from "../lib/llm";
+import {
+    cheapModelFallback,
+    midModelFallback,
+} from "../lib/userSettings";
+import { legacyDefaultModel } from "../lib/googleOauth";
 import {
     type ApiKeyStatus,
     getUserApiKeyStatus,
@@ -466,31 +467,20 @@ export function normalizeRouterModels(
     return models;
 }
 
-function routerTitleFallback(
-    routerModels: RouterModelSelections,
-    apiKeyStatus?: ApiKeyStatus,
-): string | null {
-    for (const slug of ROUTER_SLUGS) {
-        const first = routerModels[slug][0];
-        if (apiKeyStatus?.[slug] && first) return `${slug}/${first}`;
-    }
-    return null;
-}
-
 function serializeProfile(
     routerModels: RouterModelSelections,
     row: UserProfileRow,
     apiKeyStatus?: ApiKeyStatus,
 ) {
     const creditsUsed = row.message_credits_used ?? 0;
-    const titleFallback = apiKeyStatus?.gemini
-        ? DEFAULT_TITLE_MODEL
-        : apiKeyStatus?.openai
-          ? OPENAI_LOW_MODELS[0]
-          : apiKeyStatus?.claude
-            ? CLAUDE_LOW_MODELS[0]
-            : (routerTitleFallback(routerModels, apiKeyStatus) ??
-              DEFAULT_TITLE_MODEL);
+    // Availability-based suggestions first; Google-OAuth deployments keep
+    // their historical Gemini default via legacyDefaultModel.
+    const titleFallback =
+        cheapModelFallback(apiKeyStatus, routerModels) ??
+        legacyDefaultModel("title");
+    const tabularFallback =
+        midModelFallback(apiKeyStatus, routerModels) ??
+        legacyDefaultModel("tabular");
     return {
         displayName: row.display_name,
         organisation: row.organisation,
@@ -515,8 +505,11 @@ function serializeProfile(
         creditsResetDate: row.credits_reset_date,
         creditsRemaining: Math.max(MONTHLY_CREDIT_LIMIT - creditsUsed, 0),
         tier: row.tier || "Free",
-        titleModel: resolveModel(row.title_model, titleFallback),
-        tabularModel: resolveModel(row.tabular_model, DEFAULT_TABULAR_MODEL),
+        titleModel:
+            resolveModel(row.title_model, "") || titleFallback,
+        tabularModel:
+            resolveModel(row.tabular_model, "") || tabularFallback,
+        composerDefaultModel: legacyDefaultModel("main"),
         mfaOnLogin: row.mfa_on_login === true,
         legalResearchUs: row.legal_research_us !== false,
         quickActionsVisible: row.quick_actions_visible !== false,
