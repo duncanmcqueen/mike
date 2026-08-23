@@ -10,6 +10,11 @@ import {
     type Provider,
     type UserApiKeys,
 } from "../../lib/llm";
+import {
+    apiKeyForConfiguredModel,
+    configuredModelRequiresApiKey,
+    getConfiguredModel,
+} from "../../lib/llm/registry";
 import { getUserModelSettings } from "../user/user.service";
 import { resolveRequestedModel } from "../../lib/routerModels";
 import { TABULAR_MODEL_REQUIRED_DETAIL } from "../../lib/modelSelection";
@@ -98,6 +103,7 @@ function providerLabel(provider: Provider): string {
     if (provider === "vercel") return "Vercel AI Gateway";
     if (provider === "opencode-go") return "OpenCode Go";
     if (provider === "ollama") return "Local (Ollama)";
+    if (provider === "openai-compatible") return "Configured endpoint";
     return "Gemini";
 }
 
@@ -113,6 +119,17 @@ export function missingModelApiKey(
 ): MissingApiKey | null {
     const provider = providerForModel(model);
     if (provider === "ollama") return null; // local, no key
+    if (provider === "openai-compatible") {
+        const configured = getConfiguredModel(model);
+        if (!configured) return null;
+        if (!configuredModelRequiresApiKey(configured)) return null;
+        if (apiKeyForConfiguredModel(configured, apiKeys)) return null;
+        return {
+            provider,
+            model,
+            detail: `An API key is required to use ${configured.label || model}. Add the configured key or select a different tabular review model.`,
+        };
+    }
     if (apiKeys[provider]?.trim()) return null;
     return {
         provider,
