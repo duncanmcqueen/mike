@@ -41,6 +41,7 @@ type CompleteProviderParams = {
   user: string;
   maxTokens?: number;
   apiKeys?: UserApiKeys;
+  abortSignal?: AbortSignal;
 };
 
 type RouterProvider = Extract<

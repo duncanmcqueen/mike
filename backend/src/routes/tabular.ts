@@ -31,11 +31,14 @@ import {
     streamChatWithTools,
     type Provider,
     type UserApiKeys,
+    missingCommitteeApiKeyModels,
 } from "../lib/llm";
 import {
     apiKeyForConfiguredModel,
+    getCommitteeModel,
     getConfiguredModel,
 } from "../lib/llm/registry";
+import type { CommitteeModel } from "../lib/llm/types";
 import { getUserModelSettings } from "../lib/userSettings";
 import {
     checkProjectAccess,
@@ -500,8 +503,27 @@ function providerLabel(provider: Provider): string {
     return "Gemini";
 }
 
-function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
-    const provider = providerForModel(model);
+function missingModelApiKey(
+    model: string,
+    apiKeys: UserApiKeys,
+    committees: CommitteeModel[] = [],
+) {
+    // A committee runs only if every member and its chair can run.
+    const committee = getCommitteeModel(model, committees);
+    if (committee) {
+        const missing = missingCommitteeApiKeyModels(
+            model,
+            apiKeys,
+            committees,
+        );
+        if (!missing.length) return null;
+        return {
+            provider: "committee" as const,
+            model,
+            detail: `Committee ${committee.label || committee.id} cannot run because these models are unavailable or missing API keys: ${missing.join(", ")}. Add the missing API keys or select a different tabular review model.`,
+        };
+    }
+    const provider = providerForModel(model, committees);
     if (provider === "ollama") return null; // local, no key
     if (provider === "openai-compatible") {
         const configured = getConfiguredModel(model);
@@ -1209,11 +1231,15 @@ tabularRouter.post(
                 .status(404)
                 .json({ detail: "Review row not found" });
 
-        const { tabular_model, api_keys } = await getUserModelSettings(
+        const { tabular_model, api_keys, committees } = await getUserModelSettings(
             userId,
             db,
         );
-        const missingKey = missingModelApiKey(tabular_model, api_keys);
+        const missingKey = missingModelApiKey(
+            tabular_model,
+            api_keys,
+            committees,
+        );
         if (missingKey) {
             return void res.status(422).json({
                 code: "missing_api_key",
@@ -1408,8 +1434,12 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     if (columns.length === 0)
         return void res.status(400).json({ detail: "No columns configured" });
 
-    const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
-    const missingKey = missingModelApiKey(tabular_model, api_keys);
+    const { tabular_model, api_keys, committees } = await getUserModelSettings(userId, db);
+    const missingKey = missingModelApiKey(
+            tabular_model,
+            api_keys,
+            committees,
+        );
     if (missingKey) {
         return void res.status(422).json({
             code: "missing_api_key",
@@ -1988,8 +2018,12 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         ),
     };
 
-    const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
-    const missingKey = missingModelApiKey(tabular_model, api_keys);
+    const { tabular_model, api_keys, committees } = await getUserModelSettings(userId, db);
+    const missingKey = missingModelApiKey(
+            tabular_model,
+            api_keys,
+            committees,
+        );
     if (missingKey) {
         return void res.status(422).json({
             code: "missing_api_key",

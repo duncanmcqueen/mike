@@ -63,6 +63,8 @@ export type StreamChatParams = {
     callbacks?: StreamCallbacks;
     runTools?: (calls: NormalizedToolCall[]) => Promise<NormalizedToolResult[]>;
     apiKeys?: UserApiKeys;
+    /** Committees the caller owns, on top of any the deployment declares. */
+    committeeModels?: CommitteeModel[];
     /**
      * Enable provider-side reasoning/thinking. Off by default — should only
      * be turned on for interactive chat surfaces where the user actually
@@ -75,6 +77,18 @@ export type StreamChatParams = {
 
 export type StreamChatResult = {
     fullText: string;
+};
+
+export type CompleteTextParams = {
+    model: string;
+    systemPrompt?: string;
+    user: string;
+    maxTokens?: number;
+    apiKeys?: UserApiKeys;
+    committeeModels?: CommitteeModel[];
+    /** Committee ids already being resolved, used to catch cycles. */
+    committeeStack?: string[];
+    abortSignal?: AbortSignal;
 };
 
 // ---------------------------------------------------------------------------
