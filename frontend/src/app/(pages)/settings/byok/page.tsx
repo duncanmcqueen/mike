@@ -8,9 +8,19 @@ import { RouterSettingsSection } from "@/app/components/settings/RouterSettingsS
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { refreshOllamaModels } from "@/app/hooks/useOllamaModels";
 import { refreshOpenCodeGoModels } from "@/app/hooks/useOpenCodeGoModels";
+import type { ApiKeyProvider } from "@/app/lib/mikeApi";
+import { cn } from "@/app/lib/utils";
+import { settingsGlassIconButtonClassName } from "../settingsStyles";
 import { SettingsSection } from "../SettingsSection";
 
-const MODEL_API_KEY_FIELDS = [
+type ApiKeyFieldConfig = {
+    provider: ApiKeyProvider;
+    label: string;
+    placeholder: string;
+    description?: string;
+};
+
+const MODEL_API_KEY_FIELDS: ApiKeyFieldConfig[] = [
     {
         provider: "claude",
         label: "Anthropic (Claude) API Key",
@@ -59,9 +69,9 @@ const MODEL_API_KEY_FIELDS = [
         description:
             "After saving, pick the Synthetic models you want offered in the composer below.",
     },
-] as const;
+];
 
-const OTHER_API_KEY_FIELDS = [
+const OTHER_API_KEY_FIELDS: ApiKeyFieldConfig[] = [
     {
         provider: "courtlistener",
         label: "CourtListener API Key",
@@ -69,7 +79,7 @@ const OTHER_API_KEY_FIELDS = [
         description:
             "Add a CourtListener API key if you want the latest CourtListener data. Otherwise, Mike will use the bulk data hosted by us.",
     },
-] as const;
+];
 
 export default function ApiKeysPage() {
     const { profile, updateApiKey, reloadProfile } = useUserProfile();
@@ -88,41 +98,68 @@ export default function ApiKeysPage() {
         }
     };
 
+    const renderFields = (fields: ApiKeyFieldConfig[]) => (
+        <SettingsSection>
+            {fields.map((field) => (
+                <div key={field.provider}>
+                    <ApiKeyField
+                        label={field.label}
+                        placeholder={field.placeholder}
+                        description={field.description}
+                        hasSavedKey={
+                            profile?.apiKeys[field.provider].source === "user"
+                        }
+                        onSave={(value) =>
+                            updateApiKey(field.provider, value.trim() || null)
+                        }
+                        onRemove={() => updateApiKey(field.provider, null)}
+                    />
+                </div>
+            ))}
+        </SettingsSection>
+    );
+
     return (
-        <div>
-            <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="text-2xl font-medium font-serif text-gray-900">
-                    API Keys
-                </h2>
+        <div className="space-y-8">
+            <section className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-2xl font-medium font-serif text-gray-900">
+                        API Keys
+                    </h2>
+                    <button
+                        type="button"
+                        onClick={() => void handleRefresh()}
+                        disabled={refreshing}
+                        aria-label="Refresh API key and model status"
+                        className={cn(
+                            settingsGlassIconButtonClassName,
+                            "disabled:cursor-not-allowed disabled:opacity-50",
+                        )}
+                    >
+                        <RefreshCw
+                            className={cn(
+                                "h-4 w-4",
+                                refreshing && "animate-spin",
+                            )}
+                        />
+                    </button>
+                </div>
                 <p className="text-sm text-gray-500">
                     A personal API key saved here means all future requests for
                     the relevant provider will automatically be routed through
                     your API key and charged to your own API platform account.
                 </p>
-                <SettingsSection>
-                    {MODEL_API_KEY_FIELDS.map((field) => (
-                        <div key={field.provider}>
-                            <ApiKeyField
-                                label={field.label}
-                                placeholder={field.placeholder}
-                                hasSavedKey={
-                                    profile?.apiKeys[field.provider].source ===
-                                    "user"
-                                }
-                                onSave={(value) =>
-                                    updateApiKey(
-                                        field.provider,
-                                        value.trim() || null,
-                                    )
-                                }
-                                onRemove={() =>
-                                    updateApiKey(field.provider, null)
-                                }
-                            />
-                        </div>
-                    ))}
-                </SettingsSection>
-            </div>
+                {renderFields(MODEL_API_KEY_FIELDS)}
+            </section>
+
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                    Other API Keys
+                </h2>
+                {renderFields(OTHER_API_KEY_FIELDS)}
+            </section>
+
+            <RouterSettingsSection />
         </div>
     );
 }

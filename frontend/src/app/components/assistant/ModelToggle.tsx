@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ModelToggleUI,
   nearestReasoningLevelForModel,
@@ -203,6 +203,49 @@ export function useConfiguredModelOptions(
     }
     openCodeGoModels.forEach((model) => merged.set(model.id, model));
     return Array.from(merged.values());
+}
+
+/**
+ * The full model surface, exactly as the Assistant composer shows it:
+ * configured registry models, committees and Ollama (feature-gated) plus the
+ * user's saved router selections (OpenRouter, Vercel, OpenCode Go, Synthetic)
+ * and their live catalogs. Standalone model pickers such as Monitors and
+ * Playbooks should use this so a model selectable in the composer is
+ * selectable everywhere else.
+ */
+export function useGlobalModelOptions(
+    base: ModelOption[] = SETTINGS_MODELS,
+): ModelOption[] {
+    const profile = useOptionalUserProfile()?.profile;
+    const configured = useConfiguredModelOptions(base);
+    const ollamaModels = useOllamaModels();
+    const openRouterSelection = profile?.openRouterModels;
+    const vercelSelection = profile?.vercelModels;
+    const openCodeGoSelection = profile?.openCodeGoModels;
+    const syntheticSelection = profile?.syntheticModels;
+    return useMemo(
+        () =>
+            dedupeById([
+                ...configured,
+                ...openRouterModelOptions(openRouterSelection ?? []),
+                ...vercelModelOptions(vercelSelection ?? []),
+                ...openCodeGoModelOptions(openCodeGoSelection ?? []),
+                ...syntheticModelOptions(syntheticSelection ?? []),
+                ...ollamaModels.map((model) => ({
+                    ...model,
+                    label: modelDisplayName(model.id),
+                    source: "Local",
+                })),
+            ]),
+        [
+            configured,
+            openRouterSelection,
+            vercelSelection,
+            openCodeGoSelection,
+            syntheticSelection,
+            ollamaModels,
+        ],
+    );
 }
 
 /**

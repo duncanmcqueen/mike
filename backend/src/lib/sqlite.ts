@@ -797,7 +797,12 @@ async function sqliteRpc(name: string, args: Row): Promise<Result<any>> {
 // saved selection for one router is swapped atomically, so a concurrent write
 // can never interleave a delete with a partial insert.
 function replaceUserRouterModels(args: Row): null {
-  const userId = rpcUserId(args);
+  // The route calls this RPC with target_user_id/target_router/
+  // target_model_ids (mirroring public.replace_user_router_models). Reading
+  // the id through rpcUserId (p_user_id/user_id) silently dropped every
+  // write: the PATCH would still succeed and re-read the stale selection,
+  // looking to the user like the router-model click never saved.
+  const userId = String(args.target_user_id ?? "").trim();
   const router = String(args.target_router ?? "").trim();
   if (!userId || !router) return null;
   const modelIds = Array.isArray(args.target_model_ids)
@@ -807,6 +812,17 @@ function replaceUserRouterModels(args: Row): null {
     : [];
 
   const db = getSqliteDb();
+  db.exec(
+    `create table if not exists "user_router_models" (
+      id text primary key,
+      user_id text not null,
+      router text not null,
+      model_id text not null,
+      sort_order integer not null default 0,
+      created_at text not null default (datetime('now')),
+      updated_at text not null default (datetime('now'))
+    )`,
+  );
   ensureColumns("user_router_models", {
     user_id: null,
     router: null,

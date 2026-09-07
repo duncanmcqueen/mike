@@ -13,8 +13,7 @@ import { ModalSelect } from "@/app/components/modals/ModalSelect";
 import { ModalTextInput } from "@/app/components/modals/ModalTextInput";
 import { PillButton } from "@/app/components/ui/pill-button";
 import {
-  SETTINGS_MODELS,
-  useConfiguredModelOptions,
+  useGlobalModelOptions,
 } from "@/app/components/assistant/ModelToggle";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { buildPlaybookModelOptions } from "@/app/components/playbooks/playbookModelOptions";
@@ -64,7 +63,9 @@ const DEFAULT_REVIEW_INSTRUCTIONS =
 
 export default function PlaybooksPage() {
   const { profile } = useUserProfile();
-  const configuredModelOptions = useConfiguredModelOptions(SETTINGS_MODELS);
+  // Mirror the global composer model selection (registry + routers incl.
+  // Synthetic + local) so every model pickable in chat is pickable here.
+  const configuredModelOptions = useGlobalModelOptions();
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<PlaybookContent | null>(null);

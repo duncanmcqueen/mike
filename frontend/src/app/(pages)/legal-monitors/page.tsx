@@ -35,9 +35,10 @@ import { ModalSelect } from "@/app/components/modals/ModalSelect";
 import { ModalTextInput } from "@/app/components/modals/ModalTextInput";
 import { PillButton } from "@/app/components/ui/pill-button";
 import {
-    SETTINGS_MODELS,
-    useConfiguredModelOptions,
+    useGlobalModelOptions,
 } from "@/app/components/assistant/ModelToggle";
+import { useOptionalUserProfile } from "@/app/contexts/UserProfileContext";
+import { isModelAvailable } from "@/app/lib/modelAvailability";
 import { cn } from "@/app/lib/utils";
 import {
     createLegalMonitor,
@@ -161,7 +162,11 @@ function draftFromMonitor(monitor: LegalMonitor): LegalMonitorInput {
 }
 
 export default function LegalMonitorsPage() {
-    const configuredModelOptions = useConfiguredModelOptions(SETTINGS_MODELS);
+    // Mirror the global composer model selection: the Dropdown shows exactly
+    // the models the Assistant offers (registry + routers incl. Synthetic +
+    // local), availability-gated by the same API-key state.
+    const profile = useOptionalUserProfile()?.profile;
+    const globalModelOptions = useGlobalModelOptions();
     const [monitors, setMonitors] = useState<LegalMonitor[]>([]);
     const [configuration, setConfiguration] = useState<LegalMonitorConfiguration | null>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -238,15 +243,34 @@ export default function LegalMonitorsPage() {
     }, [loadRuns, selectedId]);
 
     const modelOptions = useMemo(() => {
-        return configuredModelOptions.map((model) => ({
-            value: model.id,
-            label: `${model.group} · ${model.label}`,
-        }));
-    }, [configuredModelOptions]);
+        const apiKeys = profile?.apiKeys;
+        return globalModelOptions
+            .filter((model) => {
+                // Local and committee models need no hosted key. When the
+                // profile is still loading or failed, fail open the same way
+                // the composer does: the backend rejects what it cannot serve.
+                if (model.group === "Local" || model.group === "Committee")
+                    return true;
+                if (!apiKeys) return true;
+                return isModelAvailable(model.id, apiKeys);
+            })
+            .map((model) => ({
+                value: model.id,
+                label: `${model.group} · ${model.label}`,
+            }));
+    }, [globalModelOptions, profile?.apiKeys]);
 
     function baseDraft(): LegalMonitorInput {
+        // Default a new monitor to the globally selected chat model, when it
+        // is available here — the picker mirrors the composer's selection.
+        const globalModel = profile?.lastSelectedChatModel?.trim() ?? "";
         return {
             ...EMPTY_DRAFT,
+            model:
+                globalModel &&
+                modelOptions.some((option) => option.value === globalModel)
+                    ? globalModel
+                    : "",
             connectorId: null,
             alertEmail: configuration?.defaultEmail || null,
         };
