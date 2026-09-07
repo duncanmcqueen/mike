@@ -2,11 +2,14 @@ import crypto from "node:crypto";
 import { Document as WordDocument, Packer, Paragraph } from "docx";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+    analysisIsStructuredOutput,
     buildDingDuffFallbackCalls,
     createLegalMonitor,
     deleteLegalMonitor,
     getLegalMonitor,
     isDingDuffConnector,
+    isTransientLegalMonitorLlmError,
+    LegalMonitorTransientAnalysisError,
     listLegalMonitors,
     parseAnalysis,
     runLegalMonitorLlmStage,
@@ -239,6 +242,81 @@ describe("legal monitor LLM stages", () => {
             "Final monitor analysis timed out on attempt 2 of 2 (300-second limit per attempt).",
         );
         expect(operation).toHaveBeenCalledTimes(2);
+    });
+
+    it("classifies unparseable analysis output as a retryable transient error", () => {
+        expect(
+            isTransientLegalMonitorLlmError(
+                new LegalMonitorTransientAnalysisError(
+                    "The analysis model returned an empty response.",
+                ),
+            ),
+        ).toBe(true);
+    });
+
+    it("retries once when the analysis response is unparseable", async () => {
+        const operation = vi.fn()
+            .mockRejectedValueOnce(
+                new LegalMonitorTransientAnalysisError(
+                    "The analysis model returned an unparseable response.",
+                ),
+            )
+            .mockResolvedValueOnce('{"summary":"ok"}');
+
+        await expect(runLegalMonitorLlmStage({
+            stage: "Final monitor analysis",
+            operation,
+            attempts: 2,
+            timeoutMs: 300_000,
+        })).resolves.toBe('{"summary":"ok"}');
+        expect(operation).toHaveBeenCalledTimes(2);
+    });
+
+    it("fails the stage, not the report parse, when every analysis attempt is unparseable", async () => {
+        const operation = vi.fn().mockRejectedValue(
+            new LegalMonitorTransientAnalysisError(
+                "The analysis model returned an empty response.",
+            ),
+        );
+
+        await expect(runLegalMonitorLlmStage({
+            stage: "Final monitor analysis",
+            operation,
+            attempts: 2,
+            timeoutMs: 300_000,
+        })).rejects.toThrow(
+            "Final monitor analysis failed on attempt 2 of 2: The analysis model returned an empty response.",
+        );
+        expect(operation).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("analysis structure gate", () => {
+    it("rejects empty and whitespace-only output", () => {
+        expect(analysisIsStructuredOutput("")).toBe(false);
+        expect(analysisIsStructuredOutput("   \n  ")).toBe(false);
+    });
+
+    it("rejects prose-only reports", () => {
+        expect(
+            analysisIsStructuredOutput(
+                "Here is my monitoring report in prose.",
+            ),
+        ).toBe(false);
+    });
+
+    it("accepts the shapes parseAnalysis recovers", () => {
+        expect(
+            analysisIsStructuredOutput(
+                '{"summary":"ok","hasMaterialUpdates":false,"developments":[],"report":"none"}',
+            ),
+        ).toBe(true);
+        expect(
+            analysisIsStructuredOutput('```json\n{"summary":"ok"}\n```'),
+        ).toBe(true);
+        expect(
+            analysisIsStructuredOutput('Note: {"summary":"ok"} trailing'),
+        ).toBe(true);
     });
 });
 
