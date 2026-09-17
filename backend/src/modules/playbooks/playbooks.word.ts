@@ -65,13 +65,18 @@ function tagValue(xml: string, tag: string): string | null {
 
 function textFromParagraph(xml: string): string {
   const pieces: string[] = [];
-  const token = /<w:(t|tab|br)\b[^>]*>([\s\S]*?)<\/w:t>|<w:(tab|br)\b[^>]*\/>/gi;
+  // The alternation is ordered, and every branch must consume its own tag
+  // completely. An empty <w:t/> and a self-closing <w:br/> or <w:tab/> have to
+  // match before the text-run branch, or its lazy body would run past the tag
+  // and swallow the next run's text up to the following </w:t>.
+  const token =
+    /<w:t\b[^>]*?\/>|<w:t\b[^>]*>([\s\S]*?)<\/w:t>|<w:(tab|br|cr)\b[^>]*>/gi;
   let match: RegExpExecArray | null;
   while ((match = token.exec(xml))) {
-    const type = match[1] ?? match[3];
-    if (type === "tab") pieces.push("\t");
-    else if (type === "br") pieces.push("\n");
-    else pieces.push(decodeXml(match[2] ?? ""));
+    const separator = match[2]?.toLowerCase();
+    if (separator === "tab") pieces.push("\t");
+    else if (separator) pieces.push("\n");
+    else if (match[1] !== undefined) pieces.push(decodeXml(match[1]));
   }
   return pieces.join("").replace(/[ \t]+\n/g, "\n").trim();
 }

@@ -18,6 +18,33 @@ import {
 type Db = ReturnType<typeof createServerSupabase>;
 
 const DEFAULT_PLAYBOOK_COMPILATION_TIMEOUT_MS = 300_000;
+const PUBLISH_VERSION_ATTEMPTS = 5;
+const POSTGRES_UNIQUE_VIOLATION = "23505";
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    String((error as { code?: unknown }).code) === POSTGRES_UNIQUE_VIOLATION
+  );
+}
+
+/**
+ * The message stored on a failed run and returned to the browser. Provider
+ * SDK exceptions, Zod dumps and database driver errors can carry API keys,
+ * table names and connection details, so only messages this module wrote are
+ * passed through.
+ */
+export function runFailureMessage(error: unknown): string {
+  if (error instanceof PlaybookRequestError) return error.message;
+  if (error instanceof PlaybookImportError) return error.message;
+  if (error instanceof Error && error.name === "TimeoutError")
+    return "The review timed out before the model answered. Try again, or review a shorter document.";
+  if (error instanceof z.ZodError)
+    return "The model returned a review that did not match the expected format. Try again.";
+  return "The review failed. Try again.";
+}
 
 const clauseSchema = z.object({
   text: z.string().trim().min(1).max(20_000),
@@ -130,11 +157,11 @@ export type PlaybookImportStage =
  * verbatim; every other error becomes a generic 500.
  */
 export class PlaybookRequestError extends Error {
-  readonly status: 400 | 404;
+  readonly status: 400 | 404 | 409;
 
   constructor(
     message: string,
-    status: 400 | 404 = 400,
+    status: 400 | 404 | 409 = 400,
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -284,6 +311,29 @@ export async function validatePlaybookCompilationWithRetry(args: {
   }
 }
 
+function zodIssueMessage(error: z.ZodError): string {
+  const issue = error.issues[0];
+  if (!issue) return "The playbook is not valid.";
+  const path = issue.path
+    .map((part) => (typeof part === "number" ? `#${part + 1}` : String(part)))
+    .join(" ");
+  return path ? `${path}: ${issue.message}` : issue.message;
+}
+
+/**
+ * Parse caller-supplied playbook content. A schema violation here is a
+ * correctable input problem — an empty playbook name, or a playbook left with
+ * no topics — so it must surface as an explicit 4xx and never as a 500
+ * carrying the raw Zod dump.
+ */
+function parsePlaybookContentInput(raw: unknown): PlaybookContent {
+  const result = playbookContentSchema.safeParse(raw);
+  if (result.success) return result.data;
+  throw new PlaybookRequestError(
+    `The playbook could not be saved — ${zodIssueMessage(result.error)}`,
+  );
+}
+
 function stableIds(content: PlaybookContent): PlaybookContent {
   return {
     ...content,
@@ -351,21 +401,35 @@ function validateImportedSources(
 
 function validateModel(model: string): void {
   if (!model.trim()) throw new PlaybookRequestError("Select a model.");
-  providerForModel(model.trim());
+  try {
+    providerForModel(model.trim());
+  } catch {
+    // providerForModel throws a plain Error for an unrecognised id. A stale
+    // stored selection is an input problem, so answer 4xx rather than 500.
+    throw new PlaybookRequestError(
+      `“${model.trim()}” is not a model MikeOSS can use. Choose another model.`,
+    );
+  }
 }
 
 type ModelAvailability =
   | { available: true }
   | { available: false; reason: string };
 
+const PROVIDER_DISPLAY_NAMES: Record<keyof UserApiKeys, string> = {
+  claude: "Anthropic (Claude)",
+  gemini: "Google (Gemini)",
+  openai: "OpenAI",
+  openrouter: "OpenRouter",
+  vercel: "Vercel AI Gateway",
+  "opencode-go": "OpenCode Go",
+  courtlistener: "CourtListener",
+};
+
+// Keyed rather than positional: a provider added later must not inherit the
+// name of whichever branch happened to sit last.
 function providerDisplayName(provider: keyof UserApiKeys): string {
-  if (provider === "claude") return "Anthropic (Claude)";
-  if (provider === "gemini") return "Google (Gemini)";
-  if (provider === "openai") return "OpenAI";
-  if (provider === "openrouter") return "OpenRouter";
-  if (provider === "vercel") return "Vercel AI Gateway";
-  if (provider === "opencode-go") return "OpenCode Go";
-  return "CourtListener";
+  return PROVIDER_DISPLAY_NAMES[provider] ?? "The selected provider";
 }
 
 export function playbookModelAvailability(
@@ -518,13 +582,33 @@ export function playbookCompilationTimeoutMs(
     : DEFAULT_PLAYBOOK_COMPILATION_TIMEOUT_MS;
 }
 
+// A stored draft that no longer satisfies the schema must not remove the
+// playbook from the list: report it as an empty draft so the row stays
+// visible and can still be deleted or re-imported.
+const UNREADABLE_DRAFT: PlaybookContent = {
+  name: "",
+  description: "",
+  representedParty: "",
+  globalGuidance: "",
+  documentTypes: [],
+  jurisdictions: [],
+  topics: [],
+};
+
 function publicPlaybook(
   row: Record<string, unknown>,
   published: { versionNumber: number; name: string } | null,
 ): Playbook {
-  const draft = stableIds(
-    playbookContentSchema.parse(parseJson(row.draft_json)),
-  );
+  const parsed = playbookContentSchema.safeParse(parseJson(row.draft_json));
+  if (!parsed.success) {
+    console.error("[playbooks] stored draft failed validation", {
+      playbookId: row.id,
+      issue: parsed.error.issues[0]?.message,
+    });
+  }
+  const draft = parsed.success
+    ? stableIds(parsed.data)
+    : { ...UNREADABLE_DRAFT, name: String(row.name ?? "") };
   return {
     id: String(row.id),
     userId: String(row.user_id),
@@ -544,10 +628,22 @@ function publicPlaybook(
   };
 }
 
+type PublishedVersionInfo = { versionNumber: number; name: string };
+
+function publishedVersionInfoFromRow(
+  row: Record<string, unknown>,
+): PublishedVersionInfo {
+  const parsed = playbookContentSchema.safeParse(parseJson(row.content_json));
+  return {
+    versionNumber: Number(row.version_number),
+    name: parsed.success ? parsed.data.name : "",
+  };
+}
+
 async function publishedVersionInfo(
   db: Db,
   versionId: unknown,
-): Promise<{ versionNumber: number; name: string } | null> {
+): Promise<PublishedVersionInfo | null> {
   if (!versionId) return null;
   const { data } = await db
     .from("playbook_versions")
@@ -555,8 +651,26 @@ async function publishedVersionInfo(
     .eq("id", String(versionId))
     .maybeSingle();
   if (!data) return null;
-  const content = playbookContentSchema.parse(parseJson(data.content_json));
-  return { versionNumber: Number(data.version_number), name: content.name };
+  return publishedVersionInfoFromRow(data);
+}
+
+// One query for every published version on the page, rather than one query
+// per listed playbook.
+async function publishedVersionInfoByVersionId(
+  db: Db,
+  versionIds: string[],
+): Promise<Map<string, PublishedVersionInfo>> {
+  const info = new Map<string, PublishedVersionInfo>();
+  if (!versionIds.length) return info;
+  const { data, error } = await db
+    .from("playbook_versions")
+    .select("id, version_number, content_json")
+    .in("id", versionIds);
+  if (error) throw error;
+  for (const row of (data ?? []) as Record<string, unknown>[]) {
+    info.set(String(row.id), publishedVersionInfoFromRow(row));
+  }
+  return info;
 }
 
 export async function listPlaybooks(
@@ -569,12 +683,21 @@ export async function listPlaybooks(
     .eq("user_id", userId)
     .order("updated_at", { ascending: false });
   if (error) throw error;
-  return Promise.all(
-    (data ?? []).map(async (row: Record<string, unknown>) =>
-      publicPlaybook(
-        row,
-        await publishedVersionInfo(db, row.published_version_id),
-      ),
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const versionIds = [
+    ...new Set(
+      rows
+        .map((row) => row.published_version_id)
+        .filter((id): id is string => typeof id === "string" && !!id),
+    ),
+  ];
+  const versions = await publishedVersionInfoByVersionId(db, versionIds);
+  return rows.map((row) =>
+    publicPlaybook(
+      row,
+      typeof row.published_version_id === "string"
+        ? versions.get(row.published_version_id) ?? null
+        : null,
     ),
   );
 }
@@ -817,7 +940,7 @@ export async function updatePlaybookDraft(
   db: Db = createServerSupabase(),
 ): Promise<Playbook> {
   await getPlaybook(userId, id, db);
-  const draft = stableIds(playbookContentSchema.parse(raw));
+  const draft = stableIds(parsePlaybookContentInput(raw));
   const { error } = await db
     .from("playbooks")
     .update({
@@ -839,25 +962,41 @@ export async function publishPlaybook(
   db: Db = createServerSupabase(),
 ): Promise<Playbook> {
   const playbook = await getPlaybook(userId, id, db);
-  const { data: versions, error: versionError } = await db
-    .from("playbook_versions")
-    .select("version_number")
-    .eq("playbook_id", id)
-    .order("version_number", { ascending: false })
-    .limit(1);
-  if (versionError) throw versionError;
-  const next = Number(versions?.[0]?.version_number ?? 0) + 1;
   const versionId = crypto.randomUUID();
   const now = new Date().toISOString();
-  const { error } = await db.from("playbook_versions").insert({
-    id: versionId,
-    playbook_id: id,
-    user_id: userId,
-    version_number: next,
-    content_json: playbook.draft,
-    created_at: now,
-  });
-  if (error) throw error;
+  // Reading the highest version number and inserting the next one is not
+  // atomic, so two concurrent publishes can choose the same number. The
+  // unique(playbook_id, version_number) constraint rejects the loser; re-read
+  // and try again rather than failing the request.
+  let inserted = false;
+  for (let attempt = 0; attempt < PUBLISH_VERSION_ATTEMPTS; attempt += 1) {
+    const { data: versions, error: versionError } = await db
+      .from("playbook_versions")
+      .select("version_number")
+      .eq("playbook_id", id)
+      .order("version_number", { ascending: false })
+      .limit(1);
+    if (versionError) throw versionError;
+    const next = Number(versions?.[0]?.version_number ?? 0) + 1;
+    const { error } = await db.from("playbook_versions").insert({
+      id: versionId,
+      playbook_id: id,
+      user_id: userId,
+      version_number: next,
+      content_json: playbook.draft,
+      created_at: now,
+    });
+    if (!error) {
+      inserted = true;
+      break;
+    }
+    if (!isUniqueViolation(error)) throw error;
+  }
+  if (!inserted)
+    throw new PlaybookRequestError(
+      "The playbook was published from somewhere else at the same time. Try again.",
+      409,
+    );
   const updated = await db
     .from("playbooks")
     .update({
@@ -952,15 +1091,24 @@ function actualDocumentQuote(documentText: string, proposed: string): string {
   }
 }
 
-function normalizeFindings(
+export function normalizeFindings(
   content: PlaybookContent,
   documentText: string,
   findings: z.infer<typeof findingSchema>[],
 ): PlaybookFinding[] {
   const rules = new Map<string, { topicId: string; name: string }>();
+  // The prompt allows a null ruleId, and models commonly identify a rule by
+  // name instead. Without this index that answer would be discarded and the
+  // rule back-filled as "the model did not return a result" — the opposite of
+  // what happened.
+  const ruleIdByName = new Map<string, string>();
   for (const topic of content.topics) {
-    for (const rule of topic.rules)
+    for (const rule of topic.rules) {
       rules.set(rule.id!, { topicId: topic.id!, name: rule.name });
+      const key = rule.name.trim().toLowerCase();
+      // Ambiguous names must not be guessed at.
+      ruleIdByName.set(key, ruleIdByName.has(key) ? "" : rule.id!);
+    }
   }
   const seen = new Set<string>();
   const normalized: PlaybookFinding[] = [];
@@ -975,14 +1123,18 @@ function normalizeFindings(
       });
       continue;
     }
-    const rule = finding.ruleId ? rules.get(finding.ruleId) : null;
-    if (!rule || !finding.ruleId || seen.has(finding.ruleId)) continue;
-    seen.add(finding.ruleId);
+    const ruleId =
+      finding.ruleId && rules.has(finding.ruleId)
+        ? finding.ruleId
+        : ruleIdByName.get(finding.ruleName.trim().toLowerCase()) || null;
+    const rule = ruleId ? rules.get(ruleId) : null;
+    if (!rule || !ruleId || seen.has(ruleId)) continue;
+    seen.add(ruleId);
     normalized.push({
       ...finding,
       id: crypto.randomUUID(),
       topicId: rule.topicId,
-      ruleId: finding.ruleId,
+      ruleId,
       ruleName: rule.name,
       quote: actualDocumentQuote(documentText, finding.quote),
     });
@@ -1022,7 +1174,7 @@ export async function reviewWithPlaybook(args: {
     throw new PlaybookRequestError(
       "The document is too large for a complete playbook review. Review a shorter document or selected sections.",
     );
-  const { versionId, content } = await publishedContent(
+  const { versionId, versionNumber, content } = await publishedContent(
     args.userId,
     args.playbookId,
     db,
@@ -1089,6 +1241,7 @@ export async function reviewWithPlaybook(args: {
       id: runId,
       playbookId: args.playbookId,
       versionId,
+      versionNumber,
       model: args.model,
       documentName: args.documentName ?? null,
       reviewMode: args.reviewMode,
@@ -1100,13 +1253,13 @@ export async function reviewWithPlaybook(args: {
       completedAt,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    console.error("[playbooks] review failed", { runId, error });
     const completedAt = new Date().toISOString();
     await db
       .from("playbook_runs")
       .update({
         status: "failed",
-        error: message,
+        error: runFailureMessage(error),
         completed_at: completedAt,
         updated_at: completedAt,
       })
@@ -1114,6 +1267,28 @@ export async function reviewWithPlaybook(args: {
       .eq("user_id", args.userId);
     throw error;
   }
+}
+
+async function versionNumbersByVersionId(
+  db: Db,
+  versionIds: unknown[],
+): Promise<Map<string, number>> {
+  const numbers = new Map<string, number>();
+  const ids = [
+    ...new Set(
+      versionIds.filter((id): id is string => typeof id === "string" && !!id),
+    ),
+  ];
+  if (!ids.length) return numbers;
+  const { data, error } = await db
+    .from("playbook_versions")
+    .select("id, version_number")
+    .in("id", ids);
+  if (error) throw error;
+  for (const row of (data ?? []) as Record<string, unknown>[]) {
+    numbers.set(String(row.id), Number(row.version_number));
+  }
+  return numbers;
 }
 
 export async function listPlaybookRuns(
@@ -1130,10 +1305,16 @@ export async function listPlaybookRuns(
     .order("started_at", { ascending: false })
     .limit(50);
   if (error) throw error;
-  return (data ?? []).map((row: Record<string, unknown>) => ({
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const versionNumbers = await versionNumbersByVersionId(
+    db,
+    rows.map((row) => row.version_id),
+  );
+  return rows.map((row) => ({
     id: String(row.id),
     playbookId: String(row.playbook_id),
     versionId: String(row.version_id),
+    versionNumber: versionNumbers.get(String(row.version_id)) ?? 0,
     model: String(row.model),
     documentName: row.document_name ? String(row.document_name) : null,
     reviewMode: row.review_mode === "permissive" ? "permissive" : "strict",
@@ -1161,17 +1342,27 @@ export async function deletePlaybook(
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new PlaybookRequestError("Playbook not found.", 404);
-  await db
+  // supabase-js reports failures on the result rather than throwing. Check
+  // each delete: reporting 204 after a refused delete leaves the playbook in
+  // place while the UI drops it, and would orphan the stored source file.
+  const runs = await db
     .from("playbook_runs")
     .delete()
     .eq("playbook_id", id)
     .eq("user_id", userId);
-  await db
+  if (runs.error) throw runs.error;
+  const versions = await db
     .from("playbook_versions")
     .delete()
     .eq("playbook_id", id)
     .eq("user_id", userId);
-  await db.from("playbooks").delete().eq("id", id).eq("user_id", userId);
+  if (versions.error) throw versions.error;
+  const playbook = await db
+    .from("playbooks")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", userId);
+  if (playbook.error) throw playbook.error;
   if (data.source_storage_key)
     await deleteFile(String(data.source_storage_key)).catch(() => {});
 }
