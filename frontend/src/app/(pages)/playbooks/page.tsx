@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import mammoth from "mammoth";
 import {
-  AlertCircle, ChevronDown, ChevronRight, Loader2,
-  Play, Plus, Save, Send, Trash2, Upload, X,
+  AlertCircle, ChevronDown, ChevronRight, FilePlus2, Loader2,
+  Play, Plus, RefreshCw, Save, Send, Trash2, Upload, X,
 } from "lucide-react";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { Modal } from "@/app/components/modals/Modal";
@@ -13,6 +13,9 @@ import { ModalSelect } from "@/app/components/modals/ModalSelect";
 import { ModalTextInput } from "@/app/components/modals/ModalTextInput";
 import { PillButtonUI as PillButton } from "@/shared/ui/PillButtonUI";
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/app/components/ui/dropdown-menu";
+import {
   modelDisplayName,
   SETTINGS_MODELS,
 } from "@/app/components/assistant/ModelToggle";
@@ -20,15 +23,20 @@ import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { buildPlaybookModelOptions } from "@/app/components/playbooks/playbookModelOptions";
 import {
-  deletePlaybook, getPlaybookConfiguration, importPlaybook, listPlaybooks,
+  createPlaybook, deletePlaybook, getPlaybookConfiguration, importPlaybook,
+  listPlaybooks,
   publishPlaybook, reviewDocumentWithPlaybook, updatePlaybook,
   type Playbook, type PlaybookClause, type PlaybookContent,
   type PlaybookConfiguration, type PlaybookPosition, type PlaybookRule,
   type PlaybookRun,
 } from "@/app/lib/mikeApi";
 
+const NEW_RULE_CONCEPT = "Describe the contract term this rule looks for.";
+
 function newRule(index: number): PlaybookRule {
-  return { id: `rule-${crypto.randomUUID()}`, name: `New rule ${index}`, concept: "", scope: "clause", required: false, guidance: "", standard: null, fallbacks: [], unacceptable: [], conditions: [], actions: [], sourceRefs: [] };
+  // concept must not be empty: the content schema rejects a rule without one,
+  // so an empty string here would make the whole draft unsavable.
+  return { id: `rule-${crypto.randomUUID()}`, name: `New rule ${index}`, concept: NEW_RULE_CONCEPT, scope: "clause", required: false, guidance: "", standard: null, fallbacks: [], unacceptable: [], conditions: [], actions: [], sourceRefs: [] };
 }
 function newPosition(name: string): PlaybookPosition { return { name, criteria: "", sampleClauses: [] }; }
 function newClause(): PlaybookClause { return { text: "", usage: "illustrative", sourceRefs: [] }; }
@@ -87,6 +95,8 @@ export default function PlaybooksPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  // Set when the Word file replaces an existing playbook's draft.
+  const [importTargetId, setImportTargetId] = useState<string | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importName, setImportName] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
@@ -145,12 +155,35 @@ export default function PlaybooksPage() {
     setDraft((current) => current ? { ...current, topics: current.topics.map((topic) => ({ ...topic, rules: topic.rules.map((rule) => rule.id === next.id ? next : rule) })) } : current);
   }
 
+  function openImport(targetId: string | null) {
+    setImportTargetId(targetId); setImportFile(null); setImportName(""); setImportError(null); setImportOpen(true);
+  }
+
+  async function startBlank() {
+    setBusy("create"); setError(null);
+    try {
+      const created = await createPlaybook();
+      setPlaybooks((current) => [created, ...current]);
+      setSelectedId(created.id);
+    } catch (err) { setError(err instanceof Error ? err.message : "The playbook could not be created."); }
+    finally { setBusy(null); }
+  }
+
   async function doImport() {
     if (!importFile) return;
     setBusy("import"); setError(null); setImportError(null);
     try {
-      const created = await importPlaybook(importFile, model, importName);
-      setPlaybooks((current) => [created, ...current]); setSelectedId(created.id); setImportOpen(false); setImportFile(null); setImportName("");
+      const saved = await importPlaybook(importFile, model, importName, importTargetId ?? undefined);
+      setPlaybooks((current) => importTargetId
+        ? current.map((item) => item.id === saved.id ? saved : item)
+        : [saved, ...current]);
+      setSelectedId(saved.id);
+      // Replacing the selected playbook does not change selectedId, so the
+      // selection effect will not run. Load the rewritten draft here.
+      setDraft(structuredClone(saved.draft));
+      setExpandedTopics(new Set(saved.draft.topics.map((topic) => topic.id)));
+      setSelectedRuleId(saved.draft.topics[0]?.rules[0]?.id ?? null);
+      setImportOpen(false); setImportFile(null); setImportName(""); setImportTargetId(null);
     } catch (err) { setImportError(err instanceof Error ? err.message : "Import failed."); }
     finally { setBusy(null); }
   }
@@ -198,11 +231,11 @@ export default function PlaybooksPage() {
   }
 
   return <div className="flex h-full min-h-0 flex-col">
-    <PageHeader breadcrumbs={[{ label: "Playbooks" }]} actions={[{ icon: <Upload className="h-4 w-4" />, label: "Import Word", onClick: () => setImportOpen(true) }]} />
+    <PageHeader breadcrumbs={[{ label: "Playbooks" }]} actions={[{ type: "custom", render: <NewPlaybookMenu disabled={!!busy} onImport={() => openImport(null)} onBlank={() => void startBlank()} /> }]} />
     {error && <div role="alert" className="mx-4 mb-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 md:mx-6"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span className="flex-1">{error}</span><button onClick={() => setError(null)} aria-label="Dismiss"><X className="h-4 w-4" /></button></div>}
     <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto md:grid-cols-[280px_300px_minmax(0,1fr)] md:overflow-hidden">
       <aside className="max-h-48 overflow-y-auto border-b border-gray-200 px-3 pb-5 md:max-h-none md:border-b-0 md:border-r">
-        {loading ? <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin" /></div> : playbooks.length === 0 ? <div className="px-3 py-12 text-center text-sm text-gray-500">Import a Word playbook to begin.</div> : playbooks.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`mb-1 w-full rounded-md px-3 py-2.5 text-left ${selectedId === item.id ? "bg-gray-900 text-white" : "hover:bg-gray-100"}`}><div className="truncate text-sm font-medium">{item.name}</div><div className={`mt-1 flex gap-2 text-xs ${selectedId === item.id ? "text-gray-300" : "text-gray-500"}`}><span>{item.status === "published" ? `Published v${item.publishedVersionNumber}` : "Draft"}</span><span>{item.draft.topics.reduce((sum, topic) => sum + topic.rules.length, 0)} rules</span></div></button>)}
+        {loading ? <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin" /></div> : playbooks.length === 0 ? <div className="px-3 py-10 text-center"><p className="text-sm text-gray-500">No playbooks yet.</p><p className="mt-1 text-xs text-gray-500">Compile a Word negotiation guide into rules, or write the rules yourself.</p><div className="mt-4 flex flex-col gap-2"><PillButton tone="black" onClick={() => openImport(null)} disabled={!!busy}><Upload className="h-3.5 w-3.5" />Import Word playbook</PillButton><PillButton tone="white" onClick={() => void startBlank()} disabled={!!busy}><FilePlus2 className="h-3.5 w-3.5" />Start from scratch</PillButton></div></div> : playbooks.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`mb-1 w-full rounded-md px-3 py-2.5 text-left ${selectedId === item.id ? "bg-gray-900 text-white" : "hover:bg-gray-100"}`}><div className="truncate text-sm font-medium">{item.name}</div><div className={`mt-1 flex gap-2 text-xs ${selectedId === item.id ? "text-gray-300" : "text-gray-500"}`}><span>{item.status === "published" ? `Published v${item.publishedVersionNumber}` : "Draft"}</span><span>{item.draft.topics.reduce((sum, topic) => sum + topic.rules.length, 0)} rules</span></div></button>)}
       </aside>
       <aside className="max-h-56 overflow-y-auto border-b border-gray-200 px-3 py-3 md:max-h-none md:border-b-0 md:border-r md:py-0 md:pb-5">
         {draft && <>
@@ -217,7 +250,7 @@ export default function PlaybooksPage() {
         {!draft || !selected ? <div className="py-16 text-center text-sm text-gray-500">Select a playbook.</div> : <>
           <div className="sticky top-0 z-10 mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-app-background py-3">
             <div><div className="text-xs text-gray-500">{selected.sourceFilename || "Manual playbook"}</div><div className="text-sm font-medium">{selected.status === "published" ? `Published version ${selected.publishedVersionNumber}` : "Unpublished draft"}</div></div>
-            <div className="flex gap-2"><PillButton tone="white" onClick={() => setReviewOpen(true)} disabled={!selected.publishedVersionId}><Play className="h-3.5 w-3.5" />Review document</PillButton><PillButton tone="white" onClick={() => void save()} disabled={!!busy}><Save className="h-3.5 w-3.5" />Save</PillButton><PillButton tone="black" onClick={() => void publish()} disabled={!!busy}><Send className="h-3.5 w-3.5" />Publish</PillButton><button title="Delete playbook" onClick={() => void remove()} className="p-2 text-gray-500 hover:text-red-600"><Trash2 className="h-4 w-4" /></button></div>
+            <div className="flex gap-2"><PillButton tone="white" onClick={() => setReviewOpen(true)} disabled={!selected.publishedVersionId}><Play className="h-3.5 w-3.5" />Review document</PillButton><PillButton tone="white" onClick={() => void save()} disabled={!!busy}><Save className="h-3.5 w-3.5" />Save</PillButton><PillButton tone="white" onClick={() => openImport(selected.id)} disabled={!!busy}><RefreshCw className="h-3.5 w-3.5" />Replace from Word</PillButton><PillButton tone="black" onClick={() => void publish()} disabled={!!busy}><Send className="h-3.5 w-3.5" />Publish</PillButton><button title="Delete playbook" onClick={() => void remove()} className="p-2 text-gray-500 hover:text-red-600"><Trash2 className="h-4 w-4" /></button></div>
           </div>
           <section className="mb-6 grid gap-4 md:grid-cols-2"><Field label="Playbook name" value={draft.name} onChange={(value) => setDraft({ ...draft, name: value })} /><Field label="Represented party" value={draft.representedParty} onChange={(value) => setDraft({ ...draft, representedParty: value })} /><Field label="Description" value={draft.description} onChange={(value) => setDraft({ ...draft, description: value })} multiline /><Field label="Global guidance" value={draft.globalGuidance} onChange={(value) => setDraft({ ...draft, globalGuidance: value })} multiline /></section>
           {selectedRule ? <RuleEditor rule={selectedRule} onChange={replaceRule} onDelete={() => { setDraft({ ...draft, topics: draft.topics.map((topic) => ({ ...topic, rules: topic.rules.filter((rule) => rule.id !== selectedRule.id) })).filter((topic) => topic.rules.length) }); setSelectedRuleId(null); }} /> : <div className="border-t border-gray-200 py-12 text-center text-sm text-gray-500">Select a rule to edit.</div>}
@@ -225,9 +258,29 @@ export default function PlaybooksPage() {
         </>}
       </main>
     </div>
-    <Modal open={importOpen} onClose={() => { if (busy !== "import") { setImportOpen(false); setImportError(null); } }} size="sm" breadcrumbs={["Playbooks", "Import Word playbook"]} footerStatus={busy === "import" ? <span className="text-xs text-gray-500">Long files can take several minutes</span> : null} primaryAction={{ label: busy === "import" ? "Compiling…" : "Import and compile", icon: busy === "import" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />, variant: "blue", disabled: !importFile || !model || !!busy, onClick: () => void doImport() }} cancelAction={{ label: "Cancel", onClick: () => { setImportOpen(false); setImportError(null); }, disabled: busy === "import" }}><div className="space-y-4 overflow-y-auto pb-4"><p className="text-sm text-gray-600">The imported concepts, positions, and sample clauses remain a draft until you review and publish them.</p>{busy === "import" && <div role="status" className="flex items-start gap-2 rounded-xl border border-blue-300/70 bg-blue-50 px-3 py-2.5 text-sm text-blue-800"><Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" /><span>The model is compiling and validating the playbook. If its first response is invalid, MikeOSS will automatically retry it. Keep this window open.</span></div>}{importError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-300/70 bg-red-50 px-3 py-2.5 text-sm text-red-700"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{importError}</span></div>}<div><ModalFieldLabel htmlFor="playbook-import-name">Playbook name (optional)</ModalFieldLabel><ModalTextInput id="playbook-import-name" value={importName} onChange={(event) => setImportName(event.target.value)} /></div><div><ModalFieldLabel htmlFor="playbook-import-file">Word playbook</ModalFieldLabel><input id="playbook-import-file" type="file" accept=".docx" onChange={(event) => { setImportFile(event.target.files?.[0] ?? null); setImportError(null); }} className="block w-full text-sm" /></div><div><ModalFieldLabel htmlFor="playbook-import-model">Compilation model</ModalFieldLabel>{models.length > 0 ? <ModalSelect id="playbook-import-model" value={model} onChange={(value) => { setModel(value); setImportError(null); }} options={models} menuClassName="max-h-64" /> : <p className="text-sm text-amber-700">No compilation model is available. <a href="/account/api-keys" className="underline">Configure an API key</a> or enable a local model.</p>}</div></div></Modal>
+    <Modal open={importOpen} onClose={() => { if (busy !== "import") { setImportOpen(false); setImportError(null); setImportTargetId(null); } }} size="sm" breadcrumbs={["Playbooks", importTargetId ? "Replace from Word" : "Import Word playbook"]} footerStatus={busy === "import" ? <span className="text-xs text-gray-500">Long files can take several minutes</span> : null} primaryAction={{ label: busy === "import" ? "Compiling…" : importTargetId ? "Replace and compile" : "Import and compile", icon: busy === "import" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />, variant: "blue", disabled: !importFile || !model || !!busy, onClick: () => void doImport() }} cancelAction={{ label: "Cancel", onClick: () => { setImportOpen(false); setImportError(null); setImportTargetId(null); }, disabled: busy === "import" }}><div className="space-y-4 overflow-y-auto pb-4"><p className="text-sm text-gray-600">{importTargetId ? "The rewritten concepts, positions, and sample clauses replace the current draft. Published versions do not change, so a completed review keeps its meaning. Publish again to make the new rules reviewable." : "The imported concepts, positions, and sample clauses remain a draft until you review and publish them."}</p>{busy === "import" && <div role="status" className="flex items-start gap-2 rounded-xl border border-blue-300/70 bg-blue-50 px-3 py-2.5 text-sm text-blue-800"><Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" /><span>The model is compiling and validating the playbook. If its first response is invalid, MikeOSS will automatically retry it. Keep this window open.</span></div>}{importError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-300/70 bg-red-50 px-3 py-2.5 text-sm text-red-700"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{importError}</span></div>}{!importTargetId && <div><ModalFieldLabel htmlFor="playbook-import-name">Playbook name (optional)</ModalFieldLabel><ModalTextInput id="playbook-import-name" value={importName} onChange={(event) => setImportName(event.target.value)} /></div>}<div><ModalFieldLabel htmlFor="playbook-import-file">Word playbook</ModalFieldLabel><input id="playbook-import-file" type="file" accept=".docx" onChange={(event) => { setImportFile(event.target.files?.[0] ?? null); setImportError(null); }} className="block w-full text-sm" /></div><div><ModalFieldLabel htmlFor="playbook-import-model">Compilation model</ModalFieldLabel>{models.length > 0 ? <ModalSelect id="playbook-import-model" value={model} onChange={(value) => { setModel(value); setImportError(null); }} options={models} menuClassName="max-h-64" /> : <p className="text-sm text-amber-700">No compilation model is available. <a href="/account/api-keys" className="underline">Configure an API key</a> or enable a local model.</p>}</div></div></Modal>
     <Modal open={reviewOpen} onClose={() => { if (busy !== "review") { setReviewOpen(false); setReviewError(null); } }} size="sm" breadcrumbs={["Playbooks", "Review document"]} footerStatus={busy === "review" ? <span className="flex items-center gap-1.5 text-xs text-gray-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />Reviewing the document…</span> : null} primaryAction={{ label: busy === "review" ? "Reviewing…" : "Start review", icon: busy === "review" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />, variant: "blue", disabled: !reviewFile || !model || !!busy, onClick: () => void review() }} cancelAction={{ label: "Cancel", onClick: () => { setReviewOpen(false); setReviewError(null); }, disabled: busy === "review" }}><div className="space-y-4 overflow-y-auto pb-4">{reviewError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-300/70 bg-red-50 px-3 py-2.5 text-sm text-red-700"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{reviewError}</span></div>}<div><ModalFieldLabel htmlFor="playbook-review-file">Contract</ModalFieldLabel><input id="playbook-review-file" type="file" accept=".pdf,.docx,.txt" onChange={(event) => { setReviewFile(event.target.files?.[0] ?? null); setReviewError(null); }} className="block w-full text-sm" /><p className="mt-1 text-xs text-gray-500">PDF, DOCX, or TXT files are supported. PDFs are reviewed from extracted text; keep the original Word file if you need formatting-preserving redlines.</p></div><div><ModalFieldLabel htmlFor="playbook-review-instructions">Review instructions</ModalFieldLabel><textarea id="playbook-review-instructions" value={reviewInstructions} onChange={(event) => setReviewInstructions(event.target.value)} rows={4} className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400 focus:ring-2 focus:ring-blue-200" /><div className="mt-2 flex flex-wrap gap-2" aria-label="Suggested review prompts">{["Run a complete playbook review. Prioritize unacceptable and missing-required terms, quote exact contract language, and provide complete replacement language for issues that need revision.", "Show only unacceptable and missing-required terms.", "Explain the highest-risk deviations and propose redlines."].map((suggestion) => <button key={suggestion} type="button" onClick={() => setReviewInstructions(suggestion)} className="rounded-full border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-300">{suggestion.length > 55 ? "Complete review" : suggestion}</button>)}</div></div><div><ModalFieldLabel htmlFor="playbook-review-model">Review model</ModalFieldLabel>{models.length > 0 ? <ModalSelect id="playbook-review-model" value={model} onChange={(value) => { setModel(value); setReviewError(null); }} options={models} menuClassName="max-h-64" /> : <p className="text-sm text-amber-700">No review model is available. <a href="/account/api-keys" className="underline">Configure an API key</a> or enable a local model.</p>}</div><div><ModalFieldLabel htmlFor="playbook-review-mode">Review posture</ModalFieldLabel><ModalSelect id="playbook-review-mode" value={reviewMode} onChange={(value) => setReviewMode(value as "strict" | "permissive")} options={[{ value: "strict", label: "Strict — push standard positions" }, { value: "permissive", label: "Permissive — allow fallbacks" }]} /></div></div></Modal>
   </div>;
+}
+
+function NewPlaybookMenu({ disabled, onImport, onBlank }: { disabled: boolean; onImport: () => void; onBlank: () => void }) {
+  return <DropdownMenu>
+    <DropdownMenuTrigger asChild>
+      <button type="button" disabled={disabled} className="inline-flex h-7 items-center gap-1.5 rounded-full border border-gray-300 px-3 text-xs font-medium text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-40">
+        <Plus className="h-3.5 w-3.5" />New playbook<ChevronDown className="h-3 w-3" />
+      </button>
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuItem onSelect={onImport}>
+        <Upload className="h-4 w-4" />
+        <span className="flex flex-col"><span>Import Word playbook</span><span className="text-xs text-gray-500">Compile a .docx into rules</span></span>
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={onBlank}>
+        <FilePlus2 className="h-4 w-4" />
+        <span className="flex flex-col"><span>Start from scratch</span><span className="text-xs text-gray-500">Write the rules yourself</span></span>
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  </DropdownMenu>;
 }
 
 function Field({ label, value, onChange, multiline = false }: { label: string; value: string; onChange: (value: string) => void; multiline?: boolean }) {

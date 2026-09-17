@@ -752,12 +752,29 @@ ${validationError}
 Recompile the source from the beginning. Start the response with { and end it with }. Return one complete JSON object only; do not include analysis, commentary, or Markdown fences.`;
 }
 
+async function playbookSourceStorageKey(
+  db: Db,
+  userId: string,
+  playbookId: string,
+): Promise<string | null> {
+  const { data, error } = await db
+    .from("playbooks")
+    .select("source_storage_key")
+    .eq("id", playbookId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.source_storage_key ? String(data.source_storage_key) : null;
+}
+
 export async function importPlaybookFromDocx(args: {
   userId: string;
   filename: string;
   buffer: Buffer;
   name?: string;
   model: string;
+  /** Replace this playbook's draft instead of creating a new playbook. */
+  playbookId?: string;
   db?: Db;
   dependencies?: {
     completeText?: typeof completeText;
@@ -779,7 +796,7 @@ export async function importPlaybookFromDocx(args: {
     status: "running",
     stage,
     error: null,
-    playbook_id: null,
+    playbook_id: args.playbookId ?? null,
     started_at: now,
     completed_at: null,
     created_at: now,
@@ -791,6 +808,12 @@ export async function importPlaybookFromDocx(args: {
     if (!args.filename.toLowerCase().endsWith(".docx"))
       throw new PlaybookRequestError("Playbook import currently requires a .docx file.");
     if (!args.buffer.length) throw new PlaybookRequestError("The uploaded playbook is empty.");
+
+    // Resolve the replace target first. An unknown or unowned playbook must
+    // fail before the import spends a model call on it.
+    const replacing = args.playbookId
+      ? await getPlaybook(args.userId, args.playbookId, db)
+      : null;
 
     stage = "checking_model";
     await updateImportAttempt(db, attemptId, { stage });
@@ -807,7 +830,7 @@ export async function importPlaybookFromDocx(args: {
     }
     const fallbackName =
       args.filename.replace(/\.docx$/i, "").trim() || "Imported playbook";
-    const name = args.name?.trim() || fallbackName;
+    const name = args.name?.trim() || replacing?.name || fallbackName;
 
     stage = "compiling";
     await updateImportAttempt(db, attemptId, { stage });
@@ -842,8 +865,13 @@ export async function importPlaybookFromDocx(args: {
         return retried;
       },
     });
-    const id = crypto.randomUUID();
-    const storageKey = `playbooks/${args.userId}/${id}/source.docx`;
+    const id = replacing?.id ?? crypto.randomUUID();
+    // The key carries the attempt id so a replacement never overwrites the
+    // current source before its row update commits.
+    const storageKey = `playbooks/${args.userId}/${id}/source-${attemptId}.docx`;
+    const previousStorageKey = replacing
+      ? await playbookSourceStorageKey(db, args.userId, id)
+      : null;
 
     stage = "storing_source";
     await updateImportAttempt(db, attemptId, { stage });
@@ -859,27 +887,55 @@ export async function importPlaybookFromDocx(args: {
 
     stage = "saving_playbook";
     await updateImportAttempt(db, attemptId, { stage });
-    const { error } = await db.from("playbooks").insert({
-      id,
-      user_id: args.userId,
-      name: content.name,
-      description: content.description,
-      status: "draft",
-      draft_json: content,
-      published_version_id: null,
-      source_filename: args.filename,
-      source_storage_key: storageKey,
-      source_structure_json: structure,
-      import_model: model,
-      created_at: now,
-      updated_at: now,
-    });
+    // A replacement rewrites the draft only. Published versions stay
+    // immutable, so a review already run against a published version keeps
+    // its meaning after the Word source changes.
+    const { error } = replacing
+      ? await db
+          .from("playbooks")
+          .update({
+            name: content.name,
+            description: content.description,
+            status: "draft",
+            draft_json: content,
+            source_filename: args.filename,
+            source_storage_key: storageKey,
+            source_structure_json: structure,
+            import_model: model,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", id)
+          .eq("user_id", args.userId)
+      : await db.from("playbooks").insert({
+          id,
+          user_id: args.userId,
+          name: content.name,
+          description: content.description,
+          status: "draft",
+          draft_json: content,
+          published_version_id: null,
+          source_filename: args.filename,
+          source_storage_key: storageKey,
+          source_structure_json: structure,
+          import_model: model,
+          created_at: now,
+          updated_at: now,
+        });
     if (error) {
       await deleteFile(storageKey).catch(() => {});
       uploadedStorageKey = null;
       throw error;
     }
     uploadedStorageKey = null;
+    // The row now points at the new object, so the superseded one is safe to
+    // remove. Losing this cleanup must not fail the import.
+    if (previousStorageKey && previousStorageKey !== storageKey)
+      await deleteFile(previousStorageKey).catch((cleanupError) => {
+        console.error("[playbooks] replaced source cleanup failed", {
+          storageKey: previousStorageKey,
+          error: cleanupError,
+        });
+      });
 
     stage = "completed";
     const completedAt = new Date().toISOString();
@@ -931,6 +987,69 @@ export async function importPlaybookFromDocx(args: {
       { cause: error },
     );
   }
+}
+
+/**
+ * Every rule needs a concept: the review model has nothing to look for
+ * without one, and the schema requires it. A new rule therefore starts with
+ * placeholder text the author replaces, not an empty string.
+ */
+export const BLANK_RULE_CONCEPT =
+  "Describe the contract term this rule looks for.";
+
+export function blankPlaybookContent(name: string): PlaybookContent {
+  return playbookContentSchema.parse({
+    name,
+    topics: [
+      {
+        id: "topic-1",
+        name: "New topic",
+        rules: [
+          {
+            id: "topic-1-rule-1",
+            name: "New rule",
+            concept: BLANK_RULE_CONCEPT,
+          },
+        ],
+      },
+    ],
+  });
+}
+
+/**
+ * Start a playbook without a Word source. The editor supports authoring a
+ * playbook by hand, so importing a .docx must not be the only way to get a
+ * first playbook. A hand-authored rule carries no sourceRefs; the strict
+ * source check applies to compiled imports only.
+ */
+export async function createPlaybook(
+  userId: string,
+  rawName: string | undefined,
+  db: Db = createServerSupabase(),
+): Promise<Playbook> {
+  const name = rawName?.trim() || "Untitled playbook";
+  if (name.length > 200)
+    throw new PlaybookRequestError("The playbook name is too long.");
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const draft = blankPlaybookContent(name);
+  const { error } = await db.from("playbooks").insert({
+    id,
+    user_id: userId,
+    name: draft.name,
+    description: draft.description,
+    status: "draft",
+    draft_json: draft,
+    published_version_id: null,
+    source_filename: null,
+    source_storage_key: null,
+    source_structure_json: null,
+    import_model: null,
+    created_at: now,
+    updated_at: now,
+  });
+  if (error) throw error;
+  return getPlaybook(userId, id, db);
 }
 
 export async function updatePlaybookDraft(

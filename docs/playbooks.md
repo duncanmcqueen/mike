@@ -15,13 +15,23 @@ rules with:
 - conditions, reviewer guidance, and escalation actions; and
 - source references to the imported Word paragraph or table cell.
 
-Imported content is always a draft. Publishing creates an immutable numbered
+A playbook starts in one of two ways: compiled from a Word negotiation guide,
+or written by hand in the editor. A hand-authored rule carries no source
+references; the strict source check below applies to compiled imports only.
+
+New content is always a draft. Publishing creates an immutable numbered
 version. Reviews use the last published version, so later draft edits do not
 change an in-progress or historical review.
 
+## Starting a playbook without a Word file
+
+Open **Playbooks**, select **New playbook**, then **Start from scratch**. Mike
+creates a draft holding one topic and one rule for you to edit. A rule always
+needs a concept, so the first one carries placeholder text to replace.
+
 ## Importing a Word playbook
 
-1. Open **Playbooks** and select **Import Word**.
+1. Open **Playbooks**, select **New playbook**, then **Import Word playbook**.
 2. Select a `.docx` playbook and a compilation model. Only models with usable
    credentials are offered, and Mike preselects an available one.
 3. Review the extracted topics, concepts, positions, sample clauses, and
@@ -51,6 +61,17 @@ Each import creates an audit record with its current processing stage. Failed
 imports retain the stage and error without retaining the source document,
 making credential, Word extraction, model compilation, and output-validation
 failures distinguishable.
+
+## Replacing a playbook from a newer Word file
+
+Select the playbook, then **Replace from Word**. The compiled result rewrites
+that playbook's draft and keeps its name unless you supply a new one.
+
+A replacement rewrites the draft only. Published versions are immutable, so a
+completed review keeps its meaning and an in-progress review is unaffected.
+Publish again to make the rewritten rules reviewable. The replaced `.docx` is
+removed once the new draft is stored, and the same rate limit and ownership
+checks apply as for a first import.
 
 ## Model selection
 

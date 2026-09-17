@@ -2,7 +2,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createPlaybook,
   getPlaybookConfiguration,
+  importPlaybook,
   listPlaybooks,
   reviewDocumentWithPlaybook,
   type Playbook,
@@ -11,6 +13,7 @@ import {
 import PlaybooksPage from "./page";
 
 vi.mock("@/app/lib/mikeApi", () => ({
+  createPlaybook: vi.fn(),
   listPlaybooks: vi.fn(),
   getPlaybookConfiguration: vi.fn(),
   importPlaybook: vi.fn(),
@@ -113,6 +116,8 @@ describe("playbooks page", () => {
       defaultModel: "claude-opus-5",
     });
     vi.mocked(reviewDocumentWithPlaybook).mockResolvedValue(RUN);
+    vi.mocked(createPlaybook).mockResolvedValue(playbook("pb-new", "Untitled playbook"));
+    vi.mocked(importPlaybook).mockResolvedValue(playbook("pb-a", "Replaced"));
   });
 
   it("names the topic toggle and reports whether it is expanded", async () => {
@@ -154,5 +159,92 @@ describe("playbooks page", () => {
       expect(screen.queryByText(RUN.summary as string)).toBeNull();
     });
     expect(screen.queryByText(/Latest review/i)).toBeNull();
+  });
+
+  it("offers both ways to add a playbook", async () => {
+    render(<PlaybooksPage />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /New playbook/i }),
+    );
+
+    expect(
+      await screen.findByRole("menuitem", { name: /Import Word playbook/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /Start from scratch/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("creates a blank playbook and selects it", async () => {
+    render(<PlaybooksPage />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /New playbook/i }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Start from scratch/i }),
+    );
+
+    await waitFor(() => expect(createPlaybook).toHaveBeenCalled());
+    expect(
+      await screen.findByRole("button", { name: /Untitled playbook/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("names both ways to begin when there are no playbooks", async () => {
+    vi.mocked(listPlaybooks).mockResolvedValue([]);
+    render(<PlaybooksPage />);
+
+    expect(
+      await screen.findByRole("button", { name: /Import Word playbook/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Start from scratch/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("replaces the selected playbook from a Word file", async () => {
+    render(<PlaybooksPage />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Replace from Word/i }),
+    );
+    await userEvent.upload(
+      screen.getByLabelText(/Word playbook/i),
+      new File(["docx"], "updated.docx", {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Replace and compile/i }),
+    );
+
+    await waitFor(() =>
+      expect(importPlaybook).toHaveBeenCalledWith(
+        expect.any(File),
+        "claude-opus-5",
+        "",
+        "pb-a",
+      ),
+    );
+
+    // The replacement rewrites a playbook; it must not add a second row.
+    const rows = await screen.findAllByRole("button", { name: /Replaced/i });
+    expect(rows).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /Playbook A/i })).toBeNull();
+  });
+
+  it("does not ask for a name when replacing", async () => {
+    render(<PlaybooksPage />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Replace from Word/i }),
+    );
+
+    // The editor's own "Playbook name" field stays; only the modal's
+    // optional-name input is hidden, because a replacement keeps the name.
+    expect(screen.queryByLabelText(/Playbook name \(optional\)/i)).toBeNull();
+    expect(screen.getByLabelText(/Word playbook/i)).toBeInTheDocument();
   });
 });

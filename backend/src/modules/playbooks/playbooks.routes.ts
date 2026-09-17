@@ -10,6 +10,7 @@ import {
   storageEnabled,
 } from "../../lib/storage";
 import {
+  createPlaybook,
   deletePlaybook,
   getPlaybook,
   importPlaybookFromDocx,
@@ -76,6 +77,17 @@ playbooksRouter.get("/", async (_req, res) => {
  * to object storage, matching how documents are uploaded, so the API never
  * buffers the file.
  */
+playbooksRouter.post("/", requireMfaIfEnrolled, async (req, res) => {
+  try {
+    const name = typeof req.body?.name === "string" ? req.body.name : undefined;
+    res
+      .status(201)
+      .json(await createPlaybook(res.locals.userId as string, name));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 playbooksRouter.post(
   "/import/upload-url",
   requireMfaIfEnrolled,
@@ -171,14 +183,22 @@ playbooksRouter.post("/import", requireMfaIfEnrolled, async (req, res) => {
         ? req.body.filename.trim()
         : "playbook.docx";
 
+    // A playbookId replaces that playbook's draft instead of adding a new
+    // playbook. Ownership is checked inside the import.
+    const playbookId =
+      typeof req.body?.playbookId === "string" && req.body.playbookId.trim()
+        ? req.body.playbookId.trim()
+        : undefined;
+
     const playbook = await importPlaybookFromDocx({
       userId,
       filename,
       buffer: Buffer.from(bytes),
       name,
       model,
+      playbookId,
     });
-    res.status(201).json(playbook);
+    res.status(playbookId ? 200 : 201).json(playbook);
   } catch (error) {
     sendError(res, error);
   } finally {

@@ -150,6 +150,77 @@ function queryFailingOn(failing: string, error: unknown) {
   return query;
 }
 
+describe("creating a playbook without a Word file", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("creates a blank playbook the editor can open", async () => {
+    from.mockImplementation(() => queryReturning(playbookRow()));
+
+    const response = await request(app).post("/playbooks").send({});
+
+    expect(response.status).toBe(201);
+    expect(importPlaybookFromDocx).not.toHaveBeenCalled();
+  });
+
+  it("accepts a name for the new playbook", async () => {
+    from.mockImplementation(() => queryReturning(playbookRow()));
+
+    const response = await request(app)
+      .post("/playbooks")
+      .send({ name: "Vendor MSA playbook" });
+
+    expect(response.status).toBe(201);
+  });
+
+  it("refuses a name that is too long", async () => {
+    from.mockImplementation(() => queryReturning(playbookRow()));
+
+    const response = await request(app)
+      .post("/playbooks")
+      .send({ name: "x".repeat(201) });
+
+    expect(response.status).toBe(400);
+    expect(response.body.detail).toMatch(/too long/i);
+  });
+});
+
+describe("replacing a playbook from a Word file", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    headFile.mockResolvedValue({ size: 2048, etag: null, contentType: null });
+    downloadFile.mockResolvedValue(new TextEncoder().encode("docx").buffer);
+    deleteFile.mockResolvedValue(undefined);
+    importPlaybookFromDocx.mockResolvedValue({ id: "pb-1", name: "Replaced" });
+  });
+
+  it("passes the target playbook to the import", async () => {
+    const response = await request(app).post("/playbooks/import").send({
+      storageKey: "playbooks/u1/imports/new.docx",
+      filename: "new.docx",
+      model: "claude-opus-5",
+      playbookId: "pb-1",
+    });
+
+    expect(response.status).toBe(200);
+    expect(importPlaybookFromDocx).toHaveBeenCalledWith(
+      expect.objectContaining({ playbookId: "pb-1" }),
+    );
+  });
+
+  it("creates a playbook when no target is given", async () => {
+    const response = await request(app).post("/playbooks/import").send({
+      storageKey: "playbooks/u1/imports/new.docx",
+      filename: "new.docx",
+      model: "claude-opus-5",
+    });
+
+    expect(response.status).toBe(201);
+    expect(importPlaybookFromDocx).toHaveBeenCalledWith(
+      expect.objectContaining({ playbookId: undefined }),
+    );
+  });
+});
+
 describe("playbook input validation", () => {
   beforeEach(() => vi.clearAllMocks());
 
