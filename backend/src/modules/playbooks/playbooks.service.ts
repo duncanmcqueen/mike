@@ -3,6 +3,8 @@ export {
   PlaybookRequestError,
   PlaybookImportError,
   normalizeCompiledPlaybookOutput,
+  normalizeFindings,
+  runFailureMessage,
   validatePlaybookCompilationWithRetry,
   playbookModelAvailability,
   PLAYBOOK_IMPORT_GENERIC_FAILURE,

@@ -81,6 +81,130 @@ function queryReturning(data: unknown) {
   return query;
 }
 
+function playbookRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "pb-1",
+    user_id: "u1",
+    name: "Commercial Playbook",
+    description: "",
+    status: "draft",
+    draft_json: {
+      name: "Commercial Playbook",
+      description: "",
+      globalGuidance: "",
+      representedParty: "Customer",
+      documentTypes: [],
+      jurisdictions: [],
+      topics: [
+        {
+          id: "liability",
+          name: "Liability",
+          rules: [
+            {
+              id: "liability-cap",
+              name: "Liability cap",
+              concept: "Determine whether liability is capped.",
+              scope: "clause",
+              required: true,
+              guidance: "",
+              standard: null,
+              fallbacks: [],
+              unacceptable: [],
+              sourceRefs: [],
+            },
+          ],
+        },
+      ],
+    },
+    published_version_id: null,
+    source_filename: null,
+    source_storage_key: "playbooks/u1/source.docx",
+    import_model: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+// A query whose terminal await resolves with an error, the way supabase-js
+// reports a refused statement instead of throwing.
+function queryFailingOn(failing: string, error: unknown) {
+  const query: Record<string, unknown> = {};
+  let failed = false;
+  for (const method of ["select", "insert", "update", "delete", "eq", "order", "in"]) {
+    query[method] = vi.fn(() => {
+      if (method === failing) failed = true;
+      return query;
+    });
+  }
+  const settle = async () => ({
+    data: failed ? null : playbookRow(),
+    error: failed ? error : null,
+  });
+  query.single = vi.fn(settle);
+  query.maybeSingle = vi.fn(settle);
+  query.then = (
+    resolve: (value: unknown) => unknown,
+    reject?: (error: unknown) => unknown,
+  ) => settle().then(resolve, reject);
+  return query;
+}
+
+describe("playbook input validation", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([
+    ["an empty playbook name", { name: "", topics: [{ id: "t", name: "T", rules: [] }] }],
+    ["a playbook with no topics", { name: "Commercial Playbook", topics: [] }],
+    ["a body that is not a playbook", { unrelated: true }],
+  ])("answers 400, not 500, for %s", async (_label, draft) => {
+    from.mockImplementation(() => queryReturning(playbookRow()));
+
+    const response = await request(app).put("/playbooks/pb-1").send(draft);
+
+    expect(response.status).toBe(400);
+    expect(response.body.detail).toMatch(/could not be saved/i);
+    expect(response.body.code).not.toBe("internal_error");
+  });
+
+  it("answers 400, not 500, for a model id it does not recognise", async () => {
+    from.mockImplementation(() => queryReturning(playbookRow()));
+
+    const response = await request(app)
+      .post("/playbooks/pb-1/review")
+      .send({ documentText: "A contract.", model: "bogus/not-a-model" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.detail).toMatch(/not a model/i);
+  });
+});
+
+describe("playbook deletion", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("reports a refused delete instead of answering 204", async () => {
+    from.mockImplementation(() =>
+      queryFailingOn("delete", { code: "42501", message: "permission denied" }),
+    );
+
+    const response = await request(app).delete("/playbooks/pb-1");
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(response.body)).not.toMatch(/permission denied/);
+    expect(deleteFile).not.toHaveBeenCalled();
+  });
+
+  it("answers 204 and clears the stored source when every delete succeeds", async () => {
+    from.mockImplementation(() => queryReturning(playbookRow()));
+    deleteFile.mockResolvedValue(undefined);
+
+    const response = await request(app).delete("/playbooks/pb-1");
+
+    expect(response.status).toBe(204);
+    expect(deleteFile).toHaveBeenCalledWith("playbooks/u1/source.docx");
+  });
+});
+
 describe("playbook import upload staging", () => {
   beforeEach(() => {
     vi.clearAllMocks();

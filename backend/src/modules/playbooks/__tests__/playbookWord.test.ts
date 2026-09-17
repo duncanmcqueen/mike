@@ -43,6 +43,59 @@ describe("playbook Word extraction", () => {
     expect(structure.text).toContain("[T1R1C2] Preferred clause\nLiability is capped at fees paid.");
   });
 
+  it.each([
+    [
+      "line breaks",
+      "<w:r><w:t>Line one</w:t><w:br/><w:t>Line two</w:t></w:r>",
+      "Line one\nLine two",
+    ],
+    [
+      "tabs",
+      "<w:r><w:t>Cap</w:t><w:tab/><w:t>Fees paid</w:t></w:r>",
+      "Cap\tFees paid",
+    ],
+    [
+      "carriage returns",
+      "<w:r><w:t>One</w:t><w:cr/><w:t>Two</w:t></w:r>",
+      "One\nTwo",
+    ],
+    [
+      "page breaks",
+      '<w:r><w:t>Before</w:t><w:br w:type="page"/><w:t>After</w:t></w:r>',
+      "Before\nAfter",
+    ],
+    [
+      "empty text runs",
+      "<w:r><w:t/><w:t>Real text</w:t></w:r>",
+      "Real text",
+    ],
+    [
+      "preserved whitespace across runs",
+      '<w:r><w:t xml:space="preserve">Hello </w:t><w:t>world</w:t></w:r>',
+      "Hello world",
+    ],
+  ])("keeps the text that follows %s", async (_label, runs, expected) => {
+    const zip = new JSZip();
+    zip.file("word/document.xml", `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p>${runs}</w:p></w:body></w:document>`);
+    const structure = await extractPlaybookWordStructure(await zip.generateAsync({ type: "nodebuffer" }));
+    expect(structure.sources[0]?.text).toBe(expected);
+  });
+
+  it("keeps every cell of a multi-line table row", async () => {
+    const zip = new JSZip();
+    zip.file("word/document.xml", `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+      <w:tbl><w:tr>
+        <w:tc><w:p><w:r><w:t>Standard</w:t><w:br/><w:t>Mutual cap</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Fallback</w:t><w:br/><w:t>Cap at 2x fees</w:t></w:r></w:p></w:tc>
+      </w:tr></w:tbl>
+    </w:body></w:document>`);
+    const structure = await extractPlaybookWordStructure(await zip.generateAsync({ type: "nodebuffer" }));
+    expect(structure.sources.map((source) => source.text)).toEqual([
+      "Standard\nMutual cap",
+      "Fallback\nCap at 2x fees",
+    ]);
+  });
+
   it("rejects archives without a readable Word body", async () => {
     const zip = new JSZip();
     zip.file("empty.txt", "empty");

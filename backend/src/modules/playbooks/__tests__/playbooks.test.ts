@@ -5,8 +5,10 @@ import {
   playbookCompilationTimeoutMs,
   playbookContentSchema,
   playbookImportFailureMessage,
+  normalizeFindings,
   playbookModelAvailability,
   PlaybookRequestError,
+  runFailureMessage,
   validatePlaybookCompilationWithRetry,
 } from "../playbooks.operations";
 
@@ -225,5 +227,111 @@ describe("playbook model availability", () => {
       available: false,
       reason: expect.stringMatching(/unknown model id/i),
     });
+  });
+});
+
+describe("review finding normalization", () => {
+  const published = playbookContentSchema.parse(content());
+
+  function finding(overrides: Record<string, unknown> = {}) {
+    return {
+      topicId: null,
+      ruleId: null,
+      ruleName: "Liability cap",
+      status: "unacceptable" as const,
+      quote: "",
+      location: "",
+      analysis: "The cap is uncapped.",
+      suggestedText: "Cap at fees paid.",
+      ...overrides,
+    };
+  }
+
+  it("keeps a finding that identifies its rule by name instead of id", () => {
+    const [first, ...rest] = normalizeFindings(published, "", [finding()]);
+
+    expect(rest).toHaveLength(0);
+    expect(first).toMatchObject({
+      ruleId: "liability-cap",
+      topicId: "liability",
+      ruleName: "Liability cap",
+      status: "unacceptable",
+      analysis: "The cap is uncapped.",
+      suggestedText: "Cap at fees paid.",
+    });
+  });
+
+  it("matches a rule name regardless of case and surrounding space", () => {
+    const [first] = normalizeFindings(published, "", [
+      finding({ ruleName: "  liability CAP  " }),
+    ]);
+
+    expect(first).toMatchObject({ ruleId: "liability-cap" });
+  });
+
+  it("prefers a valid ruleId over the rule name", () => {
+    const [first] = normalizeFindings(published, "", [
+      finding({ ruleId: "liability-cap", ruleName: "Something else" }),
+    ]);
+
+    expect(first).toMatchObject({ ruleId: "liability-cap" });
+  });
+
+  it("back-fills a rule the model did not answer", () => {
+    const [first] = normalizeFindings(published, "", []);
+
+    expect(first).toMatchObject({
+      ruleId: "liability-cap",
+      status: "needs_review",
+    });
+    expect(first.analysis).toMatch(/did not return a result/i);
+  });
+
+  it("does not guess when two rules share a name", () => {
+    const ambiguous = playbookContentSchema.parse({
+      ...content(),
+      topics: [
+        {
+          id: "liability",
+          name: "Liability",
+          rules: [
+            { ...content().topics[0].rules[0], id: "rule-a" },
+            { ...content().topics[0].rules[0], id: "rule-b" },
+          ],
+        },
+      ],
+    });
+
+    const normalized = normalizeFindings(ambiguous, "", [finding()]);
+
+    expect(normalized.every((entry) => entry.status === "needs_review")).toBe(
+      true,
+    );
+  });
+});
+
+describe("run failure messages", () => {
+  it("passes through a message this module wrote", () => {
+    expect(runFailureMessage(new PlaybookRequestError("Select a model."))).toBe(
+      "Select a model.",
+    );
+  });
+
+  it.each([
+    ["a provider exception", new Error("invalid x-api-key sk-ant-secret123456")],
+    ["a database error", { code: "42P01", message: 'relation "x" does not exist' }],
+    ["a non-error value", "raw string failure"],
+  ])("does not pass through %s", (_label, error) => {
+    const message = runFailureMessage(error);
+
+    expect(message).toBe("The review failed. Try again.");
+    expect(message).not.toMatch(/sk-ant|x-api-key|relation|raw string/);
+  });
+
+  it("explains a timeout", () => {
+    const error = new Error("timed out");
+    error.name = "TimeoutError";
+
+    expect(runFailureMessage(error)).toMatch(/timed out/i);
   });
 });
