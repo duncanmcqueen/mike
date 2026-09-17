@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  BLANK_RULE_CONCEPT,
+  blankPlaybookContent,
   normalizeCompiledPlaybookOutput,
   PLAYBOOK_IMPORT_GENERIC_FAILURE,
   playbookCompilationTimeoutMs,
@@ -333,5 +335,34 @@ describe("run failure messages", () => {
     error.name = "TimeoutError";
 
     expect(runFailureMessage(error)).toMatch(/timed out/i);
+  });
+});
+
+describe("a playbook started without a Word file", () => {
+  it("produces content the schema accepts", () => {
+    const content = blankPlaybookContent("Vendor MSA playbook");
+
+    expect(() => playbookContentSchema.parse(content)).not.toThrow();
+    expect(content.name).toBe("Vendor MSA playbook");
+  });
+
+  it("gives the first rule a concept, because the schema requires one", () => {
+    const [rule] = blankPlaybookContent("P").topics[0].rules;
+
+    expect(rule.concept).toBe(BLANK_RULE_CONCEPT);
+    expect(rule.concept.trim().length).toBeGreaterThan(0);
+  });
+
+  it("starts with one topic and one rule", () => {
+    const content = blankPlaybookContent("P");
+
+    expect(content.topics).toHaveLength(1);
+    expect(content.topics[0].rules).toHaveLength(1);
+  });
+
+  it("carries no source references, unlike a compiled import", () => {
+    const [rule] = blankPlaybookContent("P").topics[0].rules;
+
+    expect(rule.sourceRefs).toEqual([]);
   });
 });
