@@ -36,16 +36,17 @@ function content(name = "Commercial Playbook") {
               sampleClauses: [
                 {
                   text: "Liability will not exceed fees paid in the preceding 12 months.",
-                  usage: "preferred" as const,
-                  sourceRefs: [],
+                  usage: "preferred",
+                  sourceRefs: [] as string[],
                 },
               ],
             },
             fallbacks: [],
             unacceptable: [],
-            conditions: [],
+            // Raw model output can contain objects that normalization must handle.
+            conditions: [] as unknown[],
             actions: [],
-            sourceRefs: [],
+            sourceRefs: [] as string[],
           },
         ],
       },
@@ -83,7 +84,7 @@ describe("playbook content validation", () => {
       {
         when: "The supplier processes personal data",
         requirement: "A data processing addendum is required",
-      } as unknown as string,
+      },
     ];
 
     const parsed = playbookContentSchema.parse(
@@ -101,7 +102,7 @@ describe("playbook content validation", () => {
     ).toThrow();
     const invalid = content();
     invalid.topics[0].rules[0].standard!.sampleClauses[0].usage =
-      "sometimes" as "preferred";
+      "sometimes";
     expect(() => playbookContentSchema.parse(invalid)).toThrow();
   });
 });
