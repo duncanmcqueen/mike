@@ -26,6 +26,7 @@ vi.mock("../../user/user.apiKeyStore", () => ({
 }));
 
 import { modelsRouter } from "../models.routes";
+import { resetModelRegistryCache } from "../../../lib/llm/registry";
 import {
     INTERNAL_ERROR_CODE,
     INTERNAL_ERROR_MESSAGE,
@@ -33,6 +34,75 @@ import {
 
 const app = express();
 app.use("/models", modelsRouter);
+
+describe("GET /models/configured", () => {
+    const originalConfig = process.env.MIKE_MODEL_CONFIG_JSON;
+
+    beforeEach(() => {
+        getUserApiKeys.mockResolvedValue({ openai: "user-openai-key" });
+        process.env.MIKE_MODEL_CONFIG_JSON = JSON.stringify({
+            models: [
+                {
+                    id: "local-qwen",
+                    label: "Local Qwen",
+                    provider: "openai-compatible",
+                    location: "local",
+                    baseUrl: "http://localhost:8000/v1",
+                },
+                {
+                    id: "cloud-user-key",
+                    provider: "openai-compatible",
+                    location: "cloud",
+                    baseUrl: "https://models.example.test/v1",
+                    apiKeyProvider: "openai",
+                },
+                {
+                    id: "cloud-missing-env",
+                    provider: "openai-compatible",
+                    location: "cloud",
+                    baseUrl: "https://missing.example.test/v1",
+                    apiKeyEnv: "MISSING_CONFIGURED_MODEL_KEY",
+                },
+            ],
+        });
+        delete process.env.MISSING_CONFIGURED_MODEL_KEY;
+        resetModelRegistryCache();
+    });
+
+    afterEach(() => {
+        if (originalConfig === undefined) {
+            delete process.env.MIKE_MODEL_CONFIG_JSON;
+        } else {
+            process.env.MIKE_MODEL_CONFIG_JSON = originalConfig;
+        }
+        resetModelRegistryCache();
+        vi.clearAllMocks();
+    });
+
+    it("returns only usable models without exposing endpoint credentials", async () => {
+        const response = await request(app).get("/models/configured");
+
+        expect(response.status).toBe(200);
+        expect(response.body.models).toEqual([
+            {
+                id: "local-qwen",
+                label: "Local Qwen",
+                group: "Configured",
+                location: "local",
+                source: "Configured",
+            },
+            {
+                id: "cloud-user-key",
+                label: "cloud-user-key",
+                group: "Configured",
+                location: "cloud",
+                source: "Configured",
+            },
+        ]);
+        expect(response.text).not.toContain("baseUrl");
+        expect(response.text).not.toContain("user-openai-key");
+    });
+});
 
 describe("GET /models/openrouter", () => {
     beforeEach(() => {

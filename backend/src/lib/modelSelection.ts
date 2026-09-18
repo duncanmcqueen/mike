@@ -10,6 +10,11 @@ import {
     type ReasoningLevel,
 } from "./llm";
 import {
+    apiKeyForConfiguredModel,
+    configuredModelRequiresApiKey,
+    getConfiguredModel,
+} from "./llm/registry";
+import {
     isRouterModelSelected,
     type RouterModelSelections,
 } from "./routerModels";
@@ -76,7 +81,16 @@ export function hasApiKeyForModel(
     apiKeys: UserApiKeys,
 ): boolean {
     const provider = providerForModel(model);
-    return provider === "ollama" || !!apiKeys[provider]?.trim();
+    if (provider === "ollama") return true;
+    if (provider === "openai-compatible") {
+        const configured = getConfiguredModel(model);
+        return (
+            configured !== null &&
+            (!configuredModelRequiresApiKey(configured) ||
+                apiKeyForConfiguredModel(configured, apiKeys) !== null)
+        );
+    }
+    return !!apiKeys[provider]?.trim();
 }
 
 type EffectiveChatModelResult =
@@ -204,6 +218,7 @@ export function titleModelForChat(
         case "vercel":
         case "opencode-go":
         case "ollama":
+        case "openai-compatible":
             return resolvedChatModel;
     }
 }

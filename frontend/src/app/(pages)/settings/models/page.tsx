@@ -18,6 +18,7 @@ import {
   MODELS,
   SETTINGS_MODELS,
   canonicalModelId,
+  mergeConfiguredModelOptions,
   openCodeGoModelOptions,
   openRouterModelOptions,
   vercelModelOptions,
@@ -34,6 +35,7 @@ import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsRow } from "@/app/components/settings/SettingsRow";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
+import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
 type ModelPreferenceField =
   | "titleModel"
@@ -43,6 +45,7 @@ type ModelPreferenceField =
 export default function ModelPreferencesPage() {
   const { profile, updateModelPreference } = useUserProfile();
   const ollamaModels = useOllamaModels();
+  const configuredModels = useConfiguredModels();
   const [savingField, setSavingField] = useState<ModelPreferenceField | null>(
     null,
   );
@@ -105,13 +108,13 @@ export default function ModelPreferencesPage() {
               value={canonicalModelId(
                 optimisticValues.titleModel ?? profile?.titleModel ?? "",
               )}
-              options={[
+              options={mergeConfiguredModelOptions(configuredModels, [
                 ...SETTINGS_MODELS,
                 ...selectedOpenRouterOptions,
                 ...selectedVercelOptions,
                 ...selectedOpenCodeGoOptions,
                 ...ollamaModels,
-              ]}
+              ])}
               apiKeys={profile?.apiKeys}
               isSaving={savingField === "titleModel"}
               isSaved={savedField === "titleModel"}
@@ -131,13 +134,13 @@ export default function ModelPreferencesPage() {
               value={canonicalModelId(
                 optimisticValues.tabularModel ?? profile?.tabularModel ?? "",
               )}
-              options={[
+              options={mergeConfiguredModelOptions(configuredModels, [
                 ...MODELS,
                 ...selectedOpenRouterOptions,
                 ...selectedVercelOptions,
                 ...selectedOpenCodeGoOptions,
                 ...ollamaModels,
-              ]}
+              ])}
               apiKeys={profile?.apiKeys}
               isSaving={savingField === "tabularModel"}
               isSaved={savedField === "tabularModel"}
@@ -160,13 +163,13 @@ export default function ModelPreferencesPage() {
                   profile?.memoryCuratorModel ??
                   "",
               )}
-              options={[
+              options={mergeConfiguredModelOptions(configuredModels, [
                 ...SETTINGS_MODELS,
                 ...selectedOpenRouterOptions,
                 ...selectedVercelOptions,
                 ...selectedOpenCodeGoOptions,
                 ...ollamaModels,
-              ]}
+              ])}
               apiKeys={profile?.apiKeys}
               isSaving={savingField === "memoryCuratorModel"}
               isSaved={savedField === "memoryCuratorModel"}
@@ -199,6 +202,7 @@ function ModelPreferenceDropdown({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const availableOptions = options.filter((model) => {
+    if (model.source === "Configured") return true;
     if (model.group === "Local") return true;
     return apiKeys ? isModelAvailable(model.id, apiKeys) : false;
   });

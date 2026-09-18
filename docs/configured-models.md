@@ -47,9 +47,24 @@ array:
 | `apiKeyProvider` | no | Use the requesting user's saved key for that provider. |
 | `tolerateTextToolCalls` | no | Override the tolerance default. |
 
-An entry that declares no key at all is treated as needing none, which is
-usually right for a self-hosted endpoint on a private network. Malformed
-entries are dropped; invalid JSON fails loudly at startup.
+An entry that declares no key at all is treated as needing none, regardless of
+whether its location is `local` or `cloud`. When a key source is declared but
+does not resolve, the model is omitted from the authenticated model catalog
+until that key becomes available.
+
+`baseUrl` must be an absolute HTTP or HTTPS URL without embedded credentials,
+a query string, or a fragment. Optional string and boolean fields are also
+type-checked. Malformed entries are dropped; invalid JSON fails loudly when
+the registry is first loaded.
+
+A normal web URL is accepted syntactically, but it only works if that address
+serves an OpenAI-compatible API. For example, a base URL ending in `/v1` must
+accept the usual chat-completions requests; the public homepage of a model
+provider is not enough.
+
+Usable declarations are returned by `GET /models/configured` and appear in the
+chat, tabular-review, and model-preference selectors. The response contains
+only display metadata; endpoint URLs and credentials remain server-side.
 
 Declared models are served through the same AI SDK provider layer as
 everything else, so they inherit its transport, retries and streaming.

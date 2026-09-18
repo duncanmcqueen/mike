@@ -97,6 +97,7 @@ export const MODEL_TOGGLE_GROUPS: readonly ModelToggleGroup[] = [
   "DeepSeek",
   "Xiaomi",
   "Mistral AI",
+  "Configured",
   "Local",
   "Other providers",
 ];

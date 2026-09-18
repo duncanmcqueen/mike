@@ -820,6 +820,14 @@ export interface OllamaModelOption {
     group: "Local";
 }
 
+export interface ConfiguredModelOption {
+    id: string;
+    label: string;
+    group: "Configured";
+    location: "cloud" | "local";
+    source: "Configured";
+}
+
 export interface RouterCatalogModel {
     id: string;
     label: string;
@@ -834,6 +842,13 @@ export interface RouterCatalogModel {
 export async function getOllamaModels(): Promise<OllamaModelOption[]> {
     const { models } = await apiRequest<{ models: OllamaModelOption[] }>(
         "/models/ollama",
+    );
+    return models;
+}
+
+export async function getConfiguredModels(): Promise<ConfiguredModelOption[]> {
+    const { models } = await apiRequest<{ models: ConfiguredModelOption[] }>(
+        "/models/configured",
     );
     return models;
 }

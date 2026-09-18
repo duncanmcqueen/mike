@@ -46,7 +46,10 @@ export function loadModelRegistry(): ModelRegistryConfig {
       : {};
   cached = {
     models: Array.isArray(record.models)
-      ? record.models.filter(isConfiguredModel)
+      ? record.models.flatMap((value) => {
+          const model = parseConfiguredModel(value);
+          return model ? [model] : [];
+        })
       : [],
     committees: Array.isArray(record.committees)
       ? record.committees.filter(isCommitteeModel)
@@ -128,6 +131,32 @@ export function apiKeyForConfiguredModel(
   return null;
 }
 
+/** Whether the declaration names an authentication source that must resolve. */
+export function configuredModelRequiresApiKey(model: ConfiguredModel): boolean {
+  return Boolean(model.apiKey || model.apiKeyEnv || model.apiKeyProvider);
+}
+
+export type ConfiguredEndpointSummary = {
+  id: string;
+  label: string;
+  location: ConfiguredModel["location"];
+  available: boolean;
+};
+
+/** Public, secret-free catalog information for the requesting user. */
+export function configuredEndpointSummaries(
+  apiKeys?: UserApiKeys,
+): ConfiguredEndpointSummary[] {
+  return loadModelRegistry().models.map((model) => ({
+    id: model.id,
+    label: model.label || model.id,
+    location: model.location,
+    available:
+      !configuredModelRequiresApiKey(model) ||
+      apiKeyForConfiguredModel(model, apiKeys) !== null,
+  }));
+}
+
 /**
  * Local endpoints are the ones that routinely emit tool calls as prose, so
  * they get the tolerant parsing path unless the config says otherwise.
@@ -140,15 +169,90 @@ export function tolerateTextToolCalls(model: ConfiguredModel): boolean {
 // covered by the static catalog in models.ts and by the router prefixes
 // (openrouter/, vercel/, opencode-go/), so a configured entry for one of them
 // would be a second, subtly different way to say the same thing.
-function isConfiguredModel(value: unknown): value is ConfiguredModel {
-  if (!value || typeof value !== "object") return false;
+const USER_API_KEY_PROVIDERS = new Set<keyof UserApiKeys>([
+  "claude",
+  "gemini",
+  "openai",
+  "openrouter",
+  "vercel",
+  "opencode-go",
+  "courtlistener",
+]);
+
+function optionalString(
+  record: Record<string, unknown>,
+  field: string,
+): string | undefined | null {
+  const value = record[field];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !value.trim()) return null;
+  return value.trim();
+}
+
+function validBaseUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      Boolean(parsed.hostname) &&
+      !parsed.username &&
+      !parsed.password &&
+      !parsed.search &&
+      !parsed.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+function parseConfiguredModel(value: unknown): ConfiguredModel | null {
+  if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === "string" &&
-    record.id.trim().length > 0 &&
-    record.provider === "openai-compatible" &&
-    (record.location === "cloud" || record.location === "local")
-  );
+  const id = optionalString(record, "id");
+  const label = optionalString(record, "label");
+  const apiModel = optionalString(record, "apiModel");
+  const baseUrl = optionalString(record, "baseUrl");
+  const apiKeyEnv = optionalString(record, "apiKeyEnv");
+  const apiKey = optionalString(record, "apiKey");
+  const apiKeyProvider = record.apiKeyProvider;
+
+  if (
+    !id ||
+    id.length > 200 ||
+    /\s/.test(id) ||
+    record.provider !== "openai-compatible" ||
+    (record.location !== "cloud" && record.location !== "local") ||
+    !baseUrl ||
+    !validBaseUrl(baseUrl) ||
+    label === null ||
+    apiModel === null ||
+    apiKeyEnv === null ||
+    apiKey === null ||
+    (apiKeyProvider !== undefined &&
+      (typeof apiKeyProvider !== "string" ||
+        !USER_API_KEY_PROVIDERS.has(apiKeyProvider as keyof UserApiKeys))) ||
+    (record.tolerateTextToolCalls !== undefined &&
+      typeof record.tolerateTextToolCalls !== "boolean")
+  ) {
+    return null;
+  }
+
+  return {
+    id,
+    provider: "openai-compatible",
+    location: record.location,
+    baseUrl: baseUrl.replace(/\/+$/, ""),
+    ...(label ? { label } : {}),
+    ...(apiModel ? { apiModel } : {}),
+    ...(apiKeyEnv ? { apiKeyEnv } : {}),
+    ...(apiKey ? { apiKey } : {}),
+    ...(apiKeyProvider
+      ? { apiKeyProvider: apiKeyProvider as keyof UserApiKeys }
+      : {}),
+    ...(typeof record.tolerateTextToolCalls === "boolean"
+      ? { tolerateTextToolCalls: record.tolerateTextToolCalls }
+      : {}),
+  };
 }
 
 function isCommitteeModel(value: unknown): value is CommitteeModel {

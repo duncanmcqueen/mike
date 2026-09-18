@@ -13,6 +13,7 @@
 import type { Db } from "../../lib/supabase";
 import { ollamaAuthHeaders as authHeaders } from "../../lib/llm/providers";
 import { isSupportedOpenCodeGoModel } from "../../lib/llm/models";
+import { configuredEndpointSummaries } from "../../lib/llm/registry";
 import { getUserApiKeys } from "../user/user.service";
 
 export type CatalogPricing = {
@@ -29,6 +30,11 @@ export type CatalogModel = {
 };
 
 export type LocalModel = { id: string; label: string; group: string };
+
+export type ConfiguredCatalogModel = LocalModel & {
+    location: "cloud" | "local";
+    source: "Configured";
+};
 
 export type CatalogFailure =
     | { ok: false; kind: "missing_api_key"; code: string; detail: string }
@@ -104,6 +110,27 @@ export async function listOllamaModels(): Promise<LocalModel[]> {
     } catch {
         return [];
     }
+}
+
+/** Secret-free configured endpoint catalog, filtered to models this user can use. */
+export async function listConfiguredModels(
+    db: Db,
+    userId: string,
+): Promise<ConfiguredCatalogModel[]> {
+    const apiKeys = await getUserApiKeys(userId, db);
+    return configuredEndpointSummaries(apiKeys).flatMap((model) =>
+        model.available
+            ? [
+                  {
+                      id: model.id,
+                      label: model.label,
+                      group: "Configured",
+                      location: model.location,
+                      source: "Configured" as const,
+                  },
+              ]
+            : [],
+    );
 }
 
 /**

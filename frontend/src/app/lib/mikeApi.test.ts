@@ -51,6 +51,7 @@ import {
     getDocumentFile,
     getDocumentFileUrl,
     getDocumentUrl,
+    getConfiguredModels,
     getLibrary,
     getLibraryLevels,
     getLibraryFilterOptions,
@@ -2746,6 +2747,22 @@ describe("unwrapping and blob wrappers", () => {
 
         await expect(getOllamaModels()).resolves.toEqual(models);
         expect(lastFetchCall().url).toBe("/api/models/ollama");
+    });
+
+    it("getConfiguredModels unwraps the authenticated catalog", async () => {
+        const models = [
+            {
+                id: "local-qwen",
+                label: "Local Qwen",
+                group: "Configured",
+                location: "local",
+                source: "Configured",
+            },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ models }));
+
+        await expect(getConfiguredModels()).resolves.toEqual(models);
+        expect(lastFetchCall().url).toBe("/api/models/configured");
     });
 
     it.each([

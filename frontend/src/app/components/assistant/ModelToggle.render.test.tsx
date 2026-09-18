@@ -1,12 +1,37 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-import { ModelToggle, underlyingProviderGroup } from "./ModelToggle";
-import type { ApiKeyState } from "@/app/lib/mikeApi";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+    mergeConfiguredModelOptions,
+    ModelToggle,
+    underlyingProviderGroup,
+} from "./ModelToggle";
+import type {
+    ApiKeyState,
+    ConfiguredModelOption,
+} from "@/app/lib/mikeApi";
+
+const { configuredModels } = vi.hoisted(() => ({
+    configuredModels: [] as ConfiguredModelOption[],
+}));
 
 vi.mock("@/app/hooks/useOllamaModels", () => ({
     useOllamaModels: () => [],
 }));
+vi.mock("@/app/hooks/useConfiguredModels", () => ({
+    useConfiguredModels: () => configuredModels,
+}));
+
+beforeEach(() => configuredModels.splice(0));
+
+it("lets deployment configuration override a duplicate catalog id", () => {
+    expect(
+        mergeConfiguredModelOptions(
+            [{ id: "same", label: "Configured", group: "Configured" }],
+            [{ id: "same", label: "Static", group: "OpenAI" }],
+        ),
+    ).toEqual([{ id: "same", label: "Configured", group: "Configured" }]);
+});
 
 function keys(configured: Partial<Record<keyof ApiKeyState, boolean>>) {
     const providers = [
@@ -187,6 +212,31 @@ describe("ModelToggle responsive trigger", () => {
 });
 
 describe("ModelToggle availability states", () => {
+    it("offers an authenticated deployment-configured model", async () => {
+        configuredModels.push({
+            id: "local-qwen",
+            label: "Local Qwen",
+            group: "Configured",
+            location: "local",
+            source: "Configured",
+        });
+        render(
+            <ModelToggle
+                value="local-qwen"
+                onChange={vi.fn()}
+                apiKeys={keys({})}
+            />,
+        );
+
+        expect(
+            screen.getByRole("button", { name: "Choose model" }),
+        ).toHaveTextContent("Local Qwen");
+        await userEvent.click(
+            screen.getByRole("button", { name: "Choose model" }),
+        );
+        expect(screen.getByText("Configured")).toBeInTheDocument();
+    });
+
     it("renders a neutral disabled trigger while keys are loading", () => {
         render(
             <ModelToggle

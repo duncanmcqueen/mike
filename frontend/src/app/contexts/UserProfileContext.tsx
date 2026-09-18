@@ -34,6 +34,10 @@ import {
 import type { Message } from "@/app/components/shared/types";
 import { applyDarkMode } from "@/app/lib/theme";
 import { publishTabularChatSettingsUpdate } from "@/app/lib/tabularChatSettingsEvents";
+import {
+    clearConfiguredModels,
+    refreshConfiguredModels,
+} from "@/app/hooks/useConfiguredModels";
 
 interface UserProfile {
     displayName: string | null;
@@ -250,9 +254,11 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         if (isAuthenticated && userId) {
             setLoading(true);
             loadProfile();
+            void refreshConfiguredModels();
         } else {
             setProfile(null);
             setLoading(false);
+            clearConfiguredModels();
         }
     }, [isAuthenticated, userId, loadProfile]);
 
@@ -600,6 +606,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                           }
                         : null,
                 );
+                void refreshConfiguredModels();
                 return true;
             } catch (error) {
                 if (isMfaRequiredError(error)) throw error;

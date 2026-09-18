@@ -104,12 +104,12 @@ export type ModelLocation = "cloud" | "local";
 
 export type ConfiguredModel = {
     id: string;
-    provider: Provider;
+    provider: "openai-compatible";
     location: ModelLocation;
     label?: string;
     /** Model name to send upstream when it differs from the Mike-facing id. */
     apiModel?: string;
-    baseUrl?: string;
+    baseUrl: string;
     apiKeyEnv?: string;
     apiKeyProvider?: keyof UserApiKeys;
     apiKey?: string;

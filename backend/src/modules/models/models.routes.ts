@@ -13,6 +13,7 @@ import { createServerSupabase, type Db } from "../../lib/supabase";
 import { sendInternalError } from "../../lib/httpError";
 import {
     listOllamaModels,
+    listConfiguredModels,
     listOpenCodeGoModels,
     listOpenRouterModels,
     listVercelModels,
@@ -56,6 +57,13 @@ async function sendCatalog(
 // GET /models/ollama
 modelsRouter.get("/ollama", requireAuth, asyncRoute(async (_req, res) => {
     res.json({ models: await listOllamaModels() });
+}));
+
+// GET /models/configured
+modelsRouter.get("/configured", requireAuth, asyncRoute(async (_req, res) => {
+    const userId = res.locals.userId as string;
+    const models = await listConfiguredModels(createServerSupabase(), userId);
+    res.json({ models });
 }));
 
 // GET /models/openrouter

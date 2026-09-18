@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
     apiKeyForConfiguredModel,
+    configuredEndpointSummaries,
+    configuredModelRequiresApiKey,
     configuredModelIds,
     configuredModelSummaries,
     getConfiguredModel,
@@ -10,8 +12,9 @@ import {
     tolerateTextToolCalls,
 } from "../llm/registry";
 import { providerForModel, resolveModel } from "../llm/models";
+import type { ConfiguredModel } from "../llm/types";
 
-const LOCAL_QWEN = {
+const LOCAL_QWEN: ConfiguredModel = {
     id: "local-qwen",
     label: "Local Qwen",
     provider: "openai-compatible",
@@ -20,7 +23,7 @@ const LOCAL_QWEN = {
     baseUrl: "http://localhost:8000/v1",
 };
 
-const CLOUD_DEEPSEEK = {
+const CLOUD_DEEPSEEK: ConfiguredModel = {
     id: "cloud-deepseek",
     provider: "openai-compatible",
     location: "cloud",
@@ -70,9 +73,40 @@ describe("loadModelRegistry", () => {
                 { id: "no-provider", location: "cloud" },
                 { id: "hosted", provider: "claude", location: "cloud" },
                 { provider: "openai-compatible", location: "cloud" },
+                {
+                    id: "bad-url",
+                    provider: "openai-compatible",
+                    location: "cloud",
+                    baseUrl: "not a URL",
+                },
+                {
+                    id: "bad-key-env",
+                    provider: "openai-compatible",
+                    location: "cloud",
+                    baseUrl: "https://api.example.test/v1",
+                    apiKeyEnv: 42,
+                },
             ],
         });
         expect(configuredModelIds()).toEqual(["local-qwen"]);
+    });
+
+    it("normalizes strings and trailing URL slashes", () => {
+        configure({
+            models: [
+                {
+                    ...LOCAL_QWEN,
+                    id: "  local-qwen  ",
+                    label: "  Local Qwen  ",
+                    baseUrl: "http://localhost:8000/v1///",
+                },
+            ],
+        });
+        expect(getConfiguredModel("local-qwen")).toMatchObject({
+            id: "local-qwen",
+            label: "Local Qwen",
+            baseUrl: "http://localhost:8000/v1",
+        });
     });
 });
 
@@ -132,6 +166,36 @@ describe("apiKeyForConfiguredModel", () => {
     it("returns null when no key is available", () => {
         delete process.env.DEEPSEEK_API_KEY;
         expect(apiKeyForConfiguredModel(CLOUD_DEEPSEEK)).toBeNull();
+    });
+});
+
+describe("configured endpoint availability", () => {
+    it("treats a declaration with no key source as keyless", () => {
+        const keylessCloud: ConfiguredModel = {
+            ...CLOUD_DEEPSEEK,
+            id: "keyless-cloud",
+            apiKeyEnv: undefined,
+        };
+        configure({ models: [keylessCloud] });
+
+        expect(configuredModelRequiresApiKey(keylessCloud)).toBe(false);
+        expect(configuredEndpointSummaries()).toEqual([
+            {
+                id: "keyless-cloud",
+                label: "keyless-cloud",
+                location: "cloud",
+                available: true,
+            },
+        ]);
+    });
+
+    it("hides a model whose declared key source is unresolved", () => {
+        delete process.env.DEEPSEEK_API_KEY;
+        expect(configuredModelRequiresApiKey(CLOUD_DEEPSEEK)).toBe(true);
+        expect(configuredEndpointSummaries()[1]?.available).toBe(false);
+
+        process.env.DEEPSEEK_API_KEY = "available";
+        expect(configuredEndpointSummaries()[1]?.available).toBe(true);
     });
 });
 

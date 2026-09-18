@@ -225,12 +225,12 @@ async function createConfiguredAdapter(
 ): Promise<AiSdkAdapterConfig> {
   const configured = configuredModelOrThrow(id);
   const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+  const apiKey = apiKeyForConfiguredModel(configured, apiKeys);
   const client = createOpenAICompatible({
     name: configured.id,
-    baseURL: configured.baseUrl!.replace(/\/+$/, ""),
-    // Self-hosted endpoints commonly ignore auth entirely; send a placeholder
-    // rather than failing closed the way the hosted providers do.
-    apiKey: apiKeyForConfiguredModel(configured, apiKeys) ?? "not-required",
+    baseURL: configured.baseUrl,
+    // Omit Authorization entirely for endpoints declared without auth.
+    ...(apiKey ? { apiKey } : {}),
     fetch: aiSdkFetch,
   });
   const base = client(configured.apiModel ?? configured.id);
