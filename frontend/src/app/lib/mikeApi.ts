@@ -3073,10 +3073,6 @@ export async function getPlaybook(playbookId: string): Promise<Playbook> {
 }
 
 /**
- * The source .docx goes straight to object storage under a signed URL, then
- * the API compiles it from that key. The API never receives the file body.
- */
-/**
  * Start a playbook with no Word source. The editor can author one by hand, so
  * an import is not the only way to get a first playbook.
  */
@@ -3088,6 +3084,10 @@ export async function createPlaybook(name?: string): Promise<Playbook> {
     });
 }
 
+/**
+ * The source .docx goes straight to object storage under a signed URL, then
+ * the API compiles it from that key. The API never receives the file body.
+ */
 export async function importPlaybook(
     file: File,
     model: string,
