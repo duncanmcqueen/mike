@@ -1981,7 +1981,8 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                 chatKey={activeChatId}
                                 chatModel={chatModel}
                                 chatReasoningLevel={chatReasoningLevel}
-                                canSend={canSendChat}
+                                canSend={canSendChat && chatLoaded}
+                                placeholder={chatLoaded ? undefined : ""}
                                 enableGlobalFileDrop={false}
                                 dropUploadsToProject={false}
                                 projectId={projectId}

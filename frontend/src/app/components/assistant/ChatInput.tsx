@@ -94,6 +94,8 @@ interface Props {
      * what the server would refuse for a project viewer.
      */
     canSend?: boolean;
+    /** Overrides the textarea hint; an empty string intentionally shows none. */
+    placeholder?: string;
     hideAddDocButton?: boolean;
     hideWorkflowButton?: boolean;
     projectName?: string;
@@ -116,6 +118,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         onCancel,
         isLoading,
         canSend = true,
+        placeholder,
         hideAddDocButton,
         hideWorkflowButton,
         projectName,
@@ -719,9 +722,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                             rows={1}
                             disabled={!canSend}
                             placeholder={
-                                canSend
+                                placeholder ??
+                                (canSend
                                     ? "How can I help?"
-                                    : "Viewing only — sending needs edit access"
+                                    : "Viewing only — sending needs edit access")
                             }
                             value={value}
                             onChange={handleChange}

@@ -107,6 +107,24 @@ describe("ChatInput canSend gating", () => {
         ).toBeNull();
     });
 
+    it("can hide the permission placeholder while access is loading", () => {
+        render(
+            <ChatInput
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+                isLoading={false}
+                canSend={false}
+                placeholder=""
+                projectId="p1"
+            />,
+        );
+
+        expect(screen.getByRole("combobox")).toHaveAttribute(
+            "placeholder",
+            "",
+        );
+    });
+
     it("does not submit on Enter when canSend is false", () => {
         const onSubmit = renderInput(false);
         const textarea = screen.getByRole("combobox");
