@@ -104,7 +104,6 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
         isLoading,
         chatModel,
         chatReasoningLevel,
-        placeholder,
         onDocumentClick,
     }: {
         onSubmit: (message: Message) => void;
@@ -113,7 +112,6 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
         isLoading: boolean;
         chatModel?: string | null;
         chatReasoningLevel?: Message["reasoning"] | null;
-        placeholder?: string;
         onDocumentClick: (document: Document) => void;
     }) => (
         <>
@@ -136,7 +134,6 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
                 data-chat-key={chatKey}
                 data-chat-model={chatModel}
                 data-chat-reasoning={chatReasoningLevel}
-                data-placeholder={placeholder}
             >
                 Send question
             </button>
@@ -416,7 +413,17 @@ describe("document viewer drops", () => {
 });
 
 describe("project chat workspace lifecycle", () => {
-    it("keeps the composer placeholder empty until project access resolves", async () => {
+    it("hides the composer until the chat and project access both resolve", async () => {
+        let resolveChat!: (loaded: {
+            chat: Record<string, unknown>;
+            messages: Message[];
+        }) => void;
+        state.getChat.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveChat = resolve;
+                }),
+        );
         let resolveProject!: (
             project: Awaited<ReturnType<typeof getProject>>,
         ) => void;
@@ -431,15 +438,34 @@ describe("project chat workspace lifecycle", () => {
             render(
                 <Suspense fallback="Loading">
                     <ProjectAssistantChatPage
-                        params={Promise.resolve({ id: "p1" })}
+                        params={Promise.resolve({ id: "p1", chatId: "c1" })}
                     />
                 </Suspense>,
             );
         });
 
-        const send = screen.getByRole("button", { name: "Send question" });
-        expect(send).toBeDisabled();
-        expect(send).toHaveAttribute("data-placeholder", "");
+        expect(
+            screen.queryByRole("button", { name: "Send question" }),
+        ).toBeNull();
+
+        await act(async () => {
+            resolveChat({
+                chat: {
+                    id: "c1",
+                    project_id: "p1",
+                    title: "Existing chat",
+                    user_id: "u2",
+                    created_at: "2026-09-15T00:00:00Z",
+                },
+                messages: [],
+            });
+        });
+
+        // The chat is here but the project role is not, so the composer must
+        // stay away rather than guess with the read-only placeholder.
+        expect(
+            screen.queryByRole("button", { name: "Send question" }),
+        ).toBeNull();
 
         await act(async () => {
             resolveProject({
@@ -457,8 +483,11 @@ describe("project chat workspace lifecycle", () => {
             });
         });
 
-        await waitFor(() => expect(send).toBeEnabled());
-        expect(send).not.toHaveAttribute("data-placeholder");
+        await waitFor(() =>
+            expect(
+                screen.getByRole("button", { name: "Send question" }),
+            ).toBeEnabled(),
+        );
     });
 
     it("updates the URL before the first response arrives while preserving the workspace and live stream", async () => {
