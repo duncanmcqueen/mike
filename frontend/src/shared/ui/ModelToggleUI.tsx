@@ -248,7 +248,7 @@ export function ModelToggleUI({
         sideOffset={modalInput ? 4 : 8}
         className={`flex max-h-[min(320px,60vh)] flex-col overflow-hidden rounded-2xl text-gray-700 ${modalInput ? "w-[var(--radix-dropdown-menu-trigger-width)]" : "w-56"}`}
       >
-        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+        <div className="-mr-1.5 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1.5">
           {availableGroups.map(({ group, items }) => {
             const expanded = expandedGroup === group;
             return (
