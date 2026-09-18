@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createPlaybook,
   deletePlaybook,
   getPlaybook,
   getPlaybookConfiguration,
@@ -130,6 +131,27 @@ describe("Playbooks API requests", () => {
   });
 });
 
+describe("Creating a playbook with no Word source", () => {
+  it.each([
+    { name: undefined, body: {} },
+    { name: "   ", body: {} },
+    { name: "  Vendor MSA  ", body: { name: "Vendor MSA" } },
+  ])("posts $body for name $name", async ({ name, body }) => {
+    const result = { id: "blank-guide" };
+    fetchMock.mockResolvedValueOnce(json(result));
+
+    await expect(createPlaybook(name)).resolves.toEqual(result);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/playbooks",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify(body),
+      }),
+    );
+  });
+});
+
 describe("Playbook direct upload", () => {
   const staged = {
     uploadUrl: "https://storage.example/signed-upload",
@@ -186,6 +208,32 @@ describe("Playbook direct upload", () => {
       );
     },
   );
+
+  it.each([
+    { playbookId: undefined, extra: {} },
+    { playbookId: "pb-1", extra: { playbookId: "pb-1" } },
+  ])("sends playbookId $playbookId when replacing", async ({ playbookId, extra }) => {
+    const file = new File(["Word content"], "guide.docx");
+    fetchMock
+      .mockResolvedValueOnce(json(staged))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(json({ id: "pb-1" }));
+
+    await importPlaybook(file, "test-model", undefined, playbookId);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/playbooks/import",
+      expect.objectContaining({
+        body: JSON.stringify({
+          storageKey: staged.storageKey,
+          filename: "guide.docx",
+          model: "test-model",
+          ...extra,
+        }),
+      }),
+    );
+  });
 
   it("does not compile after a storage upload fails or expose the storage response", async () => {
     fetchMock
