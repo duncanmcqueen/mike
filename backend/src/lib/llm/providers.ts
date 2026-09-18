@@ -231,6 +231,16 @@ async function createConfiguredAdapter(
     baseURL: configured.baseUrl,
     // Omit Authorization entirely for endpoints declared without auth.
     ...(apiKey ? { apiKey } : {}),
+    ...(configured.maxTokensField === "max_completion_tokens"
+      ? {
+          transformRequestBody: (body: Record<string, unknown>) => {
+            const { max_tokens: maxTokens, ...rest } = body;
+            return maxTokens === undefined
+              ? rest
+              : { ...rest, max_completion_tokens: maxTokens };
+          },
+        }
+      : {}),
     fetch: aiSdkFetch,
   });
   const base = client(configured.apiModel ?? configured.id);

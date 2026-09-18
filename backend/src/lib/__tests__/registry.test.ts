@@ -86,6 +86,11 @@ describe("loadModelRegistry", () => {
                     baseUrl: "https://api.example.test/v1",
                     apiKeyEnv: 42,
                 },
+                {
+                    ...CLOUD_DEEPSEEK,
+                    id: "bad-max-token-field",
+                    maxTokensField: "output_tokens",
+                },
             ],
         });
         expect(configuredModelIds()).toEqual(["local-qwen"]);
@@ -107,6 +112,25 @@ describe("loadModelRegistry", () => {
             label: "Local Qwen",
             baseUrl: "http://localhost:8000/v1",
         });
+    });
+
+    it("accepts the supported output-token request fields", () => {
+        configure({
+            models: [
+                { ...LOCAL_QWEN, maxTokensField: "max_tokens" },
+                {
+                    ...CLOUD_DEEPSEEK,
+                    maxTokensField: "max_completion_tokens",
+                },
+            ],
+        });
+
+        expect(getConfiguredModel("local-qwen")?.maxTokensField).toBe(
+            "max_tokens",
+        );
+        expect(getConfiguredModel("cloud-deepseek")?.maxTokensField).toBe(
+            "max_completion_tokens",
+        );
     });
 });
 

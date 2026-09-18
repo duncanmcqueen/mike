@@ -215,6 +215,7 @@ function parseConfiguredModel(value: unknown): ConfiguredModel | null {
   const apiKeyEnv = optionalString(record, "apiKeyEnv");
   const apiKey = optionalString(record, "apiKey");
   const apiKeyProvider = record.apiKeyProvider;
+  const maxTokensField = record.maxTokensField;
 
   if (
     !id ||
@@ -232,7 +233,10 @@ function parseConfiguredModel(value: unknown): ConfiguredModel | null {
       (typeof apiKeyProvider !== "string" ||
         !USER_API_KEY_PROVIDERS.has(apiKeyProvider as keyof UserApiKeys))) ||
     (record.tolerateTextToolCalls !== undefined &&
-      typeof record.tolerateTextToolCalls !== "boolean")
+      typeof record.tolerateTextToolCalls !== "boolean") ||
+    (maxTokensField !== undefined &&
+      maxTokensField !== "max_tokens" &&
+      maxTokensField !== "max_completion_tokens")
   ) {
     return null;
   }
@@ -252,6 +256,7 @@ function parseConfiguredModel(value: unknown): ConfiguredModel | null {
     ...(typeof record.tolerateTextToolCalls === "boolean"
       ? { tolerateTextToolCalls: record.tolerateTextToolCalls }
       : {}),
+    ...(maxTokensField ? { maxTokensField } : {}),
   };
 }
 

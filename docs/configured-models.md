@@ -46,6 +46,7 @@ array:
 | `apiKeyEnv` | no | Environment variable holding the key. |
 | `apiKeyProvider` | no | Use the requesting user's saved key for that provider. |
 | `tolerateTextToolCalls` | no | Override the tolerance default. |
+| `maxTokensField` | no | Output-token request field: `max_tokens` (default) or `max_completion_tokens`. |
 
 An entry that declares no key at all is treated as needing none, regardless of
 whether its location is `local` or `cloud`. When a key source is declared but
@@ -68,6 +69,23 @@ only display metadata; endpoint URLs and credentials remain server-side.
 
 Declared models are served through the same AI SDK provider layer as
 everything else, so they inherit its transport, retries and streaming.
+
+The compatible provider sends the output limit as `max_tokens` by default,
+which works with most compatible servers. Some newer OpenAI models reject that
+field and require `max_completion_tokens`; opt into that request shape for the
+configured model:
+
+```json
+{
+  "id": "custom-openai",
+  "provider": "openai-compatible",
+  "location": "cloud",
+  "apiModel": "gpt-5.4-mini",
+  "baseUrl": "https://api.openai.com/v1",
+  "apiKeyEnv": "OPENAI_API_KEY",
+  "maxTokensField": "max_completion_tokens"
+}
+```
 
 ## Tool-call tolerance
 

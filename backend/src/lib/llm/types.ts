@@ -118,6 +118,8 @@ export type ConfiguredModel = {
      * structured tool-call fields. Leave unset to infer from `location`.
      */
     tolerateTextToolCalls?: boolean;
+    /** Request field used for the output-token limit by the compatible endpoint. */
+    maxTokensField?: "max_tokens" | "max_completion_tokens";
 };
 
 /**
