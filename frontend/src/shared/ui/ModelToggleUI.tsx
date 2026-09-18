@@ -276,7 +276,7 @@ export function ModelToggleUI({
                     >
                       <span
                         aria-hidden="true"
-                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400/80"
+                        className="h-1 w-1 shrink-0 rounded-full bg-gray-400/80"
                       />
                       <span className="flex-1">{model.label}</span>
                       {model.source &&
