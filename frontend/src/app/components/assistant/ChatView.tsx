@@ -585,7 +585,7 @@ export function ChatView({
                 `calc(100dvh - ${headerHeight + messageGap * 3 + userMessageHeight + paddingBottom + addedHeaderClearance}px)`,
             );
         }
-    }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [messages.length]);
 
     const updateScrollButton = useCallback(() => {
         const c = messagesContainerRef.current;
@@ -663,7 +663,7 @@ export function ChatView({
                 setMessagesVisible(true);
             }
         }
-    }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [messages]);
 
     useEffect(() => {
         if (panelMounted && window.innerWidth < 768) {
