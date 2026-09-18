@@ -73,7 +73,7 @@ vi.mock("@/app/contexts/ChatHistoryContext", () => ({
     }),
 }));
 vi.mock("@/app/contexts/AuthContext", () => ({
-    useAuth: () => ({ user: { id: "u1" } }),
+    useAuth: () => ({ user: { id: "u1" }, authLoading: false }),
 }));
 vi.mock("@/app/contexts/UserProfileContext", () => ({
     useUserProfile: () => ({ profile: { displayName: "User" } }),
@@ -104,6 +104,7 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
         isLoading,
         chatModel,
         chatReasoningLevel,
+        placeholder,
         onDocumentClick,
     }: {
         onSubmit: (message: Message) => void;
@@ -112,6 +113,7 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
         isLoading: boolean;
         chatModel?: string | null;
         chatReasoningLevel?: Message["reasoning"] | null;
+        placeholder?: string;
         onDocumentClick: (document: Document) => void;
     }) => (
         <>
@@ -134,6 +136,7 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
                 data-chat-key={chatKey}
                 data-chat-model={chatModel}
                 data-chat-reasoning={chatReasoningLevel}
+                data-placeholder={placeholder}
             >
                 Send question
             </button>
@@ -413,6 +416,51 @@ describe("document viewer drops", () => {
 });
 
 describe("project chat workspace lifecycle", () => {
+    it("keeps the composer placeholder empty until project access resolves", async () => {
+        let resolveProject!: (
+            project: Awaited<ReturnType<typeof getProject>>,
+        ) => void;
+        vi.mocked(getProject).mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveProject = resolve;
+                }),
+        );
+
+        await act(async () => {
+            render(
+                <Suspense fallback="Loading">
+                    <ProjectAssistantChatPage
+                        params={Promise.resolve({ id: "p1" })}
+                    />
+                </Suspense>,
+            );
+        });
+
+        const send = screen.getByRole("button", { name: "Send question" });
+        expect(send).toBeDisabled();
+        expect(send).toHaveAttribute("data-placeholder", "");
+
+        await act(async () => {
+            resolveProject({
+                id: "p1",
+                name: "Matter",
+                access_role: "owner",
+                user_id: "u1",
+                cm_number: null,
+                practice: null,
+                memory_enabled: false,
+                created_at: "2026-09-15T00:00:00Z",
+                updated_at: "2026-09-15T00:00:00Z",
+                documents: [],
+                folders: [],
+            });
+        });
+
+        await waitFor(() => expect(send).toBeEnabled());
+        expect(send).not.toHaveAttribute("data-placeholder");
+    });
+
     it("updates the URL before the first response arrives while preserving the workspace and live stream", async () => {
         let stream!: ReadableStreamDefaultController<Uint8Array>;
         const encoder = new TextEncoder();

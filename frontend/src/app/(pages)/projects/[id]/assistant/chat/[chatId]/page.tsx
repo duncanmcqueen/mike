@@ -274,7 +274,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
     const router = useRouter();
 
     const { setSidebarOpen } = useSidebar();
-    const { user } = useAuth();
+    const { user, authLoading } = useAuth();
     const { profile } = useUserProfile();
     const username =
         profile?.displayName?.trim() || user?.email?.split("@")[0] || "there";
@@ -415,13 +415,9 @@ export default function ProjectAssistantChatPage({ params }: Props) {
     // Server ladder: writing to a project chat needs content.edit on the
     // project, except that the chat's own creator may always continue it.
     //
-    // While the project is still loading the role is unknown, and unknown is
-    // not a licence. `!project ||` made it one: for the whole load window a
-    // viewer's composer was live and their upload button enabled, and the
-    // refusal only arrived from the server afterwards. The composer now stays
-    // closed until we know — the read-only placeholder is the same one a
-    // viewer sees, so the transition on a load is a placeholder swap rather
-    // than a control appearing that was never theirs.
+    // While the project, chat owner, or session is loading, access is unknown,
+    // not denied. Keep the composer disabled with no placeholder until all
+    // three inputs are resolved; only then show the read-only explanation.
     const projectRole = roleFromLoaded(project);
     const canEditContent = can(projectRole, "content.edit");
     const canManageProject = can(projectRole, "access.manage");
@@ -431,6 +427,8 @@ export default function ProjectAssistantChatPage({ params }: Props) {
     // during the load window.
     const canSendChat =
         canEditContent || (!!chatOwnerId && chatOwnerId === user?.id);
+    const composerAccessResolved =
+        chatLoaded && project !== null && !authLoading;
     const pendingInitialUserMessageRef = useRef<Message | null>(
         initialMessages.length === 1 && initialMessages[0].role === "user"
             ? initialMessages[0]
@@ -1963,7 +1961,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                         <ChatInputPrompt
                             messages={messages}
                             chatKey={activeChatId}
-                            canSend={canSendChat && chatLoaded}
+                            canSend={canSendChat && composerAccessResolved}
                             onSubmit={(response, content, files) => {
                                 void handleSubmit(
                                     { role: "user", content, files },
@@ -1981,8 +1979,10 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                 chatKey={activeChatId}
                                 chatModel={chatModel}
                                 chatReasoningLevel={chatReasoningLevel}
-                                canSend={canSendChat && chatLoaded}
-                                placeholder={chatLoaded ? undefined : ""}
+                                canSend={canSendChat && composerAccessResolved}
+                                placeholder={
+                                    composerAccessResolved ? undefined : ""
+                                }
                                 enableGlobalFileDrop={false}
                                 dropUploadsToProject={false}
                                 projectId={projectId}
