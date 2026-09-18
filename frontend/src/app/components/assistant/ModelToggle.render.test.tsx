@@ -209,6 +209,33 @@ describe("ModelToggle responsive trigger", () => {
         expect(selectedRow).toHaveAttribute("data-selected", "true");
         expect(selectedRow?.className).not.toContain("shadow-[inset_");
     });
+
+    it("shows a dot on model rows but not provider rows", async () => {
+        render(
+            <ModelToggle
+                value="gemini-3-flash-preview"
+                onChange={vi.fn()}
+                apiKeys={keys({ gemini: true })}
+            />,
+        );
+
+        await userEvent.click(
+            screen.getByRole("button", { name: "Choose model" }),
+        );
+
+        const modelRow = screen
+            .getAllByText("Gemini 3 Flash")
+            .find((element) => element.closest('[role="menuitem"]'))
+            ?.closest('[role="menuitem"]');
+        const providerRow = screen
+            .getByText("Google")
+            .closest('[role="menuitem"]');
+
+        expect(modelRow?.querySelector("span.rounded-full")).toBeInTheDocument();
+        expect(
+            providerRow?.querySelector("span.rounded-full"),
+        ).not.toBeInTheDocument();
+    });
 });
 
 describe("ModelToggle availability states", () => {

@@ -274,6 +274,10 @@ export function ModelToggleUI({
                       className={`${itemClassName} ${model.id === value ? "text-gray-900" : ""}`}
                       onSelect={() => onChange(model.id)}
                     >
+                      <span
+                        aria-hidden="true"
+                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400/80"
+                      />
                       <span className="flex-1">{model.label}</span>
                       {model.source &&
                         (routeCounts.get(
