@@ -368,7 +368,6 @@ export function redactPatentMcpSecrets(
     }
     let redacted = text;
     for (const secret of secrets) {
-        if (secret.length < 4) continue;
         redacted = redacted.split(secret).join("[redacted]");
     }
     return redacted;
@@ -381,15 +380,22 @@ export function patentMcpFailureDetail(
     stderrTail: string,
     credentials?: McpManagedCredentials,
 ): string | null {
-    const safeTail = redactPatentMcpSecrets(stderrTail, credentials);
-    const lines = safeTail.split("\n").map((line) => line.trim());
+    // The error scan runs on the raw tail, then the selected line is redacted.
+    // A very short credential would otherwise rewrite the words the scan
+    // matches on and hide the real error line.
+    const lines = stderrTail.split("\n").map((line) => line.trim());
+    let selected: string | null = null;
     for (let index = lines.length - 1; index >= 0; index -= 1) {
-        const line = lines[index];
-        if (/(?:error|exception|traceback|failed)/i.test(line)) {
-            return line.slice(0, STDERR_DETAIL_CHARS);
+        if (/(?:error|exception|traceback|failed)/i.test(lines[index])) {
+            selected = lines[index];
+            break;
         }
     }
-    return null;
+    if (selected === null) return null;
+    return redactPatentMcpSecrets(selected, credentials).slice(
+        0,
+        STDERR_DETAIL_CHARS,
+    );
 }
 
 export { STDERR_TAIL_CHARS as PATENT_MCP_STDERR_TAIL_CHARS };

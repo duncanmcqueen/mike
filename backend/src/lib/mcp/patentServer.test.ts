@@ -217,6 +217,16 @@ describe("patentMcpFailureDetail", () => {
         expect(detail).not.toContain("secret-key-value");
     });
 
+    it("redacts a short credential value from the detail", () => {
+        const detail = patentMcpFailureDetail(
+            "request failed: token=k",
+            { tsdrApiKey: "k" },
+        );
+        expect(detail).not.toBeNull();
+        expect(detail).toContain("[redacted]");
+        expect(detail).not.toContain("=k");
+    });
+
     it("redacts deployment credential values from the detail", () => {
         process.env.TMSEARCH_WAF_TOKEN = "env-waf-token-value";
         const detail = patentMcpFailureDetail(
