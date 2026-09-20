@@ -428,8 +428,11 @@ create table if not exists public.user_mcp_connectors (
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   -- stdio is managed-only: it is allowed solely for the fixed USPTO
-  -- connector identity and never carries auth configuration.
+  -- connector identity and never carries auth configuration. The constraint
+  -- name matches the migration so a fresh install and an upgraded deployment
+  -- converge on the same schema.
   transport text not null default 'streamable_http'
+    constraint user_mcp_connectors_transport_check
     check (
       transport = 'streamable_http'
       or (
