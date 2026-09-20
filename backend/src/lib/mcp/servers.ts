@@ -144,9 +144,10 @@ async function withManagedStdioClient<T>(
         throw new Error("Unsupported managed stdio MCP connector.");
     }
     return withPatentProcessSlot(async () => {
+        const credentials = decryptAuthConfig(connector);
         let transport: StdioClientTransport;
         try {
-            transport = createPatentMcpTransport(decryptAuthConfig(connector));
+            transport = createPatentMcpTransport(credentials);
         } catch (err) {
             if (err instanceof PatentRuntimeUnavailableError) throw err;
             throw new PatentRuntimeUnavailableError(patentRuntimeMessage());
@@ -167,7 +168,7 @@ async function withManagedStdioClient<T>(
             });
             return await callback(client);
         } catch (err) {
-            const detail = patentMcpFailureDetail(stderrTail);
+            const detail = patentMcpFailureDetail(stderrTail, credentials);
             if (detail) {
                 console.error("[mcp-connectors] managed process failed", {
                     connectorId: connector.id,

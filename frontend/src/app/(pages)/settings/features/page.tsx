@@ -16,6 +16,8 @@ import { useUserProfile } from "@/app/contexts/UserProfileContext";
 export default function FeaturesPage() {
   const {
     profile,
+    apiKeysDegraded,
+    reloadProfile,
     updateApiKey,
     updateLegalResearchUs,
     updateUsptoConnectorEnabled,
@@ -156,6 +158,18 @@ export default function FeaturesPage() {
                 Search USPTO patent and trademark records through a managed
                 local connector.
               </SettingsDescription>
+              {apiKeysDegraded && (
+                <p className="text-sm text-red-600" role="alert">
+                  Could not load settings.{" "}
+                  <button
+                    type="button"
+                    onClick={() => void reloadProfile()}
+                    className="font-medium underline"
+                  >
+                    Retry
+                  </button>
+                </p>
+              )}
               {usptoSaveError && (
                 <p className="text-sm text-red-600" role="alert">
                   {usptoSaveError}
@@ -163,14 +177,14 @@ export default function FeaturesPage() {
               )}
             </div>
             <ToggleSwitchUI
-              checked={usptoConnectorEnabled}
-              disabled={savingUspto}
+              checked={apiKeysDegraded ? false : usptoConnectorEnabled}
+              disabled={savingUspto || apiKeysDegraded}
               aria-busy={savingUspto}
               aria-label="USPTO Patent & Trademark"
               onCheckedChange={(enabled) => void handleUsptoChange(enabled)}
             />
           </SettingsRow>
-          {usptoConnectorEnabled && (
+          {!apiKeysDegraded && usptoConnectorEnabled && (
             <div className="px-4 pb-3">
               <Link
                 href="/settings/connectors"

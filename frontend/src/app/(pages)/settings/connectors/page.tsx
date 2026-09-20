@@ -76,12 +76,28 @@ type AddDraft = {
   customHeaders: string;
 };
 
+type ManagedCredentialKey =
+  | "usptoApiKey"
+  | "tsdrApiKey"
+  | "tmsearchWafToken";
+
 type DetailDraft = AddDraft & {
   clearBearerToken: boolean;
   usptoApiKey: string;
   tsdrApiKey: string;
   tmsearchWafToken: string;
+  // A saved credential is removed only after an explicit Clear action. A
+  // blank field that was never cleared leaves the saved value in place.
+  clearedUsptoCredentials: Record<ManagedCredentialKey, boolean>;
 };
+
+function emptyClearedCredentials(): Record<ManagedCredentialKey, boolean> {
+  return {
+    usptoApiKey: false,
+    tsdrApiKey: false,
+    tmsearchWafToken: false,
+  };
+}
 
 type AddStep = "form" | "working" | "auth" | "success";
 
@@ -141,11 +157,14 @@ function isGoogleMcpConnector(connector: McpConnectorSummary) {
 }
 
 export default function ConnectorsPage() {
-  const { profile } = useUserProfile();
+  const { profile, apiKeysDegraded, reloadProfile } = useUserProfile();
   const usptoEnabled = profile?.usptoConnectorEnabled === true;
   const [connectors, setConnectors] = useState<McpConnectorSummary[]>([]);
   const hasManagedConnector = connectors.some((connector) => connector.managed);
-  const showUsptoSetup = usptoEnabled && !hasManagedConnector;
+  // While the profile is degraded the feature state is unknown, so the setup
+  // action stays hidden instead of reading the fallback profile as "off".
+  const showUsptoSetup =
+    !apiKeysDegraded && usptoEnabled && !hasManagedConnector;
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -170,6 +189,7 @@ export default function ConnectorsPage() {
     usptoApiKey: "",
     tsdrApiKey: "",
     tmsearchWafToken: "",
+    clearedUsptoCredentials: emptyClearedCredentials(),
   });
   const [detailError, setDetailError] = useState<string | null>(null);
   // Setup steps from a Refresh on an unconfigured provider, shown inside
@@ -237,6 +257,7 @@ export default function ConnectorsPage() {
       usptoApiKey: "",
       tsdrApiKey: "",
       tmsearchWafToken: "",
+      clearedUsptoCredentials: emptyClearedCredentials(),
     });
     setDetailError(null);
     // detailSetupNotice is deliberately NOT reset here: the Add flow sets
@@ -672,12 +693,24 @@ export default function ConnectorsPage() {
             usptoApiKey: "",
             tsdrApiKey: "",
             tmsearchWafToken: "",
+            clearedUsptoCredentials: emptyClearedCredentials(),
           });
         } finally {
           setBusyKey(null);
         }
       },
     );
+  };
+
+  const handleClearManagedCredential = (key: ManagedCredentialKey) => {
+    setDetailDraft((prev) => ({
+      ...prev,
+      [key]: "",
+      clearedUsptoCredentials: {
+        ...prev.clearedUsptoCredentials,
+        [key]: true,
+      },
+    }));
   };
 
   const handleSaveManagedCredentials = async () => {
@@ -690,25 +723,12 @@ export default function ConnectorsPage() {
         setDetailSetupNotice(null);
         try {
           const fields: {
-            key: "usptoApiKey" | "tsdrApiKey" | "tmsearchWafToken";
+            key: ManagedCredentialKey;
             value: string;
-            saved: boolean;
           }[] = [
-            {
-              key: "usptoApiKey",
-              value: detailDraft.usptoApiKey,
-              saved: selectedConnector.managedCredentials.usptoApiKey,
-            },
-            {
-              key: "tsdrApiKey",
-              value: detailDraft.tsdrApiKey,
-              saved: selectedConnector.managedCredentials.tsdrApiKey,
-            },
-            {
-              key: "tmsearchWafToken",
-              value: detailDraft.tmsearchWafToken,
-              saved: selectedConnector.managedCredentials.tmsearchWafToken,
-            },
+            { key: "usptoApiKey", value: detailDraft.usptoApiKey },
+            { key: "tsdrApiKey", value: detailDraft.tsdrApiKey },
+            { key: "tmsearchWafToken", value: detailDraft.tmsearchWafToken },
           ];
           const usptoCredentials: {
             usptoApiKey?: string | null;
@@ -717,9 +737,14 @@ export default function ConnectorsPage() {
           } = {};
           for (const field of fields) {
             const trimmed = field.value.trim();
-            if (trimmed) usptoCredentials[field.key] = trimmed;
-            else if (field.saved) usptoCredentials[field.key] = null;
+            if (trimmed) {
+              usptoCredentials[field.key] = trimmed;
+            } else if (detailDraft.clearedUsptoCredentials[field.key]) {
+              // Remove a saved value only after an explicit Clear action.
+              usptoCredentials[field.key] = null;
+            }
           }
+          if (Object.keys(usptoCredentials).length === 0) return;
           const saved = await updateMcpConnector(selectedConnector.id, {
             usptoCredentials,
           });
@@ -729,6 +754,7 @@ export default function ConnectorsPage() {
             usptoApiKey: "",
             tsdrApiKey: "",
             tmsearchWafToken: "",
+            clearedUsptoCredentials: emptyClearedCredentials(),
           }));
         } finally {
           setBusyKey(null);
@@ -917,6 +943,19 @@ export default function ConnectorsPage() {
         </div>
       </div>
 
+      {apiKeysDegraded && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+          <span>Could not load settings.</span>
+          <button
+            type="button"
+            onClick={() => void reloadProfile()}
+            className="font-medium underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {error && (
         <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
@@ -990,6 +1029,7 @@ export default function ConnectorsPage() {
         }}
         onSave={handleSaveSelectedConnector}
         onSaveManaged={handleSaveManagedCredentials}
+        onClearManagedCredential={handleClearManagedCredential}
         onClearBearerToken={handleClearBearerToken}
         onRefresh={handleRefresh}
         reconnectingOAuth={
@@ -1102,6 +1142,7 @@ function McpConnectorDetailsModal({
   onClose,
   onSave,
   onSaveManaged,
+  onClearManagedCredential,
   onClearBearerToken,
   onRefresh,
   reconnectingOAuth,
@@ -1125,6 +1166,7 @@ function McpConnectorDetailsModal({
   onClose: () => void;
   onSave: () => Promise<void>;
   onSaveManaged: () => Promise<void>;
+  onClearManagedCredential: (key: ManagedCredentialKey) => void;
   onClearBearerToken: (connectorId: string) => Promise<void>;
   onRefresh: (connectorId: string) => Promise<void>;
   reconnectingOAuth: boolean;
@@ -1148,7 +1190,8 @@ function McpConnectorDetailsModal({
   const hasManagedCredentialInput =
     draft.usptoApiKey.trim().length > 0 ||
     draft.tsdrApiKey.trim().length > 0 ||
-    draft.tmsearchWafToken.trim().length > 0;
+    draft.tmsearchWafToken.trim().length > 0 ||
+    Object.values(draft.clearedUsptoCredentials).some(Boolean);
   const isSavingManaged =
     !!connector && busyKey === `save-managed:${connector.id}`;
 
@@ -1225,6 +1268,7 @@ function McpConnectorDetailsModal({
                 connector={connector}
                 disabled={isSavingManaged}
                 onDraftChange={onDraftChange}
+                onClearCredential={onClearManagedCredential}
               />
             </div>
           ) : (
@@ -1318,14 +1362,16 @@ function ManagedCredentialsForm({
   draft,
   disabled,
   onDraftChange,
+  onClearCredential,
 }: {
   connector: McpConnectorSummary;
   draft: DetailDraft;
   disabled: boolean;
   onDraftChange: (draft: DetailDraft) => void;
+  onClearCredential: (key: ManagedCredentialKey) => void;
 }) {
   const fields: {
-    key: "usptoApiKey" | "tsdrApiKey" | "tmsearchWafToken";
+    key: ManagedCredentialKey;
     label: string;
     placeholder: string;
     saved: boolean;
@@ -1364,12 +1410,15 @@ function ManagedCredentialsForm({
             <SettingsTextInput
               id={`connector-managed-${field.key}`}
               value={draft[field.key]}
-              onChange={(event) =>
+              onChange={(event) => {
+                const cleared = { ...draft.clearedUsptoCredentials };
+                cleared[field.key] = false;
                 onDraftChange({
                   ...draft,
                   [field.key]: event.target.value,
-                })
-              }
+                  clearedUsptoCredentials: cleared,
+                });
+              }}
               type="password"
               placeholder={field.placeholder}
               className="h-8"
@@ -1377,8 +1426,23 @@ function ManagedCredentialsForm({
               spellCheck={false}
               disabled={disabled}
             />
-            {field.saved && draft[field.key].length === 0 && (
-              <p className="mt-1 text-xs text-gray-500">Saved</p>
+            {field.saved &&
+              !draft.clearedUsptoCredentials[field.key] &&
+              draft[field.key].length === 0 && (
+                <p className="mt-1 flex items-center gap-2 text-xs text-gray-500">
+                  <span>Saved</span>
+                  <button
+                    type="button"
+                    onClick={() => onClearCredential(field.key)}
+                    disabled={disabled}
+                    className="font-medium text-red-600 transition-colors hover:text-red-700 disabled:cursor-not-allowed disabled:text-gray-300"
+                  >
+                    Clear
+                  </button>
+                </p>
+              )}
+            {draft.clearedUsptoCredentials[field.key] && (
+              <p className="mt-1 text-xs font-medium text-red-600">Cleared</p>
             )}
           </div>
         </div>

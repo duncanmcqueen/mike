@@ -402,6 +402,36 @@ userRouter.patch(
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         const body = req.body ?? {};
+        // Credential fields accept a string (set) or null (clear). Reject any
+        // other type here: the service treats null as "clear the saved value",
+        // so a coerced value must never reach it.
+        let usptoCredentials:
+            | Record<string, string | null>
+            | undefined;
+        if ("usptoCredentials" in body && body.usptoCredentials !== undefined) {
+            const raw = body.usptoCredentials;
+            if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+                return void res.status(400).json({
+                    detail: "usptoCredentials must be an object.",
+                });
+            }
+            usptoCredentials = {};
+            for (const key of [
+                "usptoApiKey",
+                "tsdrApiKey",
+                "tmsearchWafToken",
+            ] as const) {
+                const record = raw as Record<string, unknown>;
+                if (!(key in record)) continue;
+                const value = record[key];
+                if (value !== null && typeof value !== "string") {
+                    return void res.status(400).json({
+                        detail: "USPTO credential values must be strings.",
+                    });
+                }
+                usptoCredentials[key] = value;
+            }
+        }
         const result = await updateMcpConnector(
             db,
             userId,
@@ -432,32 +462,7 @@ userRouter.patch(
                                   : {},
                       }
                     : {}),
-                ...("usptoCredentials" in body &&
-                body.usptoCredentials &&
-                typeof body.usptoCredentials === "object" &&
-                !Array.isArray(body.usptoCredentials)
-                    ? {
-                          usptoCredentials: Object.fromEntries(
-                              Object.entries(
-                                  body.usptoCredentials as Record<
-                                      string,
-                                      unknown
-                                  >,
-                              )
-                                  .filter(([key]) =>
-                                      [
-                                          "usptoApiKey",
-                                          "tsdrApiKey",
-                                          "tmsearchWafToken",
-                                      ].includes(key),
-                                  )
-                                  .map(([key, value]) => [
-                                      key,
-                                      typeof value === "string" ? value : null,
-                                  ]),
-                          ),
-                      }
-                    : {}),
+                ...(usptoCredentials ? { usptoCredentials } : {}),
             },
         );
         if (!result.ok) {

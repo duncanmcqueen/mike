@@ -25,6 +25,8 @@ const ENV_KEYS = [
     "PATENT_MCP_DIRECTORY",
     "PATENT_MCP_UV_DATA_DIR",
     "PATENT_MCP_MAX_CONCURRENT",
+    "PATENT_MCP_MAX_QUEUE",
+    "PATENT_MCP_QUEUE_TIMEOUT_MS",
     "USPTO_API_KEY",
     "TSDR_API_KEY",
     "TMSEARCH_WAF_TOKEN",
@@ -204,6 +206,26 @@ describe("patentMcpFailureDetail", () => {
     it("returns null when the tail has no error line", () => {
         expect(patentMcpFailureDetail("starting server\nready")).toBeNull();
     });
+
+    it("redacts stored credential values from the detail", () => {
+        const detail = patentMcpFailureDetail(
+            "request failed: header X-API-Key=secret-key-value",
+            { usptoApiKey: "secret-key-value" },
+        );
+        expect(detail).not.toBeNull();
+        expect(detail).toContain("[redacted]");
+        expect(detail).not.toContain("secret-key-value");
+    });
+
+    it("redacts deployment credential values from the detail", () => {
+        process.env.TMSEARCH_WAF_TOKEN = "env-waf-token-value";
+        const detail = patentMcpFailureDetail(
+            "error: cookie aws-waf-token=env-waf-token-value",
+        );
+        expect(detail).not.toBeNull();
+        expect(detail).toContain("[redacted]");
+        expect(detail).not.toContain("env-waf-token-value");
+    });
 });
 
 function profileDb(
@@ -280,5 +302,55 @@ describe("withPatentProcessSlot", () => {
 
         expect(peak).toBe(2);
         expect(active).toBe(0);
+    });
+
+    it("rejects a caller when the wait queue is full", async () => {
+        process.env.PATENT_MCP_MAX_CONCURRENT = "1";
+        process.env.PATENT_MCP_MAX_QUEUE = "1";
+        let releaseFirst: () => void = () => {};
+        const first = withPatentProcessSlot(
+            () =>
+                new Promise<void>((resolve) => {
+                    releaseFirst = resolve;
+                }),
+        );
+        const queued = withPatentProcessSlot(async () => undefined);
+
+        await expect(
+            withPatentProcessSlot(async () => undefined),
+        ).rejects.toThrow(/busy/);
+
+        // Let the first callback start so it publishes its release function.
+        await Promise.resolve();
+        releaseFirst();
+        await first;
+        await queued;
+    });
+
+    it("removes a timed-out waiter and rejects it", async () => {
+        vi.useFakeTimers();
+        try {
+            process.env.PATENT_MCP_MAX_CONCURRENT = "1";
+            process.env.PATENT_MCP_QUEUE_TIMEOUT_MS = "5000";
+            let releaseFirst: () => void = () => {};
+            const first = withPatentProcessSlot(
+                () =>
+                    new Promise<void>((resolve) => {
+                        releaseFirst = resolve;
+                    }),
+            );
+            const waiter = withPatentProcessSlot(async () => undefined);
+            // Attach the rejection handler before the timer fires, so the
+            // rejection is never unhandled.
+            const waiterRejects = expect(waiter).rejects.toThrow(/busy/);
+
+            await vi.advanceTimersByTimeAsync(5000);
+            await waiterRejects;
+
+            releaseFirst();
+            await first;
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

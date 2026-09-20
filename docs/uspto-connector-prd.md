@@ -19,8 +19,9 @@ have this capability today and need it in MikeOSS.
   local process.
 - A fork or patch of `riemannzeta/patent_mcp_server`. The upstream package
   stays unmodified.
-- Per-user USPTO credentials. The first release keeps deployment-level
-   credentials with a shared quota.
+- Per-user USPTO credentials as the only model. The deployment environment
+  variables stay the shared default. A user can save encrypted overrides in
+  Settings > Connectors, and a saved value takes precedence.
 - PDF download tools. They return container-local paths and stay available
   only where the paths are usable; no browser download adapter exists yet.
 

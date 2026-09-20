@@ -49,6 +49,10 @@ const STDERR_TAIL_CHARS = 8_000;
 export { PATENT_MCP_ENV_ALLOWLIST as PATENT_MCP_ENV_ALLOWLIST_KEYS };
 const STDERR_DETAIL_CHARS = 600;
 const DEFAULT_MAX_CONCURRENT = 4;
+const DEFAULT_MAX_QUEUE = 32;
+const DEFAULT_QUEUE_TIMEOUT_MS = 60_000;
+const MIN_QUEUE_TIMEOUT_MS = 5_000;
+const MAX_QUEUE_TIMEOUT_MS = 600_000;
 
 // Only documented USPTO credentials and safe process tuning variables reach
 // the child. Mike database credentials, LLM keys, and encryption secrets
@@ -257,19 +261,45 @@ export function createPatentMcpTransport(
 }
 
 // Bounds concurrent managed processes per backend instance. Excess callers
-// queue in FIFO order until a slot frees.
+// queue in FIFO order until a slot frees. The queue has a fixed cap and an
+// acquisition timeout, so a long trademark search cannot block callers
+// without bound.
+type ProcessWaiter = {
+    resolve: () => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+};
 let activeProcesses = 0;
-const processQueue: Array<() => void> = [];
+const processQueue: ProcessWaiter[] = [];
+
+function envInt(
+    name: string,
+    fallback: number,
+    min: number,
+    max: number,
+): number {
+    const parsed = Number.parseInt(process.env[name] ?? "", 10);
+    if (Number.isFinite(parsed) && parsed >= min) {
+        return Math.min(parsed, max);
+    }
+    return fallback;
+}
 
 function maxConcurrentProcesses(): number {
-    const parsed = Number.parseInt(
-        process.env.PATENT_MCP_MAX_CONCURRENT ?? "",
-        10,
+    return envInt("PATENT_MCP_MAX_CONCURRENT", DEFAULT_MAX_CONCURRENT, 1, 16);
+}
+
+function maxQueuedProcesses(): number {
+    return envInt("PATENT_MCP_MAX_QUEUE", DEFAULT_MAX_QUEUE, 1, 256);
+}
+
+function queueTimeoutMs(): number {
+    return envInt(
+        "PATENT_MCP_QUEUE_TIMEOUT_MS",
+        DEFAULT_QUEUE_TIMEOUT_MS,
+        MIN_QUEUE_TIMEOUT_MS,
+        MAX_QUEUE_TIMEOUT_MS,
     );
-    if (Number.isFinite(parsed) && parsed >= 1) {
-        return Math.min(parsed, 16);
-    }
-    return DEFAULT_MAX_CONCURRENT;
 }
 
 async function acquireProcessSlot(): Promise<() => void> {
@@ -277,15 +307,36 @@ async function acquireProcessSlot(): Promise<() => void> {
         activeProcesses += 1;
         return releaseProcessSlot;
     }
-    await new Promise<void>((resolve) => processQueue.push(resolve));
-    activeProcesses += 1;
+    if (processQueue.length >= maxQueuedProcesses()) {
+        throw new Error(
+            "The USPTO connector is busy. Try again later.",
+        );
+    }
+    await new Promise<void>((resolve, reject) => {
+        const waiter: ProcessWaiter = {
+            resolve,
+            reject,
+            timer: setTimeout(() => {
+                const index = processQueue.indexOf(waiter);
+                if (index !== -1) processQueue.splice(index, 1);
+                reject(new Error("The USPTO connector is busy. Try again later."));
+            }, queueTimeoutMs()),
+        };
+        processQueue.push(waiter);
+    });
     return releaseProcessSlot;
 }
 
 function releaseProcessSlot() {
-    activeProcesses -= 1;
+    // Hand the slot straight to the next waiter. Decrement only when the
+    // queue is empty, so the count never dips while a slot is still busy.
     const next = processQueue.shift();
-    if (next) next();
+    if (next) {
+        clearTimeout(next.timer);
+        next.resolve();
+        return;
+    }
+    activeProcesses -= 1;
 }
 
 export async function withPatentProcessSlot<T>(
@@ -299,10 +350,39 @@ export async function withPatentProcessSlot<T>(
     }
 }
 
+// Replaces known credential values in text with a redaction marker. Upstream
+// debug output can echo request headers, so no credential value may reach a
+// log line or a user-facing error.
+export function redactPatentMcpSecrets(
+    text: string,
+    credentials?: McpManagedCredentials,
+): string {
+    const secrets = new Set<string>();
+    for (const field of Object.keys(
+        PATENT_MCP_CREDENTIAL_ENV,
+    ) as Array<keyof McpManagedCredentials>) {
+        const value = credentials?.[field]?.trim();
+        if (value) secrets.add(value);
+        const envValue = process.env[PATENT_MCP_CREDENTIAL_ENV[field]]?.trim();
+        if (envValue) secrets.add(envValue);
+    }
+    let redacted = text;
+    for (const secret of secrets) {
+        if (secret.length < 4) continue;
+        redacted = redacted.split(secret).join("[redacted]");
+    }
+    return redacted;
+}
+
 // Reads a bounded stderr tail and returns one concise line for logs and
-// user-facing diagnostics. Raw stderr is never forwarded verbatim.
-export function patentMcpFailureDetail(stderrTail: string): string | null {
-    const lines = stderrTail.split("\n").map((line) => line.trim());
+// user-facing diagnostics. Raw stderr is never forwarded verbatim, and known
+// credential values are redacted first.
+export function patentMcpFailureDetail(
+    stderrTail: string,
+    credentials?: McpManagedCredentials,
+): string | null {
+    const safeTail = redactPatentMcpSecrets(stderrTail, credentials);
+    const lines = safeTail.split("\n").map((line) => line.trim());
     for (let index = lines.length - 1; index >= 0; index -= 1) {
         const line = lines[index];
         if (/(?:error|exception|traceback|failed)/i.test(line)) {

@@ -231,6 +231,8 @@ All users then share the upstream quota. This is the default shared model.
 | `PATENT_MCP_DIRECTORY` | unset | Native development only. Runs an unmodified upstream checkout. |
 | `PATENT_MCP_UV_DATA_DIR` | `backend/data/uv` (`<backend working dir>/data/uv`) | Location for uv caches, tool environments, and managed Python installs. |
 | `PATENT_MCP_MAX_CONCURRENT` | `4` | Maximum connector child processes per backend instance. |
+| `PATENT_MCP_MAX_QUEUE` | `32` | Maximum callers that wait for a process slot. |
+| `PATENT_MCP_QUEUE_TIMEOUT_MS` | `60000` | Maximum wait for a process slot in milliseconds. |
 
 ### Process-environment rules
 

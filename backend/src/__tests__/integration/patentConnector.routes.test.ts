@@ -159,6 +159,18 @@ describe("managed connector edit restrictions", () => {
         ).not.toHaveProperty("ignored");
     });
 
+    it("rejects a non-string credential value without calling the service", async () => {
+        const res = await request(app)
+            .patch("/user/mcp-connectors/c1")
+            .send({ usptoCredentials: { usptoApiKey: 123 } });
+
+        expect(res.status).toBe(400);
+        expect(res.body.detail).toBe(
+            "USPTO credential values must be strings.",
+        );
+        expect(updateUserMcpConnector).not.toHaveBeenCalled();
+    });
+
     it("returns the intentional message when a managed connector is deleted", async () => {
         deleteUserMcpConnector.mockRejectedValue(
             new Error(MANAGED_CONNECTOR_DELETE_LOCKED),

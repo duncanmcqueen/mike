@@ -5,6 +5,8 @@ import FeaturesPage from "./page";
 const state = vi.hoisted(() => ({
     source: "env" as "env" | "user" | null,
     usptoEnabled: false,
+    degraded: false,
+    reloadProfile: vi.fn(),
     updateUsptoConnectorEnabled: vi.fn<(enabled: boolean) => Promise<boolean>>(),
 }));
 
@@ -21,6 +23,8 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
                 },
             },
         },
+        apiKeysDegraded: state.degraded,
+        reloadProfile: state.reloadProfile,
         updateApiKey: vi.fn(),
         updateLegalResearchUs: vi.fn(),
         updateUsptoConnectorEnabled: state.updateUsptoConnectorEnabled,
@@ -60,6 +64,8 @@ describe("FeaturesPage CourtListener key", () => {
 describe("FeaturesPage USPTO connector", () => {
     beforeEach(() => {
         state.usptoEnabled = false;
+        state.degraded = false;
+        state.reloadProfile.mockReset();
         state.updateUsptoConnectorEnabled.mockReset();
         state.updateUsptoConnectorEnabled.mockResolvedValue(true);
     });
@@ -77,6 +83,19 @@ describe("FeaturesPage USPTO connector", () => {
             screen.getByRole("switch", { name: "USPTO Patent & Trademark" }),
         );
         expect(state.updateUsptoConnectorEnabled).toHaveBeenCalledWith(true);
+    });
+
+    it("shows a retry and disables the switch when the profile is degraded", () => {
+        state.degraded = true;
+        render(<FeaturesPage />);
+
+        expect(screen.getByText(/Could not load settings/)).toBeTruthy();
+        const retry = screen.getByRole("button", { name: "Retry" });
+        fireEvent.click(retry);
+        expect(state.reloadProfile).toHaveBeenCalledTimes(1);
+        expect(
+            screen.getByRole("switch", { name: "USPTO Patent & Trademark" }),
+        ).toBeDisabled();
     });
 
     it("shows Set up in Connectors only when enabled", () => {

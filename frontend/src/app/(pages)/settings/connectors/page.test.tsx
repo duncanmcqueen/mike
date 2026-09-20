@@ -31,10 +31,15 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => {
 });
 
 // The page reads the USPTO feature switch from the profile context.
-const profileState = vi.hoisted(() => ({ usptoEnabled: false }));
+const profileState = vi.hoisted(() => ({
+    usptoEnabled: false,
+    degraded: false,
+}));
 vi.mock("@/app/contexts/UserProfileContext", () => ({
     useUserProfile: () => ({
         profile: { usptoConnectorEnabled: profileState.usptoEnabled },
+        apiKeysDegraded: profileState.degraded,
+        reloadProfile: vi.fn(),
     }),
 }));
 
@@ -354,6 +359,7 @@ describe("ConnectorsPage USPTO preset", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         profileState.usptoEnabled = false;
+        profileState.degraded = false;
         vi.mocked(needsMfaVerification).mockResolvedValue(false);
         vi.mocked(listMcpConnectors).mockResolvedValue([]);
     });
@@ -488,7 +494,7 @@ describe("ConnectorsPage USPTO preset", () => {
         expect(saved).toHaveLength(1);
     });
 
-    it("saves managed credentials and clears a saved field left empty", async () => {
+    it("saves a credential and preserves an untouched saved one", async () => {
         const connector = managedSummary({
             managedCredentials: {
                 usptoApiKey: true,
@@ -525,12 +531,71 @@ describe("ConnectorsPage USPTO preset", () => {
             await flushMicrotasks();
         });
 
+        // The untouched saved usptoApiKey is omitted, not cleared.
         expect(vi.mocked(updateMcpConnector)).toHaveBeenCalledWith("patent-1", {
             usptoCredentials: {
-                usptoApiKey: null,
                 tsdrApiKey: "tsdr-secret",
             },
         });
+    });
+
+    it("clears a saved credential only after an explicit Clear", async () => {
+        const connector = managedSummary({
+            managedCredentials: {
+                usptoApiKey: true,
+                tsdrApiKey: false,
+                tmsearchWafToken: false,
+            },
+        });
+        vi.mocked(listMcpConnectors).mockResolvedValue([connector]);
+        vi.mocked(getMcpConnector).mockResolvedValue(connector);
+        vi.mocked(updateMcpConnector).mockResolvedValue(
+            managedSummary({
+                managedCredentials: {
+                    usptoApiKey: false,
+                    tsdrApiKey: false,
+                    tmsearchWafToken: false,
+                },
+            }),
+        );
+        render(<ConnectorsPage />);
+        await act(async () => {
+            await flushMicrotasks();
+        });
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Details" }));
+            await flushMicrotasks();
+        });
+
+        const clearButtons = screen.getAllByRole("button", { name: "Clear" });
+        expect(clearButtons).toHaveLength(1);
+        fireEvent.click(clearButtons[0]);
+        expect(screen.getByText("Cleared")).toBeTruthy();
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Save" }));
+            await flushMicrotasks();
+        });
+
+        expect(vi.mocked(updateMcpConnector)).toHaveBeenCalledWith("patent-1", {
+            usptoCredentials: {
+                usptoApiKey: null,
+            },
+        });
+    });
+
+    it("hides setup and shows a retry when the profile is degraded", async () => {
+        profileState.usptoEnabled = true;
+        profileState.degraded = true;
+        render(<ConnectorsPage />);
+        await act(async () => {
+            await flushMicrotasks();
+        });
+
+        expect(screen.queryByRole("button", { name: "USPTO" })).toBeNull();
+        expect(screen.getByText(/Could not load settings/)).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
     });
 
     it("maps feature_disabled to the Settings > Features message", async () => {
