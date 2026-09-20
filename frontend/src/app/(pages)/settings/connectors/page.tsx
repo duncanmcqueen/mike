@@ -36,6 +36,7 @@ import {
   getMcpConnector,
   isMfaRequiredError,
   listMcpConnectors,
+  provisionPatentMcpConnector,
   refreshMcpConnectorTools,
   setMcpToolEnabled,
   startMcpConnectorOAuth,
@@ -49,11 +50,14 @@ import {
 import { SettingsCard } from "@/app/components/settings/SettingsCard";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { settingsGlassIconButtonClassName } from "../settingsStyles";
 
 type PendingMfaAction =
   | { type: "create" }
+  | { type: "create-patent" }
   | { type: "save"; connectorId: string }
+  | { type: "save-managed"; connectorId: string }
   | { type: "clear-token"; connectorId: string }
   | { type: "delete"; connectorId: string }
   | { type: "refresh"; connectorId: string }
@@ -74,6 +78,9 @@ type AddDraft = {
 
 type DetailDraft = AddDraft & {
   clearBearerToken: boolean;
+  usptoApiKey: string;
+  tsdrApiKey: string;
+  tmsearchWafToken: string;
 };
 
 type AddStep = "form" | "working" | "auth" | "success";
@@ -134,7 +141,11 @@ function isGoogleMcpConnector(connector: McpConnectorSummary) {
 }
 
 export default function ConnectorsPage() {
+  const { profile } = useUserProfile();
+  const usptoEnabled = profile?.usptoConnectorEnabled === true;
   const [connectors, setConnectors] = useState<McpConnectorSummary[]>([]);
+  const hasManagedConnector = connectors.some((connector) => connector.managed);
+  const showUsptoSetup = usptoEnabled && !hasManagedConnector;
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +167,9 @@ export default function ConnectorsPage() {
   const [detailDraft, setDetailDraft] = useState<DetailDraft>({
     ...emptyAddDraft,
     clearBearerToken: false,
+    usptoApiKey: "",
+    tsdrApiKey: "",
+    tmsearchWafToken: "",
   });
   const [detailError, setDetailError] = useState<string | null>(null);
   // Setup steps from a Refresh on an unconfigured provider, shown inside
@@ -220,6 +234,9 @@ export default function ConnectorsPage() {
       bearerToken: "",
       customHeaders: "",
       clearBearerToken: false,
+      usptoApiKey: "",
+      tsdrApiKey: "",
+      tmsearchWafToken: "",
     });
     setDetailError(null);
     // detailSetupNotice is deliberately NOT reset here: the Add flow sets
@@ -325,7 +342,8 @@ export default function ConnectorsPage() {
       }
       const message = userFacingApiError(err, "Action failed.");
       if (action.type === "create") setAddError(message);
-      else if (action.type === "save") setDetailError(message);
+      else if (action.type === "save" || action.type === "save-managed")
+        setDetailError(message);
       else setError(message);
     }
   };
@@ -590,6 +608,33 @@ export default function ConnectorsPage() {
     });
   };
 
+  const handleProvisionPatent = async () => {
+    await runSensitiveAction({ type: "create-patent" }, async () => {
+      setBusyKey("create-patent");
+      try {
+        const connector = await provisionPatentMcpConnector();
+        replaceConnector(connector);
+        setSelectedConnectorId(connector.id);
+        setSelectedConnectorDetails(connector);
+      } catch (err) {
+        if (isMfaRequiredError(err)) throw err;
+        if (err instanceof MikeApiError && err.code === "feature_disabled") {
+          setError(
+            "Turn on USPTO Patent & Trademark in Settings > Features first.",
+          );
+          return;
+        }
+        if (err instanceof MikeApiError && err.code === "runtime_unavailable") {
+          setError(err.message);
+          return;
+        }
+        throw err;
+      } finally {
+        setBusyKey(null);
+      }
+    });
+  };
+
   const handleSaveSelectedConnector = async () => {
     if (!selectedConnector) return;
     await runSensitiveAction(
@@ -624,7 +669,67 @@ export default function ConnectorsPage() {
             bearerToken: "",
             customHeaders: "",
             clearBearerToken: false,
+            usptoApiKey: "",
+            tsdrApiKey: "",
+            tmsearchWafToken: "",
           });
+        } finally {
+          setBusyKey(null);
+        }
+      },
+    );
+  };
+
+  const handleSaveManagedCredentials = async () => {
+    if (!selectedConnector?.managed) return;
+    await runSensitiveAction(
+      { type: "save-managed", connectorId: selectedConnector.id },
+      async () => {
+        setBusyKey(`save-managed:${selectedConnector.id}`);
+        setDetailError(null);
+        setDetailSetupNotice(null);
+        try {
+          const fields: {
+            key: "usptoApiKey" | "tsdrApiKey" | "tmsearchWafToken";
+            value: string;
+            saved: boolean;
+          }[] = [
+            {
+              key: "usptoApiKey",
+              value: detailDraft.usptoApiKey,
+              saved: selectedConnector.managedCredentials.usptoApiKey,
+            },
+            {
+              key: "tsdrApiKey",
+              value: detailDraft.tsdrApiKey,
+              saved: selectedConnector.managedCredentials.tsdrApiKey,
+            },
+            {
+              key: "tmsearchWafToken",
+              value: detailDraft.tmsearchWafToken,
+              saved: selectedConnector.managedCredentials.tmsearchWafToken,
+            },
+          ];
+          const usptoCredentials: {
+            usptoApiKey?: string | null;
+            tsdrApiKey?: string | null;
+            tmsearchWafToken?: string | null;
+          } = {};
+          for (const field of fields) {
+            const trimmed = field.value.trim();
+            if (trimmed) usptoCredentials[field.key] = trimmed;
+            else if (field.saved) usptoCredentials[field.key] = null;
+          }
+          const saved = await updateMcpConnector(selectedConnector.id, {
+            usptoCredentials,
+          });
+          replaceConnector(saved, { preserveToolsOnEmpty: true });
+          setDetailDraft((prev) => ({
+            ...prev,
+            usptoApiKey: "",
+            tsdrApiKey: "",
+            tmsearchWafToken: "",
+          }));
         } finally {
           setBusyKey(null);
         }
@@ -761,7 +866,9 @@ export default function ConnectorsPage() {
     setPendingMfaAction(null);
     if (!action) return;
     if (action.type === "create") await handleCreate();
+    if (action.type === "create-patent") await handleProvisionPatent();
     if (action.type === "save") await handleSaveSelectedConnector();
+    if (action.type === "save-managed") await handleSaveManagedCredentials();
     if (action.type === "clear-token") {
       await handleClearBearerToken(action.connectorId);
     }
@@ -785,6 +892,19 @@ export default function ConnectorsPage() {
         <div className="flex items-center justify-between gap-3">
           <SettingsHeading>Connectors</SettingsHeading>
           <div className="flex shrink-0 items-center rounded-full border border-white/70 bg-app-surface p-0.5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] backdrop-blur-2xl">
+            {showUsptoSetup && (
+              <button
+                type="button"
+                onClick={() => void handleProvisionPatent()}
+                disabled={busyKey === "create-patent"}
+                className={`flex h-6 items-center justify-center gap-1 rounded-full px-2.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-300 ${LIQUID_GLASS_HOVER_CLASS} ${LIQUID_GLASS_PRESSED_CLASS}`}
+              >
+                {busyKey === "create-patent" && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                )}
+                USPTO
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setAddOpen(true)}
@@ -869,6 +989,7 @@ export default function ConnectorsPage() {
           setSelectedConnectorDetails(null);
         }}
         onSave={handleSaveSelectedConnector}
+        onSaveManaged={handleSaveManagedCredentials}
         onClearBearerToken={handleClearBearerToken}
         onRefresh={handleRefresh}
         reconnectingOAuth={
@@ -943,7 +1064,11 @@ function ConnectorRow({
             </ToggleSwitchUI>
           </div>
           <div className="min-w-0 truncate">
-            <SettingsDescription>{connector.serverUrl}</SettingsDescription>
+            <SettingsDescription>
+              {connector.managed === true
+                ? "Managed stdio · patent-mcp-server 1.0.0"
+                : connector.serverUrl}
+            </SettingsDescription>
           </div>
           <button
             type="button"
@@ -976,6 +1101,7 @@ function McpConnectorDetailsModal({
   onShowAdvancedChange,
   onClose,
   onSave,
+  onSaveManaged,
   onClearBearerToken,
   onRefresh,
   reconnectingOAuth,
@@ -998,6 +1124,7 @@ function McpConnectorDetailsModal({
   onShowAdvancedChange: (show: boolean) => void;
   onClose: () => void;
   onSave: () => Promise<void>;
+  onSaveManaged: () => Promise<void>;
   onClearBearerToken: (connectorId: string) => Promise<void>;
   onRefresh: (connectorId: string) => Promise<void>;
   reconnectingOAuth: boolean;
@@ -1017,6 +1144,13 @@ function McpConnectorDetailsModal({
       draft.bearerToken.trim().length > 0 ||
       draft.customHeaders.trim().length > 0);
   const isSaving = !!connector && busyKey === `save:${connector.id}`;
+  const isManaged = connector?.managed === true;
+  const hasManagedCredentialInput =
+    draft.usptoApiKey.trim().length > 0 ||
+    draft.tsdrApiKey.trim().length > 0 ||
+    draft.tmsearchWafToken.trim().length > 0;
+  const isSavingManaged =
+    !!connector && busyKey === `save-managed:${connector.id}`;
 
   return (
     <Modal
@@ -1039,7 +1173,7 @@ function McpConnectorDetailsModal({
       }
       size="md"
       secondaryAction={
-        connector
+        connector && !isManaged
           ? {
               label: "Delete connector",
               variant: "danger",
@@ -1048,19 +1182,31 @@ function McpConnectorDetailsModal({
             }
           : undefined
       }
-      primaryAction={{
-        label: isSaving ? "Saving..." : "Save",
-        icon: isSaving ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : undefined,
-        onClick: () => void onSave(),
-        disabled:
-          !connector ||
-          !hasChanges ||
-          isSaving ||
-          !draft.name.trim() ||
-          !draft.serverUrl.trim(),
-      }}
+      primaryAction={
+        isManaged
+          ? {
+              label: isSavingManaged ? "Saving..." : "Save",
+              icon: isSavingManaged ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : undefined,
+              onClick: () => void onSaveManaged(),
+              disabled:
+                !connector || !hasManagedCredentialInput || isSavingManaged,
+            }
+          : {
+              label: isSaving ? "Saving..." : "Save",
+              icon: isSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : undefined,
+              onClick: () => void onSave(),
+              disabled:
+                !connector ||
+                !hasChanges ||
+                isSaving ||
+                !draft.name.trim() ||
+                !draft.serverUrl.trim(),
+            }
+      }
       cancelAction={{ label: "Close", onClick: onClose }}
       footerStatus={
         error ? <span className="text-sm text-red-600">{error}</span> : null
@@ -1069,35 +1215,52 @@ function McpConnectorDetailsModal({
       {connector && (
         <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pb-4">
           {setupNotice && <ConnectorSetupNotice text={setupNotice} />}
-          <ConnectorForm
-            draft={draft}
-            showToken={showToken}
-            showAdvanced={showAdvanced}
-            tokenPlaceholder={
-              connector.hasAuthConfig ? "Saved token encrypted" : "Bearer token"
-            }
-            tokenAction={
-              connector.hasAuthConfig || clearTokenStatus === "cleared"
-                ? {
-                    label: clearTokenStatus === "cleared" ? "Cleared" : "Clear",
-                    loading: clearTokenStatus === "clearing",
-                    cleared: clearTokenStatus === "cleared",
-                    onClick: () => void onClearBearerToken(connector.id),
-                  }
-                : undefined
-            }
-            onDraftChange={(next) =>
-              onDraftChange({
-                ...draft,
-                name: next.name,
-                serverUrl: next.serverUrl,
-                bearerToken: next.bearerToken,
-                customHeaders: next.customHeaders,
-              })
-            }
-            onShowTokenChange={onShowTokenChange}
-            onShowAdvancedChange={onShowAdvancedChange}
-          />
+          {isManaged ? (
+            <div className="grid gap-3">
+              <SettingsDescription>
+                Managed local connector. Mike runs it and controls its endpoint.
+              </SettingsDescription>
+              <ManagedCredentialsForm
+                draft={draft}
+                connector={connector}
+                disabled={isSavingManaged}
+                onDraftChange={onDraftChange}
+              />
+            </div>
+          ) : (
+            <ConnectorForm
+              draft={draft}
+              showToken={showToken}
+              showAdvanced={showAdvanced}
+              tokenPlaceholder={
+                connector.hasAuthConfig
+                  ? "Saved token encrypted"
+                  : "Bearer token"
+              }
+              tokenAction={
+                connector.hasAuthConfig || clearTokenStatus === "cleared"
+                  ? {
+                      label:
+                        clearTokenStatus === "cleared" ? "Cleared" : "Clear",
+                      loading: clearTokenStatus === "clearing",
+                      cleared: clearTokenStatus === "cleared",
+                      onClick: () => void onClearBearerToken(connector.id),
+                    }
+                  : undefined
+              }
+              onDraftChange={(next) =>
+                onDraftChange({
+                  ...draft,
+                  name: next.name,
+                  serverUrl: next.serverUrl,
+                  bearerToken: next.bearerToken,
+                  customHeaders: next.customHeaders,
+                })
+              }
+              onShowTokenChange={onShowTokenChange}
+              onShowAdvancedChange={onShowAdvancedChange}
+            />
+          )}
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-xs font-medium text-gray-500">
@@ -1147,6 +1310,80 @@ function McpConnectorDetailsModal({
         </div>
       )}
     </Modal>
+  );
+}
+
+function ManagedCredentialsForm({
+  connector,
+  draft,
+  disabled,
+  onDraftChange,
+}: {
+  connector: McpConnectorSummary;
+  draft: DetailDraft;
+  disabled: boolean;
+  onDraftChange: (draft: DetailDraft) => void;
+}) {
+  const fields: {
+    key: "usptoApiKey" | "tsdrApiKey" | "tmsearchWafToken";
+    label: string;
+    placeholder: string;
+    saved: boolean;
+  }[] = [
+    {
+      key: "usptoApiKey",
+      label: "USPTO API key",
+      placeholder: "USPTO_API_KEY",
+      saved: connector.managedCredentials.usptoApiKey,
+    },
+    {
+      key: "tsdrApiKey",
+      label: "TSDR API key",
+      placeholder: "TSDR_API_KEY",
+      saved: connector.managedCredentials.tsdrApiKey,
+    },
+    {
+      key: "tmsearchWafToken",
+      label: "TMSEARCH WAF token",
+      placeholder: "TMSEARCH_WAF_TOKEN",
+      saved: connector.managedCredentials.tmsearchWafToken,
+    },
+  ];
+
+  return (
+    <div className="grid gap-3 pt-1">
+      {fields.map((field) => (
+        <div
+          key={field.key}
+          className="grid gap-2 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-start"
+        >
+          <FieldLabel htmlFor={`connector-managed-${field.key}`}>
+            {field.label}
+          </FieldLabel>
+          <div className="min-w-0">
+            <SettingsTextInput
+              id={`connector-managed-${field.key}`}
+              value={draft[field.key]}
+              onChange={(event) =>
+                onDraftChange({
+                  ...draft,
+                  [field.key]: event.target.value,
+                })
+              }
+              type="password"
+              placeholder={field.placeholder}
+              className="h-8"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={disabled}
+            />
+            {field.saved && draft[field.key].length === 0 && (
+              <p className="mt-1 text-xs text-gray-500">Saved</p>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 

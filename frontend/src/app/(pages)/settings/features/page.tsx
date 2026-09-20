@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { ApiKeyField } from "@/app/components/settings/ApiKeyField";
 import {
   SettingsDescription,
@@ -17,21 +18,29 @@ export default function FeaturesPage() {
     profile,
     updateApiKey,
     updateLegalResearchUs,
+    updateUsptoConnectorEnabled,
     updateQuickActionsVisible,
   } = useUserProfile();
   const [quickActionsError, setQuickActionsError] = useState<string | null>(
     null,
   );
   const [saving, setSaving] = useState(false);
+  const [savingUspto, setSavingUspto] = useState(false);
   const [savingQuickActions, setSavingQuickActions] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [usptoSaveError, setUsptoSaveError] = useState<string | null>(null);
   const [optimisticLegalResearchUs, setOptimisticLegalResearchUs] = useState<
     boolean | null
   >(null);
+  const [optimisticUsptoConnectorEnabled, setOptimisticUsptoConnectorEnabled] =
+    useState<boolean | null>(null);
 
   const persistedLegalResearchUs = profile?.legalResearchUs ?? true;
   const courtListenerEnabled =
     optimisticLegalResearchUs ?? persistedLegalResearchUs;
+  const usptoConnectorEnabled =
+    optimisticUsptoConnectorEnabled ??
+    (profile?.usptoConnectorEnabled ?? false);
   const quickActionsVisible = profile?.quickActionsVisible ?? true;
 
   const setQuickActionsVisible = async (visible: boolean) => {
@@ -52,6 +61,19 @@ export default function FeaturesPage() {
     setOptimisticLegalResearchUs(null);
     if (!ok) {
       setSaveError("Could not update. Try again.");
+    }
+  };
+
+  const handleUsptoChange = async (enabled: boolean) => {
+    if (savingUspto) return;
+    setUsptoSaveError(null);
+    setOptimisticUsptoConnectorEnabled(enabled);
+    setSavingUspto(true);
+    const ok = await updateUsptoConnectorEnabled(enabled);
+    setSavingUspto(false);
+    setOptimisticUsptoConnectorEnabled(null);
+    if (!ok) {
+      setUsptoSaveError("Could not update. Try again.");
     }
   };
 
@@ -120,6 +142,43 @@ export default function FeaturesPage() {
               }
               onRemove={() => updateApiKey("courtlistener", null)}
             />
+          )}
+        </SettingsCard>
+      </section>
+
+      <section className="space-y-3">
+        <SettingsHeading>Connectors</SettingsHeading>
+        <SettingsCard>
+          <SettingsRow>
+            <div className="min-w-0 space-y-1">
+              <SettingsLabel>USPTO Patent & Trademark</SettingsLabel>
+              <SettingsDescription>
+                Search USPTO patent and trademark records through a managed
+                local connector.
+              </SettingsDescription>
+              {usptoSaveError && (
+                <p className="text-sm text-red-600" role="alert">
+                  {usptoSaveError}
+                </p>
+              )}
+            </div>
+            <ToggleSwitchUI
+              checked={usptoConnectorEnabled}
+              disabled={savingUspto}
+              aria-busy={savingUspto}
+              aria-label="USPTO Patent & Trademark"
+              onCheckedChange={(enabled) => void handleUsptoChange(enabled)}
+            />
+          </SettingsRow>
+          {usptoConnectorEnabled && (
+            <div className="px-4 pb-3">
+              <Link
+                href="/settings/connectors"
+                className="text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 hover:underline"
+              >
+                Set up in Connectors
+              </Link>
+            </div>
           )}
         </SettingsCard>
       </section>

@@ -1,9 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import FeaturesPage from "./page";
 
 const state = vi.hoisted(() => ({
     source: "env" as "env" | "user" | null,
+    usptoEnabled: false,
+    updateUsptoConnectorEnabled: vi.fn<(enabled: boolean) => Promise<boolean>>(),
 }));
 
 vi.mock("@/app/contexts/UserProfileContext", () => ({
@@ -11,6 +13,7 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
         profile: {
             legalResearchUs: true,
             quickActionsVisible: true,
+            usptoConnectorEnabled: state.usptoEnabled,
             apiKeys: {
                 courtlistener: {
                     configured: state.source !== null,
@@ -20,6 +23,7 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
         },
         updateApiKey: vi.fn(),
         updateLegalResearchUs: vi.fn(),
+        updateUsptoConnectorEnabled: state.updateUsptoConnectorEnabled,
         updateQuickActionsVisible: vi.fn(),
     }),
 }));
@@ -49,6 +53,42 @@ describe("FeaturesPage CourtListener key", () => {
         render(<FeaturesPage />);
         expect(screen.getByTestId("courtlistener-key-state")).toHaveTextContent(
             "personal",
+        );
+    });
+});
+
+describe("FeaturesPage USPTO connector", () => {
+    beforeEach(() => {
+        state.usptoEnabled = false;
+        state.updateUsptoConnectorEnabled.mockReset();
+        state.updateUsptoConnectorEnabled.mockResolvedValue(true);
+    });
+
+    it("renders the row with the switch off by default", () => {
+        render(<FeaturesPage />);
+        expect(
+            screen.getByRole("switch", { name: "USPTO Patent & Trademark" }),
+        ).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("calls updateUsptoConnectorEnabled(true) when toggled on", () => {
+        render(<FeaturesPage />);
+        fireEvent.click(
+            screen.getByRole("switch", { name: "USPTO Patent & Trademark" }),
+        );
+        expect(state.updateUsptoConnectorEnabled).toHaveBeenCalledWith(true);
+    });
+
+    it("shows Set up in Connectors only when enabled", () => {
+        const { unmount } = render(<FeaturesPage />);
+        expect(screen.queryByText("Set up in Connectors")).toBeNull();
+        unmount();
+
+        state.usptoEnabled = true;
+        render(<FeaturesPage />);
+        expect(screen.getByText("Set up in Connectors")).toHaveAttribute(
+            "href",
+            "/settings/connectors",
         );
     });
 });

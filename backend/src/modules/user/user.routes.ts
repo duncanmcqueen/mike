@@ -46,6 +46,7 @@ import {
     loadUserExportArtifact,
     lookupUserByEmail,
     listMcpConnectors,
+    provisionPatentConnector,
     readBooleanBodyField,
     recordPasswordSet,
     refreshMcpConnectorTools,
@@ -431,12 +432,41 @@ userRouter.patch(
                                   : {},
                       }
                     : {}),
+                ...("usptoCredentials" in body &&
+                body.usptoCredentials &&
+                typeof body.usptoCredentials === "object" &&
+                !Array.isArray(body.usptoCredentials)
+                    ? {
+                          usptoCredentials: Object.fromEntries(
+                              Object.entries(
+                                  body.usptoCredentials as Record<
+                                      string,
+                                      unknown
+                                  >,
+                              )
+                                  .filter(([key]) =>
+                                      [
+                                          "usptoApiKey",
+                                          "tsdrApiKey",
+                                          "tmsearchWafToken",
+                                      ].includes(key),
+                                  )
+                                  .map(([key, value]) => [
+                                      key,
+                                      typeof value === "string" ? value : null,
+                                  ]),
+                          ),
+                      }
+                    : {}),
             },
         );
-        if (!result.ok)
+        if (!result.ok) {
+            if (result.kind === "managed_locked")
+                return void res.status(400).json({ detail: result.detail });
             return void res.status(400).json({
                 detail: "Connector settings are invalid or the server could not be reached.",
             });
+        }
         res.json(result.connector);
     }),
 );
@@ -454,8 +484,43 @@ userRouter.delete(
             userId,
             req.params.connectorId,
         );
-        if (!result.ok) return void sendInternalError(res, result.error);
+        if (!result.ok) {
+            if (result.kind === "managed_locked")
+                return void res.status(400).json({ detail: result.detail });
+            return void sendInternalError(res, result.error);
+        }
         res.status(204).send();
+    }),
+);
+
+// POST /user/mcp-connectors/presets/patent
+userRouter.post(
+    "/mcp-connectors/presets/patent",
+    requireAuth,
+    requireMfaIfEnrolled,
+    asyncRoute(async (_req, res) => {
+        const userId = res.locals.userId as string;
+        const db = createServerSupabase();
+        const result = await provisionPatentConnector(db, userId);
+        if (!result.ok) {
+            if (result.kind === "feature_disabled")
+                return void res.status(403).json({
+                    code: result.code,
+                    detail: result.detail,
+                });
+            // 409 like oauth_required: the deployment is not in a state
+            // where setup can finish; the client keys on `code`. A 5xx body
+            // here would be replaced by the opaque internal-error boundary.
+            if (result.kind === "runtime_unavailable")
+                return void res.status(409).json({
+                    code: result.code,
+                    detail: result.detail,
+                });
+            return void res.status(400).json({
+                detail: "The USPTO connector could not be set up.",
+            });
+        }
+        res.status(201).json(result.connector);
     }),
 );
 
@@ -571,6 +636,16 @@ userRouter.post(
                 return void res.status(409).json({
                     code: result.code,
                     detail: "This connector needs to be authorized again.",
+                });
+            if (result.kind === "feature_disabled")
+                return void res.status(403).json({
+                    code: result.code,
+                    detail: result.detail,
+                });
+            if (result.kind === "runtime_unavailable")
+                return void res.status(409).json({
+                    code: result.code,
+                    detail: result.detail,
                 });
             return void res.status(400).json({
                 detail: "Connector tools could not be refreshed.",
