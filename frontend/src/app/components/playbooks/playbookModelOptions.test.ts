@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModelOption } from "@/app/components/assistant/ModelToggle";
+import type { ModelOption } from "@/shared/lib/modelCatalog";
 import type {
     ApiKeyState,
     PlaybookConfiguration,

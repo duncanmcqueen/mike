@@ -10738,7 +10738,6 @@ insert into public.schema_migrations (filename) values
   ('20260914_01_document_lifecycle.sql'),
   ('20260915_01_cleanup_drain_and_rollout.sql'),
   ('20260916_01_upload_document_row_created.sql'),
-  ('20260917_01_playbooks.sql'),
   ('20260917_01_organization_access_followup.sql'),
   ('20260917_02_memory_followup.sql'),
   ('20260921_01_chat_activity.sql'),
@@ -10788,5 +10787,6 @@ insert into public.schema_migrations (filename) values
   ('20261015_02_tabular_review_updated_sort.sql'),
   ('20261015_03_tabular_review_history_status.sql'),
   ('20261015_04_tabular_review_creator_filter.sql'),
-  ('20261016_01_tabular_review_generation_activity.sql')
+  ('20261016_01_tabular_review_generation_activity.sql'),
+  ('20261016_02_playbooks.sql')
 on conflict (filename) do nothing;

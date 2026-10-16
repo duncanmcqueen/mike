@@ -13,12 +13,12 @@ import { ModalSelect } from "@/app/components/modals/ModalSelect";
 import { ModalTextInput } from "@/app/components/modals/ModalTextInput";
 import { PillButtonUI as PillButton } from "@/shared/ui/PillButtonUI";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from "@/app/components/ui/dropdown-menu";
+  Dropdown, DropdownContent, DropdownItem, DropdownTrigger,
+} from "@/shared/ui/dropdown";
 import {
   modelDisplayName,
   SETTINGS_MODELS,
-} from "@/app/components/assistant/ModelToggle";
+} from "@/shared/lib/modelCatalog";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { buildPlaybookModelOptions } from "@/app/components/playbooks/playbookModelOptions";
@@ -264,23 +264,23 @@ export default function PlaybooksPage() {
 }
 
 function NewPlaybookMenu({ disabled, onImport, onBlank }: { disabled: boolean; onImport: () => void; onBlank: () => void }) {
-  return <DropdownMenu>
-    <DropdownMenuTrigger asChild>
+  return <Dropdown>
+    <DropdownTrigger asChild>
       <button type="button" disabled={disabled} className="inline-flex h-7 items-center gap-1.5 rounded-full border border-gray-300 px-3 text-xs font-medium text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-40">
         <Plus className="h-3.5 w-3.5" />New playbook<ChevronDown className="h-3 w-3" />
       </button>
-    </DropdownMenuTrigger>
-    <DropdownMenuContent align="end" className="w-64">
-      <DropdownMenuItem onSelect={onImport}>
+    </DropdownTrigger>
+    <DropdownContent align="end" className="w-64">
+      <DropdownItem onSelect={onImport}>
         <Upload className="h-4 w-4" />
         <span className="flex flex-col"><span>Import Word playbook</span><span className="text-xs text-gray-500">Compile a .docx into rules</span></span>
-      </DropdownMenuItem>
-      <DropdownMenuItem onSelect={onBlank}>
+      </DropdownItem>
+      <DropdownItem onSelect={onBlank}>
         <FilePlus2 className="h-4 w-4" />
         <span className="flex flex-col"><span>Start from scratch</span><span className="text-xs text-gray-500">Write the rules yourself</span></span>
-      </DropdownMenuItem>
-    </DropdownMenuContent>
-  </DropdownMenu>;
+      </DropdownItem>
+    </DropdownContent>
+  </Dropdown>;
 }
 
 function Field({ label, value, onChange, multiline = false }: { label: string; value: string; onChange: (value: string) => void; multiline?: boolean }) {

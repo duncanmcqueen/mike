@@ -416,19 +416,27 @@ type ModelAvailability =
   | { available: true }
   | { available: false; reason: string };
 
-const PROVIDER_DISPLAY_NAMES: Record<keyof UserApiKeys, string> = {
+const PROVIDER_DISPLAY_NAMES: Record<Provider, string> = {
   claude: "Anthropic (Claude)",
   gemini: "Google (Gemini)",
   openai: "OpenAI",
   openrouter: "OpenRouter",
   vercel: "Vercel AI Gateway",
   "opencode-go": "OpenCode Go",
-  courtlistener: "CourtListener",
+  mistral: "Mistral AI",
+  bedrock: "Amazon Bedrock",
+  azure: "Azure OpenAI",
+  "azure-foundry": "Azure AI Foundry",
+  vertex: "Google Vertex AI",
+  xai: "xAI",
+  custom: "OpenAI-compatible endpoint",
+  "openai-compatible": "Configured endpoint",
+  ollama: "Local (Ollama)",
 };
 
 // Keyed rather than positional: a provider added later must not inherit the
 // name of whichever branch happened to sit last.
-function providerDisplayName(provider: keyof UserApiKeys): string {
+function providerDisplayName(provider: Provider): string {
   return PROVIDER_DISPLAY_NAMES[provider] ?? "The selected provider";
 }
 
@@ -446,11 +454,9 @@ export function playbookModelAvailability(
     };
   }
   if (hasApiKeyForModel(modelId, apiKeys)) return { available: true };
-  // hasApiKeyForModel is unconditionally true for Ollama, so an unavailable
-  // model always sits behind a provider the user supplies a key for.
   return {
     available: false,
-    reason: `${providerDisplayName(provider as keyof UserApiKeys)} API key is not configured.`,
+    reason: `${providerDisplayName(provider)} API key is not configured.`,
   };
 }
 

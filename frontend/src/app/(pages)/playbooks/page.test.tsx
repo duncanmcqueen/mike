@@ -11,6 +11,9 @@ import {
   type PlaybookRun,
 } from "@/app/lib/mikeApi";
 import PlaybooksPage from "./page";
+import { SETTINGS_MODELS } from "@/shared/lib/modelCatalog";
+
+const TEST_MODEL = SETTINGS_MODELS[0].id;
 
 vi.mock("@/app/lib/mikeApi", () => ({
   createPlaybook: vi.fn(),
@@ -83,7 +86,7 @@ const RUN: PlaybookRun = {
   playbookId: "pb-a",
   versionId: "pb-a-v1",
   versionNumber: 1,
-  model: "claude-opus-5",
+  model: TEST_MODEL,
   documentName: "contract.docx",
   reviewMode: "strict",
   status: "completed",
@@ -112,8 +115,8 @@ describe("playbooks page", () => {
       playbook("pb-b", "Playbook B"),
     ]);
     vi.mocked(getPlaybookConfiguration).mockResolvedValue({
-      availableModelIds: ["claude-opus-5"],
-      defaultModel: "claude-opus-5",
+      availableModelIds: [TEST_MODEL],
+      defaultModel: TEST_MODEL,
     });
     vi.mocked(reviewDocumentWithPlaybook).mockResolvedValue(RUN);
     vi.mocked(createPlaybook).mockResolvedValue(playbook("pb-new", "Untitled playbook"));
@@ -223,7 +226,7 @@ describe("playbooks page", () => {
     await waitFor(() =>
       expect(importPlaybook).toHaveBeenCalledWith(
         expect.any(File),
-        "claude-opus-5",
+        TEST_MODEL,
         "",
         "pb-a",
       ),

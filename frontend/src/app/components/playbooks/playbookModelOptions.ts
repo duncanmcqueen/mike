@@ -1,4 +1,4 @@
-import type { ModelOption } from "@/app/components/assistant/ModelToggle";
+import type { ModelOption } from "@/shared/lib/modelCatalog";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import type {
     ApiKeyState,
