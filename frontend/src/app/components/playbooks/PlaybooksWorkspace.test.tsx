@@ -937,7 +937,7 @@ describe("playbooks page", () => {
     ).toBeInTheDocument();
   });
 
-  it("creates a blank playbook and selects it", async () => {
+  it("creates a blank playbook and opens its overview first", async () => {
     render(<PlaybooksPage />);
 
     await userEvent.click(
@@ -949,9 +949,8 @@ describe("playbooks page", () => {
 
     await waitFor(() => expect(createPlaybook).toHaveBeenCalled());
     expect(screen.queryByLabelText("Topic 1 name")).toBeNull();
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Playbook overview" }),
-    );
+    expect(await screen.findByRole("button", { name: "Playbook overview" }))
+      .toHaveAttribute("aria-pressed", "true");
     expect(
       await screen.findByDisplayValue("Untitled playbook"),
     ).toBeInTheDocument();
@@ -965,6 +964,7 @@ describe("playbooks page", () => {
     await userEvent.click(
       await screen.findByRole("menuitem", { name: /Start from scratch/i }),
     );
+    await userEvent.click(await screen.findByRole("button", { name: "Rules" }));
     const sidebar = await screen.findByRole("region", {
       name: "Topics and rules",
     });

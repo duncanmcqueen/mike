@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { safeError } from "../../lib/safeError";
 const { jsonrepair } = require("jsonrepair") as {
   jsonrepair: (text: string) => string;
 };
@@ -398,18 +399,37 @@ export async function validatePlaybookCompilationWithRetry(args: {
 }
 
 function stableIds(content: PlaybookContent): PlaybookContent {
+  // Preserve explicit IDs where possible, and keep generated IDs from
+  // colliding with IDs on later rules. Duplicate model IDs otherwise merge
+  // unrelated rules in normalizeFindings and in the editor's selection.
+  const reserved = new Set([
+    ...content.rules.map((rule) => rule.id),
+    ...content.topics.flatMap((topic) => [topic.id, ...topic.rules.map((rule) => rule.id)]),
+  ].filter((id): id is string => !!id));
+  const used = new Set<string>();
+  function uniqueId(id: string | undefined, fallback: string) {
+    if (id && !used.has(id)) {
+      used.add(id);
+      return id;
+    }
+    let candidate = fallback;
+    let suffix = 2;
+    while (used.has(candidate) || reserved.has(candidate)) candidate = `${fallback}-${suffix++}`;
+    used.add(candidate);
+    return candidate;
+  }
   return {
     ...content,
     rules: content.rules.map((rule, index) => ({
       ...rule,
-      id: rule.id || `rule-${index + 1}`,
+      id: uniqueId(rule.id, `rule-${index + 1}`),
     })),
     topics: content.topics.map((topic, topicIndex) => ({
       ...topic,
-      id: topic.id || `topic-${topicIndex + 1}`,
+      id: uniqueId(topic.id, `topic-${topicIndex + 1}`),
       rules: topic.rules.map((rule, ruleIndex) => ({
         ...rule,
-        id: rule.id || `topic-${topicIndex + 1}-rule-${ruleIndex + 1}`,
+        id: uniqueId(rule.id, `topic-${topicIndex + 1}-rule-${ruleIndex + 1}`),
       })),
     })),
   };
@@ -1097,7 +1117,6 @@ export async function importPlaybookFromDocx(args: {
             content_json: content,
             source_filename: args.filename,
             source_storage_key: storageKey,
-            source_structure_json: structure,
             import_model: model,
             updated_at: new Date().toISOString(),
           })
@@ -1111,7 +1130,6 @@ export async function importPlaybookFromDocx(args: {
           org_id: orgId,
           source_filename: args.filename,
           source_storage_key: storageKey,
-          source_structure_json: structure,
           import_model: model,
           created_at: now,
           updated_at: now,
@@ -1128,7 +1146,7 @@ export async function importPlaybookFromDocx(args: {
       await deleteFile(previousStorageKey).catch((cleanupError) => {
         console.error("[playbooks] replaced source cleanup failed", {
           storageKey: previousStorageKey,
-          error: cleanupError,
+          error: safeError(cleanupError),
         });
       });
 
@@ -1145,13 +1163,12 @@ export async function importPlaybookFromDocx(args: {
       console.error("[playbooks] failed to complete import audit record", {
         attemptId,
         playbookId: id,
-        error:
-          auditError instanceof Error ? auditError.message : String(auditError),
+        error: safeError(auditError),
       });
     }
     return getPlaybook(args.userId, id, db, args.userEmail);
   } catch (error) {
-    console.error("[playbooks] import failed", { attemptId, stage, error });
+    console.error("[playbooks] import failed", { attemptId, stage, error: safeError(error) });
     const message = playbookImportFailureMessage(
       stage,
       error,
@@ -1171,8 +1188,7 @@ export async function importPlaybookFromDocx(args: {
     } catch (auditError) {
       console.error("[playbooks] failed to record import failure", {
         attemptId,
-        error:
-          auditError instanceof Error ? auditError.message : String(auditError),
+        error: safeError(auditError),
       });
     }
     throw new PlaybookImportError(
@@ -1254,7 +1270,6 @@ export async function createPlaybook(
     org_id: orgId,
     source_filename: null,
     source_storage_key: null,
-    source_structure_json: null,
     import_model: null,
     created_at: now,
     updated_at: now,
@@ -1487,9 +1502,12 @@ async function loadReviewDocument(
   const filename = version.filename?.trim() || "Untitled document";
   const isDocx = version.file_type === "docx" || /\.docx$/i.test(filename);
   if (!isDocx) return { filename, isDocx, text: null };
-  const current = await loadCurrentVersionBytes(documentId, db);
+  const current = await loadCurrentVersionBytes(documentId, db, version.id);
   if (!current) throw missing();
-  return { filename, isDocx, text: await extractDocxBodyText(current.bytes) };
+  return {
+    filename, isDocx, text: await extractDocxBodyText(current.bytes),
+    version: { id: version.id, storagePath: current.storage_path },
+  };
 }
 
 /**
@@ -1502,6 +1520,7 @@ async function applyReviewEdits(args: {
   userId: string;
   userEmail?: string | null;
   documentId: string;
+  expectedVersion: { id: string; storagePath: string };
   findings: PlaybookFinding[];
 }): Promise<{
   findings: PlaybookFinding[];
@@ -1546,6 +1565,7 @@ async function applyReviewEdits(args: {
     documentId: args.documentId,
     userId: args.userId,
     userEmail: args.userEmail,
+    expectedVersion: args.expectedVersion,
     edits: planned.map((item) => item.edit),
     db: args.db,
   });
@@ -1679,12 +1699,13 @@ export async function reviewWithPlaybook(args: {
       parsed.findings,
     );
     const { findings, version } =
-      args.documentId && stored?.isDocx
+      args.documentId && stored?.version
         ? await applyReviewEdits({
             db,
             userId: args.userId,
             userEmail: args.userEmail,
             documentId: args.documentId,
+            expectedVersion: stored.version,
             findings: reviewed,
           })
         : { findings: reviewed, version: null };
@@ -1722,7 +1743,7 @@ export async function reviewWithPlaybook(args: {
       completedAt,
     };
   } catch (error) {
-    console.error("[playbooks] review failed", { runId, error });
+    console.error("[playbooks] review failed", { runId, error: safeError(error) });
     const completedAt = new Date().toISOString();
     await db
       .from("playbook_runs")
@@ -1951,16 +1972,14 @@ export async function deletePlaybook(
   if (error) throw error;
   if (!data) throw new PlaybookRequestError("Playbook not found.", 404);
   const sources = await listPlaybookSourceRows(db, id);
-  // supabase-js reports failures on the result rather than throwing. Check
-  // each delete: reporting 204 after a refused delete leaves the playbook in
-  // place while the UI drops it, and would orphan the stored source file.
-  const runs = await db.from("playbook_runs").delete().eq("playbook_id", id);
-  if (runs.error) throw runs.error;
+  // Runs and source rows cascade in this same statement. Deleting runs first
+  // would lose review history if the playbook delete then failed.
   const playbook = await db.from("playbooks").delete().eq("id", id);
   if (playbook.error) throw playbook.error;
   if (data.source_storage_key)
     await deleteFile(String(data.source_storage_key)).catch(() => {});
-  // The rows went with the playbook (on delete cascade); the files did not.
+  // Clear bytes promptly; the database also queues durable cleanup for failed
+  // deletes and for cascades that do not pass through this request handler.
   for (const source of sources)
     await deleteFile(source.storageKey).catch(() => {});
 }

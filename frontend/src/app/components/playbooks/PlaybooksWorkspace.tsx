@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryParamTab } from "@/app/hooks/useQueryParamTab";
-import mammoth from "mammoth";
 import {
   AlertCircle,
   Check,
@@ -104,11 +103,6 @@ function isWordDocument(filename: string) {
 
 async function extractReviewText(file: File): Promise<string> {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith(".docx")) {
-    return (
-      await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })
-    ).value;
-  }
   if (lower.endsWith(".pdf")) {
     const pdfjs = await import("pdfjs-dist");
     pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -456,7 +450,7 @@ function PlaybooksWorkspace() {
     try {
       const created = await createPlaybook(undefined, workspaceId);
       setPlaybooks((current) => [created, ...current]);
-      openPlaybook(created.id);
+      openPlaybook(created.id, { tab: "overview" });
     } catch (err) {
       notifyError(err, { action: "create the playbook" });
     } finally {

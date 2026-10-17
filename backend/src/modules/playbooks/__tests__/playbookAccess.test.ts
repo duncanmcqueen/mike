@@ -512,6 +512,7 @@ describe("playbook access and autosave", () => {
       expect(docs.applyTrackedEditsToDocument).toHaveBeenCalledWith(
         expect.objectContaining({
           documentId: "doc-1",
+          expectedVersion: { id: "v1", storagePath: "documents/doc-1.docx" },
           edits: [
             expect.objectContaining({
               find: "Liability is unlimited.",
@@ -526,6 +527,7 @@ describe("playbook access and autosave", () => {
           ],
         }),
       );
+      expect(docs.loadCurrentVersionBytes).toHaveBeenCalledWith("doc-1", db, "v1");
       const byRule = new Map(result.findings.map((item) => [item.ruleId, item]));
       expect(byRule.get("cap")?.edit?.edit_id).toBe("e1");
       expect(byRule.get("law")?.edit?.edit_id).toBe("e2");

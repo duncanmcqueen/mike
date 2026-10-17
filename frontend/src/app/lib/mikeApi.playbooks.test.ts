@@ -4,6 +4,10 @@ import {
   deletePlaybook,
   getPlaybook,
   getPlaybookConfiguration,
+  getPlaybookPeople,
+  listPlaybookShares,
+  sharePlaybook,
+  revokePlaybookShare,
   getPlaybookSourceUrl,
   getPlaybookSupplementaryFileUrl,
   listPlaybookSources,
@@ -62,6 +66,13 @@ describe("Playbooks API requests", () => {
       body: undefined,
     },
     {
+      name: "workspace configuration",
+      call: () => getPlaybookConfiguration("org/a?b"),
+      url: "/api/playbooks/configuration?workspace=org%2Fa%3Fb",
+      method: "GET",
+      body: undefined,
+    },
+    {
       name: "list",
       call: listPlaybooks,
       url: "/api/playbooks",
@@ -94,6 +105,41 @@ describe("Playbooks API requests", () => {
       call: () => listAllPlaybookRuns("personal"),
       url: "/api/playbooks/runs?workspace=personal",
       method: "GET",
+      body: undefined,
+    },
+    {
+      name: "all runs without a workspace filter",
+      call: () => listAllPlaybookRuns(),
+      url: "/api/playbooks/runs",
+      method: "GET",
+      body: undefined,
+    },
+    {
+      name: "people",
+      call: () => getPlaybookPeople(id),
+      url: `${path}/people`,
+      method: "GET",
+      body: undefined,
+    },
+    {
+      name: "shares",
+      call: () => listPlaybookShares(id),
+      url: `${path}/shares`,
+      method: "GET",
+      body: undefined,
+    },
+    {
+      name: "share with an editor",
+      call: () => sharePlaybook(id, { emails: ["editor@example.com"], role: "editor" }),
+      url: `${path}/share`,
+      method: "POST",
+      body: { emails: ["editor@example.com"], role: "editor" },
+    },
+    {
+      name: "revoke share",
+      call: () => revokePlaybookShare(id, "share/one?two"),
+      url: `${path}/shares/share%2Fone%3Ftwo`,
+      method: "DELETE",
       body: undefined,
     },
     {
@@ -159,6 +205,14 @@ describe("Playbooks API requests", () => {
 });
 
 describe("Creating a playbook with no Word source", () => {
+  it("creates in the selected workspace", async () => {
+    fetchMock.mockResolvedValueOnce(json({ id: "org-guide" }));
+    await createPlaybook({ name: "  Guide  " }, "org-1");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      name: "Guide", workspace: "org-1",
+    });
+  });
+
   it.each([
     { details: undefined, body: {} },
     { details: { name: "   " }, body: {} },
@@ -251,18 +305,19 @@ describe("Playbook direct upload", () => {
   );
 
   it.each([
-    { playbookId: undefined, extra: {} },
-    { playbookId: "pb-1", extra: { playbookId: "pb-1" } },
+    { playbookId: undefined, workspace: undefined, extra: {} },
+    { playbookId: "pb-1", workspace: undefined, extra: { playbookId: "pb-1" } },
+    { playbookId: undefined, workspace: "org-1", extra: { workspace: "org-1" } },
   ])(
     "sends playbookId $playbookId when replacing",
-    async ({ playbookId, extra }) => {
+    async ({ playbookId, workspace, extra }) => {
       const file = new File(["Word content"], "guide.docx");
       fetchMock
         .mockResolvedValueOnce(json(staged))
         .mockResolvedValueOnce(new Response(null, { status: 200 }))
         .mockResolvedValueOnce(json({ id: "pb-1" }));
 
-      await importPlaybook(file, "test-model", undefined, playbookId);
+      await importPlaybook(file, "test-model", undefined, playbookId, workspace);
 
       expect(fetchMock).toHaveBeenNthCalledWith(
         3,

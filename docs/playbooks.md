@@ -25,8 +25,9 @@ review. There is no publishing step or numbered playbook version.
 
 ## Browsing and editing
 
-The Playbooks table shows each playbook on one line, with its description,
-rule count, and last update. Use the header search to find a playbook by name
+The Playbooks table shows each playbook on one line, with its access, creator,
+document types, represented party, jurisdictions, rule count, and last update.
+Use the header search to find a playbook by name
 or description. Checkboxes select rows for bulk deletion; select a name to
 open the editor.
 
@@ -75,9 +76,10 @@ or topic, or a topic to remove the group while keeping its rules. The same
 menus open with Shift+F10 or the keyboard's context-menu key. Changes autosave.
 Select a rule to edit its concept, scope, positions, and sample clauses. Drag
 the divider to adjust the panel widths, or focus it and use the arrow keys.
-The panels stack on narrow screens. A toolbar above them contains **Details**
-and a **New rule** button on the right that adds and selects an ungrouped rule;
-**Run** is in the page header. Use **Details** to edit the
+The panels stack on narrow screens. A toolbar above them contains **Overview**,
+**Rules**, **References**, and **Runs**, with a **New rule** button on the right
+of the Rules view that adds and selects an ungrouped rule.
+**Run** is in the page header. Use **Overview** to edit the
 playbook name, represented party, description, and global guidance, alongside
 source metadata, dates, and, in an organization, Private or Public. These fields also save automatically.
 
@@ -90,7 +92,8 @@ review. A failed save retains the current edits and offers a retry.
 ## Starting a playbook without a Word file
 
 Open **Playbooks**, select **New playbook**, then **Start from scratch**. Mike
-creates a draft holding one ungrouped rule and no topics. A rule always
+opens the new playbook on **Overview**, where its name and scope can be set
+before moving to **Rules**. It starts with one ungrouped rule and no topics. A rule always
 needs a concept, so the first one carries placeholder text to replace.
 
 ## Importing a Word playbook
@@ -113,7 +116,9 @@ first response is not valid JSON, fails schema validation, or cannot be tied
 back to the Word source. It retains the original `.docx` only after
 compilation succeeds. Every imported rule must resolve to at least one real
 source reference, or the import fails rather than creating an unauditable
-rule.
+rule. The parsed Word structure is transient; only the original file and the
+compiled content with source references are retained, avoiding a duplicate
+document copy in the database.
 
 Each model attempt has five minutes by default. Set
 `PLAYBOOK_COMPILATION_TIMEOUT_MS` to override that limit, or
@@ -129,7 +134,7 @@ failures distinguishable.
 ## Replacing a playbook from a newer Word file
 
 Open the playbook's actions menu, then **Replace from Word**. The compiled
-result rewrites that playbook's draft and keeps its name unless you supply a
+result rewrites that playbook's content and keeps its name unless you supply a
 new one.
 
 A replacement rewrites the current rules. Completed and in-progress reviews
@@ -152,7 +157,9 @@ Word**.
 A supplementary document is a copy the playbook owns: anyone who can view the
 playbook can open it, and later edits to the original do not change it. Its
 text is extracted when it is added. Files are stored under
-`playbooks/<creator>/<playbook>/sources/` and deleted with the playbook.
+`playbooks/<creator>/<playbook>/sources/`. Database triggers queue durable file
+cleanup on replacement or deletion, including account and organization
+cascades; failed storage deletions are retried by the job worker.
 
 Reviews do not receive supplementary text by default. When a playbook has
 supplementary documents, the review prompt lists their ids, names, and
@@ -174,13 +181,19 @@ effective provider keys. Local Ollama models need none.
 
 Select **Run**, choose strict or permissive posture, and use
 **Add document** in the modal footer to upload a PDF, DOCX, or TXT contract or
-choose a saved file. Each review accepts one contract. Strict mode flags fallback
+choose saved files. Multiple files can be dropped into the document area;
+each file gets its own review run. Strict mode flags fallback
 matches for review; permissive mode may accept them but still explains the
 applied fallback.
 
 Review findings include the rule, status, exact contract quote,
 location, analysis, and suggested language. Each run is retained with the
 exact content it was reviewed against.
+
+Word reviews read the stored file and save suggestions as tracked changes when
+the caller can edit it. If that file changes while the model is reviewing it,
+the suggestions remain as text; rerun the review against the new version
+before applying them.
 
 A playbook's **Runs** tab lists your last 50 runs of it, newest first;
 selecting one shows its settings, summary, and findings grouped by outcome,

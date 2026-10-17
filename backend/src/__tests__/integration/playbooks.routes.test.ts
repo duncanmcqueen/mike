@@ -339,8 +339,9 @@ describe("playbook deletion", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("reports a refused delete instead of answering 204", async () => {
-    from.mockImplementation(() =>
-      queryFailingOn("delete", { code: "42501", message: "permission denied" }),
+    const playbook = queryFailingOn("delete", { code: "42501", message: "permission denied" });
+    from.mockImplementation((table: string) =>
+      table === "playbook_sources" ? queryReturning([]) : playbook,
     );
 
     const response = await request(app).delete("/playbooks/pb-1");
@@ -348,6 +349,9 @@ describe("playbook deletion", () => {
     expect(response.status).toBe(500);
     expect(JSON.stringify(response.body)).not.toMatch(/permission denied/);
     expect(deleteFile).not.toHaveBeenCalled();
+    expect(playbook.delete).toHaveBeenCalledOnce();
+    // The database cascades runs only when the parent deletion succeeds.
+    expect(from).not.toHaveBeenCalledWith("playbook_runs");
   });
 
   it("answers 204 and clears the stored source when every delete succeeds", async () => {

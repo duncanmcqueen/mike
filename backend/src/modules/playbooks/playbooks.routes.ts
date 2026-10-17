@@ -264,7 +264,7 @@ playbooksRouter.post("/import", requireMfaIfEnrolled, async (req, res) => {
       await deleteFile(storageKey).catch((error) => {
         console.error("[playbooks] staged upload cleanup failed", {
           storageKey,
-          error,
+          error: safeError(error),
         });
       });
     }

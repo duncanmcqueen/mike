@@ -19,7 +19,9 @@ export function usePlaybookAutosave(onSaved: (playbook: Playbook) => void) {
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">(
     "idle",
   );
-  const pending = useRef<Change | null>(null);
+  // The workspace survives navigation between playbooks. Coalesce typing
+  // within one playbook without discarding another playbook's trailing edit.
+  const pending = useRef(new Map<string, Change>());
   const running = useRef<Promise<boolean> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedCallback = useRef(onSaved);
@@ -38,19 +40,19 @@ export function usePlaybookAutosave(onSaved: (playbook: Playbook) => void) {
   const flush = useCallback(function flush(): Promise<boolean> {
     if (timer.current) clearTimeout(timer.current);
     if (running.current) return running.current;
-    if (!pending.current) return Promise.resolve(true);
+    if (!pending.current.size) return Promise.resolve(true);
     setStatus("saving");
     running.current = (async () => {
       try {
-        while (pending.current) {
-          const change = pending.current;
+        while (pending.current.size) {
+          const change = pending.current.values().next().value!;
           const saved = await updatePlaybook(
             change.id,
             change.content,
             change.access,
           );
-          if (pending.current === change) {
-            pending.current = null;
+          if (pending.current.get(change.id) === change) {
+            pending.current.delete(change.id);
             savedCallback.current(saved);
           }
         }
@@ -60,7 +62,7 @@ export function usePlaybookAutosave(onSaved: (playbook: Playbook) => void) {
         setStatus("error");
         notifyError(error, {
           action: "save your playbook",
-          dedupeKey: `playbook-autosave:${pending.current?.id}`,
+          dedupeKey: `playbook-autosave:${pending.current.keys().next().value}`,
           onRetry: () => {
             void flush();
           },
@@ -75,7 +77,7 @@ export function usePlaybookAutosave(onSaved: (playbook: Playbook) => void) {
 
   const schedule = useCallback(
     (change: Change) => {
-      pending.current = change;
+      pending.current.set(change.id, change);
       setStatus("saving");
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
@@ -87,7 +89,7 @@ export function usePlaybookAutosave(onSaved: (playbook: Playbook) => void) {
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (!pending.current) return;
+      if (!pending.current.size) return;
       event.preventDefault();
       event.returnValue = "";
     };

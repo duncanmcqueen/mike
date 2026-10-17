@@ -28,6 +28,25 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 describe("playbook autosave", () => {
+  it("preserves pending edits to each playbook across rapid navigation", async () => {
+    vi.mocked(updatePlaybook).mockImplementation(async (id, content) => (
+      { id, name: content.name } as Playbook
+    ));
+    const onSaved = vi.fn();
+    const { result } = renderHook(() => usePlaybookAutosave(onSaved));
+    act(() => {
+      result.current.schedule(change("First playbook"));
+      result.current.schedule({ ...change("Other playbook"), id: "other" });
+      result.current.schedule(change("Latest first playbook"));
+    });
+    await act(async () => { await result.current.flush(); });
+    expect(vi.mocked(updatePlaybook).mock.calls).toEqual([
+      ["book", { name: "Latest first playbook" }, change("").access],
+      ["other", { name: "Other playbook" }, change("").access],
+    ]);
+    expect(onSaved).toHaveBeenCalledTimes(2);
+  });
+
   it("hides the saved acknowledgement after two seconds", async () => {
     vi.mocked(updatePlaybook).mockResolvedValue(saved("Updated"));
     const { result, unmount } = renderHook(() => usePlaybookAutosave(vi.fn()));

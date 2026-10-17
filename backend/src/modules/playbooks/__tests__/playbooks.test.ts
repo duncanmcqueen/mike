@@ -111,6 +111,29 @@ describe("playbook content validation", () => {
 });
 
 describe("playbook compilation", () => {
+  it("keeps every rule when imported IDs collide with each other or generated IDs", async () => {
+    const rule = { ...content().topics[0].rules[0], sourceRefs: ["P1"] };
+    const parsed = await validatePlaybookCompilationWithRetry({
+      raw: JSON.stringify({
+        ...content(),
+        rules: [{ ...rule, id: undefined }, { ...rule, id: "rule-1" }],
+        topics: [
+          { id: "group", name: "First", rules: [{ ...rule, id: "rule-1" }] },
+          { id: "group", name: "Second", rules: [{ ...rule, id: "group" }] },
+        ],
+      }),
+      structure: oneParagraph,
+      retry: async () => { throw new Error("Valid content should not need repair"); },
+    });
+    const ids = [
+      ...parsed.rules.map((item) => item.id),
+      ...parsed.topics.flatMap((topic) => [topic.id, ...topic.rules.map((item) => item.id)]),
+    ];
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(parsed.rules[1].id).toBe("rule-1");
+    expect(normalizeFindings(parsed, "", [])).toHaveLength(4);
+  });
+
   it("normalizes and validates imported rules without requiring topics", async () => {
     const source = content();
     const rule = source.topics[0].rules[0];
@@ -283,6 +306,7 @@ describe("review finding normalization", () => {
       location: "",
       analysis: "The cap is uncapped.",
       suggestedText: "Cap at fees paid.",
+      insertAfter: "",
       ...overrides,
     };
   }

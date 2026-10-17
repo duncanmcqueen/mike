@@ -45,6 +45,8 @@ export async function applyTrackedEditsToDocument(params: {
   userEmail?: string | null;
   edits: EditInput[];
   db: Db;
+  /** A long-running review must not apply suggestions to a newer document. */
+  expectedVersion?: { id: string; storagePath: string };
   /**
    * If provided, append these edits to the existing turn-scoped version
    * (overwrites the file at storagePath and reuses the document_versions
@@ -105,11 +107,18 @@ export async function applyTrackedEditsToDocument(params: {
     };
 
   const activeVersion = await loadActiveVersion(documentId, db);
+  if (params.expectedVersion && (
+    activeVersion?.id !== params.expectedVersion.id ||
+    activeVersion.storage_path !== params.expectedVersion.storagePath
+  )) {
+    return { ok: false, error: "This document changed. Run the review again before applying its suggestions." };
+  }
   let versionFilename =
     activeVersion?.filename?.trim() || "Untitled document";
 
-  const current = await loadCurrentVersionBytes(documentId, db);
-  if (!current) return { ok: false, error: "Could not load document bytes." };
+  const raw = activeVersion ? await downloadFile(activeVersion.storage_path) : null;
+  if (!raw || !activeVersion) return { ok: false, error: "Could not load document bytes." };
+  const current = { bytes: Buffer.from(raw), storage_path: activeVersion.storage_path };
 
   const { data: authorProfile } = await db
     .from("user_profiles")
