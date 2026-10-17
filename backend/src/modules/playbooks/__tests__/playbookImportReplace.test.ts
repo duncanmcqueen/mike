@@ -98,7 +98,7 @@ const EXISTING = {
   name: "Commercial Playbook",
   description: "",
   status: "published",
-  draft_json: {
+  content_json: {
     name: "Commercial Playbook",
     description: "",
     globalGuidance: "",
@@ -126,7 +126,6 @@ const EXISTING = {
       },
     ],
   },
-  published_version_id: null,
   source_filename: "old.docx",
   source_storage_key: "playbooks/u1/pb-1/source-old.docx",
   import_model: MODEL,
@@ -142,7 +141,7 @@ describe("replacing a playbook from a Word file", () => {
     deleteFile.mockResolvedValue(undefined);
   });
 
-  it("rewrites the existing draft instead of adding a playbook", async () => {
+  it("rewrites the existing content instead of adding a playbook", async () => {
     const { db, calls } = fakeDb(EXISTING);
 
     await importPlaybookFromDocx({
@@ -153,7 +152,9 @@ describe("replacing a playbook from a Word file", () => {
       playbookId: "pb-1",
       db,
       dependencies: {
-        completeText: vi.fn().mockResolvedValue(compiled("Commercial Playbook")),
+        completeText: vi
+          .fn()
+          .mockResolvedValue(compiled("Commercial Playbook")),
       },
     });
 
@@ -163,9 +164,9 @@ describe("replacing a playbook from a Word file", () => {
     const update = writes.find((call) => call.op === "update");
     expect(update).toBeDefined();
     const values = update?.values as Record<string, unknown>;
-    expect(values.status).toBe("draft");
+    expect(values).not.toHaveProperty("status");
     expect(values.source_filename).toBe("new.docx");
-    // A replacement must not disturb the published version or the row's age.
+    // A replacement does not reintroduce publishing or change the row's age.
     expect(values).not.toHaveProperty("published_version_id");
     expect(values).not.toHaveProperty("created_at");
   });
@@ -181,7 +182,9 @@ describe("replacing a playbook from a Word file", () => {
       playbookId: "pb-1",
       db,
       dependencies: {
-        completeText: vi.fn().mockResolvedValue(compiled("Commercial Playbook")),
+        completeText: vi
+          .fn()
+          .mockResolvedValue(compiled("Commercial Playbook")),
       },
     });
 
@@ -204,7 +207,9 @@ describe("replacing a playbook from a Word file", () => {
       playbookId: "pb-1",
       db,
       dependencies: {
-        completeText: vi.fn().mockResolvedValue(compiled("Commercial Playbook")),
+        completeText: vi
+          .fn()
+          .mockResolvedValue(compiled("Commercial Playbook")),
       },
     });
 

@@ -105,13 +105,51 @@ describe("playbook content validation", () => {
       playbookContentSchema.parse({ ...content(), topics: [] }),
     ).toThrow();
     const invalid = content();
-    invalid.topics[0].rules[0].standard!.sampleClauses[0].usage =
-      "sometimes";
+    invalid.topics[0].rules[0].standard!.sampleClauses[0].usage = "sometimes";
     expect(() => playbookContentSchema.parse(invalid)).toThrow();
   });
 });
 
 describe("playbook compilation", () => {
+  it("normalizes and validates imported rules without requiring topics", async () => {
+    const source = content();
+    const rule = source.topics[0].rules[0];
+    const flat = {
+      ...source,
+      topics: [],
+      rules: [
+        {
+          ...rule,
+          sourceRefs: ["P1"],
+          conditions: [{ when: "Personal data is processed" }],
+        },
+      ],
+    };
+    const parsed = await validatePlaybookCompilationWithRetry({
+      raw: JSON.stringify(flat),
+      structure: oneParagraph,
+      retry: async () => {
+        throw new Error("Valid rules should not need repair");
+      },
+    });
+    expect(parsed.topics).toEqual([]);
+    expect(parsed.rules[0]).toMatchObject({
+      id: "liability-cap",
+      sourceRefs: ["P1"],
+      conditions: ["Personal data is processed"],
+    });
+    const invalid = JSON.stringify({
+      ...flat,
+      rules: [{ ...rule, sourceRefs: ["missing"] }],
+    });
+    await expect(
+      validatePlaybookCompilationWithRetry({
+        raw: invalid,
+        structure: oneParagraph,
+        retry: async () => invalid,
+      }),
+    ).rejects.toThrow(/could not tie the imported rule/i);
+  });
   it("automatically retries a compilation that is not structured JSON", async () => {
     const retry = async (validationError: string) => {
       expect(validationError).toMatch(/structured JSON/i);
@@ -289,6 +327,30 @@ describe("review finding normalization", () => {
     expect(first.analysis).toMatch(/did not return a result/i);
   });
 
+  it("includes ungrouped and grouped rules in review findings", () => {
+    const mixed = playbookContentSchema.parse({
+      ...content(),
+      rules: blankPlaybookContent("P").rules,
+    });
+    const findings = normalizeFindings(mixed, "", [
+      finding({ ruleId: "rule-1", ruleName: "New rule" }),
+    ]);
+    expect(findings).toHaveLength(2);
+    expect(findings[0]).toMatchObject({
+      ruleId: "rule-1",
+      topicId: null,
+      status: "unacceptable",
+    });
+    expect(findings[1]).toMatchObject({
+      ruleId: "liability-cap",
+      topicId: "liability",
+      status: "needs_review",
+    });
+    expect(
+      normalizeFindings(mixed, "", []).map((entry) => entry.ruleId),
+    ).toEqual(["rule-1", "liability-cap"]);
+  });
+
   it("does not guess when two rules share a name", () => {
     const ambiguous = playbookContentSchema.parse({
       ...content(),
@@ -320,8 +382,14 @@ describe("run failure messages", () => {
   });
 
   it.each([
-    ["a provider exception", new Error("invalid x-api-key sk-ant-secret123456")],
-    ["a database error", { code: "42P01", message: 'relation "x" does not exist' }],
+    [
+      "a provider exception",
+      new Error("invalid x-api-key sk-ant-secret123456"),
+    ],
+    [
+      "a database error",
+      { code: "42P01", message: 'relation "x" does not exist' },
+    ],
     ["a non-error value", "raw string failure"],
   ])("does not pass through %s", (_label, error) => {
     const message = runFailureMessage(error);
@@ -347,21 +415,21 @@ describe("a playbook started without a Word file", () => {
   });
 
   it("gives the first rule a concept, because the schema requires one", () => {
-    const [rule] = blankPlaybookContent("P").topics[0].rules;
+    const [rule] = blankPlaybookContent("P").rules;
 
     expect(rule.concept).toBe(BLANK_RULE_CONCEPT);
     expect(rule.concept.trim().length).toBeGreaterThan(0);
   });
 
-  it("starts with one topic and one rule", () => {
+  it("starts with one ungrouped rule and no topics", () => {
     const content = blankPlaybookContent("P");
 
-    expect(content.topics).toHaveLength(1);
-    expect(content.topics[0].rules).toHaveLength(1);
+    expect(content.topics).toHaveLength(0);
+    expect(content.rules).toHaveLength(1);
   });
 
   it("carries no source references, unlike a compiled import", () => {
-    const [rule] = blankPlaybookContent("P").topics[0].rules;
+    const [rule] = blankPlaybookContent("P").rules;
 
     expect(rule.sourceRefs).toEqual([]);
   });

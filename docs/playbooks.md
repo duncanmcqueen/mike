@@ -1,12 +1,12 @@
 # Playbooks
 
 Mike playbooks convert a human-authored Word negotiation guide into
-structured, versioned rules that can review contracts.
+structured rules that can review contracts.
 
 ## Data model
 
-A playbook contains global guidance and ordered topics. Each topic contains
-rules with:
+A playbook contains global guidance and rules, optionally organized into
+topics. Each rule contains:
 
 - a concept to identify at clause or agreement scope;
 - a required/optional setting;
@@ -19,14 +19,78 @@ A playbook starts in one of two ways: compiled from a Word negotiation guide,
 or written by hand in the editor. A hand-authored rule carries no source
 references; the strict source check below applies to compiled imports only.
 
-New content is always a draft. Publishing creates an immutable numbered
-version. Reviews use the last published version, so later draft edits do not
-change an in-progress or historical review.
+Changes save automatically. Reviews use the latest saved rules and retain a
+content snapshot so later edits do not change an in-progress or historical
+review. There is no publishing step or numbered playbook version.
+
+## Browsing and editing
+
+The Playbooks table shows each playbook on one line, with its description,
+rule count, and last update. Use the header search to find a playbook by name
+or description. Checkboxes select rows for bulk deletion; select a name to
+open the editor.
+
+The default **All** tab shows every playbook available in the current workspace.
+Personal workspaces also have **My playbooks** and **Shared with me** tabs.
+Organization workspaces also have **Private** and **Public** tabs.
+
+### Access
+
+Access works as it does for workflows. Open the people button (beside the
+**⋯** menu in the header) to see who can open a playbook and, as an owner, to
+change it. Each person has a role:
+
+- **Viewer**: view the rules and sources and run reviews.
+- **Editor**: also edit rules, details, and supplementary documents, and
+  replace the playbook from Word.
+- **Owner**: also share it, change its visibility, and delete it. The creator
+  is always an owner.
+
+A personal playbook is shared with existing accounts by email; recipients find
+it under **Shared with me**. An organization's playbook is shared only with
+its members. A **Public** one (set in **Overview**) can be viewed and run by
+every member; unlike a workflow, members do not get Editor by default, so
+editing is granted person by person, and members can be put on a deny list.
+The organization's owners own every public playbook. A **Private** one is
+open only to the people it is shared with. Sharing sends no email
+notification. Unlike projects and workflows, an organization's owners do not
+take over a private playbook whose creator has left.
+
+The editor has two flat glass panels: rules on the left, and the selected
+rule's form on the right. The rules sidebar uses the IDE Explorer's compact
+rows, with a small dot before each rule name. Opening a playbook selects its first rule.
+The sidebar's **+** adds an ungrouped rule. To organize rules, choose
+**Add topic** from **Rules actions**, then use the rule form's **Topic** field
+to move a rule into that topic or back to **No topic**. Existing imported
+topics remain available.
+Drag a rule above or below another rule to reorder it, onto a topic to group
+it, or onto the sidebar's header or empty space to ungroup it. Right-click a
+rule for edit, duplicate, move, and delete actions. Every rule row and the rule
+form have a **…** menu with those same actions. Each topic row also has a **…**
+menu, including **Add rule** to create a rule in that topic.
+Duplicating places an independent copy immediately
+after the source rule in the same topic (or in the ungrouped list) and selects
+it for editing. Right-click the sidebar to add a rule
+or topic, or a topic to remove the group while keeping its rules. The same
+menus open with Shift+F10 or the keyboard's context-menu key. Changes autosave.
+Select a rule to edit its concept, scope, positions, and sample clauses. Drag
+the divider to adjust the panel widths, or focus it and use the arrow keys.
+The panels stack on narrow screens. A toolbar above them contains **Details**
+and a **New rule** button on the right that adds and selects an ungrouped rule;
+**Run** is in the page header. Use **Details** to edit the
+playbook name, represented party, description, and global guidance, alongside
+source metadata, dates, and, in an organization, Private or Public. These fields also save automatically.
+
+The header shows **Saving…**, **Saved**, or **Couldn’t save** in its own button
+group. **Saved** disappears after two seconds, as in the workflow editor. Autosave accepts
+unfinished fields; running a review requires complete rules. Pending changes
+are saved before returning to the table, replacing from Word, or starting a
+review. A failed save retains the current edits and offers a retry.
 
 ## Starting a playbook without a Word file
 
 Open **Playbooks**, select **New playbook**, then **Start from scratch**. Mike
-creates a draft holding one topic and one rule for you to edit. A rule always
+creates a draft holding one ungrouped rule and no topics. A rule always
 needs a concept, so the first one carries placeholder text to replace.
 
 ## Importing a Word playbook
@@ -36,7 +100,7 @@ needs a concept, so the first one carries placeholder text to replace.
    credentials are offered, and Mike preselects an available one.
 3. Review the extracted topics, concepts, positions, sample clauses, and
    source references.
-4. Save corrections and select **Publish**.
+4. Refine the rules as needed; corrections save automatically.
 
 The browser uploads the `.docx` straight to object storage under a presigned
 URL scoped to the signed-in account, then asks the API to compile it from that
@@ -64,34 +128,70 @@ failures distinguishable.
 
 ## Replacing a playbook from a newer Word file
 
-Select the playbook, then **Replace from Word**. The compiled result rewrites
-that playbook's draft and keeps its name unless you supply a new one.
+Open the playbook's actions menu, then **Replace from Word**. The compiled
+result rewrites that playbook's draft and keeps its name unless you supply a
+new one.
 
-A replacement rewrites the draft only. Published versions are immutable, so a
-completed review keeps its meaning and an in-progress review is unaffected.
-Publish again to make the rewritten rules reviewable. The replaced `.docx` is
-removed once the new draft is stored, and the same rate limit and ownership
-checks apply as for a first import.
+A replacement rewrites the current rules. Completed and in-progress reviews
+retain the rules they started with. The replaced `.docx` is removed once the
+new content is stored, and the same rate limit and ownership checks apply as
+for a first import.
+
+## References
+
+The **References** tab, beside **Rules** in the playbook toolbar, lists the
+documents behind a playbook in one list and shows the selected one read-only
+on the right. The list starts with the Word file the playbook was compiled
+from, if any, followed by up to 20 supplementary `.docx` or `.pdf` documents
+the rules can refer to, such as a data protection policy or a clause template.
+An editor adds supplementary documents with **+** or **Upload** (upload a
+file, or choose one from the library or a project) and removes them from each
+document's menu; the imported Word file changes only through **Replace from
+Word**.
+
+A supplementary document is a copy the playbook owns: anyone who can view the
+playbook can open it, and later edits to the original do not change it. Its
+text is extracted when it is added. Files are stored under
+`playbooks/<creator>/<playbook>/sources/` and deleted with the playbook.
+
+Reviews do not receive supplementary text by default. When a playbook has
+supplementary documents, the review prompt lists their ids, names, and
+lengths, and the model calls `read_supplementary_document` to read the ones a
+rule, guidance, or instruction depends on, in pieces of up to 40,000
+characters. The tool only reads documents belonging to the playbook under
+review. A playbook without supplementary documents is reviewed in a single
+model call, as before.
 
 ## Model selection
 
 The compilation and review model menus draw on the same catalog as chat:
 built-in cloud models, discovered Ollama models, and OpenRouter models when an
 OpenRouter key is configured. A model is offered only when the account has a
-usable key for its provider; local Ollama models need none.
+usable key for its provider; organization playbooks use that workspace’s
+effective provider keys. Local Ollama models need none.
 
 ## Contract review
 
-Publish the playbook, select **Review document**, choose strict or permissive
-posture, and supply a `.docx` or `.txt` contract. Strict mode flags fallback
+Select **Run**, choose strict or permissive posture, and use
+**Add document** in the modal footer to upload a PDF, DOCX, or TXT contract or
+choose a saved file. Each review accepts one contract. Strict mode flags fallback
 matches for review; permissive mode may accept them but still explains the
 applied fallback.
 
-Review findings include the published rule, status, exact contract quote,
+Review findings include the rule, status, exact contract quote,
 location, analysis, and suggested language. Each run is retained with the
-version it was reviewed against.
+exact content it was reviewed against.
+
+A playbook's **Runs** tab lists your last 50 runs of it, newest first;
+selecting one shows its settings, summary, and findings grouped by outcome,
+with recommended language as a redline of the contract text. A run opens there
+when it finishes. The **Runs** tab on the playbooks list shows your last 100
+runs across every playbook you can still open in the workspace (`GET
+/playbooks/runs`); choosing one opens it on its playbook. Each person sees only
+their own runs, including on a shared playbook, and the rules snapshot stored
+with a run is never returned by either list.
 
 The current one-pass safety limits are 150,000 extracted characters per
-imported playbook, 100,000 serialized characters per published playbook, and
+imported playbook, 100,000 serialized characters per playbook, and
 180,000 characters per reviewed contract. Oversized inputs fail explicitly
 instead of being silently truncated.

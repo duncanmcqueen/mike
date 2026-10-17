@@ -1,5 +1,6 @@
 export {
   playbookContentSchema,
+  editablePlaybookSchema,
   PlaybookRequestError,
   PlaybookImportError,
   blankPlaybookContent,
@@ -15,11 +16,33 @@ export {
   createPlaybook,
   listPlaybooks,
   getPlaybook,
+  getPlaybookSource,
   importPlaybookFromDocx,
-  updatePlaybookDraft,
-  publishPlaybook,
+  updatePlaybookContent,
   reviewWithPlaybook,
   listPlaybookRuns,
+  listAllPlaybookRuns,
   deletePlaybook,
   playbookConfiguration,
 } from "./playbooks.operations";
+
+export {
+  listPlaybookSources,
+  getPlaybookSourceFile,
+  addPlaybookSourceFromUpload,
+  addPlaybookSourceFromDocument,
+  deletePlaybookSource,
+  playbookSourceFileType,
+  playbookSourceUploadPrefix,
+  MAX_PLAYBOOK_SOURCE_FILE_BYTES,
+  PLAYBOOK_SOURCE_CONTENT_TYPES,
+  type PublicPlaybookSource,
+} from "./playbooks.sources";
+
+export {
+  listPlaybookPeople,
+  listPlaybookShares,
+  sharePlaybook,
+  revokePlaybookShare,
+  type PlaybookShare,
+} from "./playbooks.sharing";
